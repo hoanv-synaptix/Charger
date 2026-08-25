@@ -1,0 +1,158 @@
+#include "charge_cycle_config.h"
+
+#include <string.h>
+#include <math.h>
+
+static ChargeCycleConfig_t g_charge_cycle_config;
+
+static bool value_is_invalid(float value)
+{
+    return !isfinite(value);
+}
+
+static bool validate_non_negative(float value)
+{
+    return !value_is_invalid(value) && value >= 0.0f;
+}
+
+static bool validate_range(float value, float min_value, float max_value)
+{
+    return !value_is_invalid(value) && value >= min_value && value <= max_value;
+}
+
+void ChargeCycleConfig_GetDefaults(ChargeCycleConfig_t *config)
+{
+    if (config == NULL) {
+        return;
+    }
+
+    memset(config, 0, sizeof(*config));
+    config->version = CHARGE_CYCLE_CONFIG_VERSION;
+
+    config->charge_source_mode = CHARGE_SOURCE_BMS_CONTROLLED;
+    config->module_type = CHARGE_MODULE_TYPE_EVR_10KW_100A_100V;
+    config->can_battery_id = 1U;
+    config->source_module_count = 1U;
+
+    config->battery_capacity_ah = 100.0f;  /* 100Ah battery */
+    config->imin_c = 0.1f;                /* 0.1C minimum */
+    config->imax_c = 1.0f;                /* 1.0C maximum (100A for 100Ah) */
+    config->ipre_c = 0.2f;                /* 0.2C precharge */
+    config->ilow_c = 0.5f;                /* 0.5C low rate */
+
+    config->module_u_min_v = 30.0f;
+    config->module_u_max_v = 99.0f;
+    config->module_i_min_a = 5.0f;
+    config->module_i_max_a = 100.0f;
+    config->protect_jack_temp_power_limit_pct = 80.0f;
+}
+
+void ChargeCycleConfig_Init(void)
+{
+    ChargeCycleConfig_GetDefaults(&g_charge_cycle_config);
+}
+
+void ChargeCycleConfig_Get(ChargeCycleConfig_t *config)
+{
+    if (config == NULL) {
+        return;
+    }
+
+    *config = g_charge_cycle_config;
+}
+
+bool ChargeCycleConfig_Set(const ChargeCycleConfig_t *config)
+{
+    if (config == NULL) {
+        return false;
+    }
+
+    if (config->version != CHARGE_CYCLE_CONFIG_VERSION) {
+        return false;
+    }
+
+    if (!validate_non_negative(config->battery_capacity_ah) ||
+        !validate_non_negative(config->imin_c) ||
+        !validate_non_negative(config->imax_c) ||
+        !validate_non_negative(config->ipre_c) ||
+        !validate_non_negative(config->ilow_c) ||
+        !validate_non_negative(config->vmin_v) ||
+        !validate_non_negative(config->vmax_v) ||
+        !validate_non_negative(config->vpre_v) ||
+        !validate_non_negative(config->vlow_v) ||
+        !validate_range(config->temp_limit_c, -50.0f, 200.0f) ||
+        !validate_non_negative(config->cell_volt_delta_v) ||
+        !validate_non_negative(config->cell_volt_1_v) ||
+        !validate_non_negative(config->cell_volt_2_v) ||
+        !validate_non_negative(config->cell_volt_3_v) ||
+        !validate_non_negative(config->cell_volt_4_v) ||
+        !validate_non_negative(config->cell_volt_5_v) ||
+        !validate_non_negative(config->cell_curr_1_c) ||
+        !validate_non_negative(config->cell_curr_2_c) ||
+        !validate_non_negative(config->cell_curr_3_c) ||
+        !validate_non_negative(config->cell_curr_4_c) ||
+        !validate_non_negative(config->temp_delta_c) ||
+        !validate_range(config->temp_1_c, -50.0f, 200.0f) ||
+        !validate_range(config->temp_2_c, -50.0f, 200.0f) ||
+        !validate_range(config->temp_3_c, -50.0f, 200.0f) ||
+        !validate_range(config->temp_4_c, -50.0f, 200.0f) ||
+        !validate_range(config->temp_5_c, -50.0f, 200.0f) ||
+        !validate_non_negative(config->temp_curr_1_c) ||
+        !validate_non_negative(config->temp_curr_2_c) ||
+        !validate_non_negative(config->temp_curr_3_c) ||
+        !validate_non_negative(config->temp_curr_4_c) ||
+        !validate_range(config->soc_delta_pct, 0.0f, 100.0f) ||
+        !validate_range(config->soc_1_pct, 0.0f, 100.0f) ||
+        !validate_range(config->soc_2_pct, 0.0f, 100.0f) ||
+        !validate_range(config->soc_3_pct, 0.0f, 100.0f) ||
+        !validate_range(config->soc_4_pct, 0.0f, 100.0f) ||
+        !validate_range(config->soc_5_pct, 0.0f, 100.0f) ||
+        !validate_non_negative(config->soc_curr_1_c) ||
+        !validate_non_negative(config->soc_curr_2_c) ||
+        !validate_non_negative(config->soc_curr_3_c) ||
+        !validate_non_negative(config->soc_curr_4_c) ||
+        !validate_non_negative(config->protect_jack_charge_delta_v) ||
+        !validate_range(config->protect_jack_temp_threshold_c, -50.0f, 200.0f) ||
+        !validate_non_negative(config->protect_jack_temp_delta_c) ||
+        !validate_range(config->protect_jack_temp_power_limit_pct, 0.0f, 100.0f) ||
+        !validate_non_negative(config->module_u_min_v) ||
+        !validate_non_negative(config->module_u_max_v) ||
+        !validate_non_negative(config->module_i_min_a) ||
+        !validate_non_negative(config->module_i_max_a)) {
+        return false;
+    }
+
+    if (config->imax_c < config->imin_c ||
+        config->module_u_max_v < config->module_u_min_v ||
+        config->module_i_max_a < config->module_i_min_a ||
+        config->soc_2_pct < config->soc_1_pct ||
+        config->soc_3_pct < config->soc_2_pct ||
+        config->soc_4_pct < config->soc_3_pct ||
+        config->soc_5_pct < config->soc_4_pct ||
+        config->cell_volt_2_v < config->cell_volt_1_v ||
+        config->cell_volt_3_v < config->cell_volt_2_v ||
+        config->cell_volt_4_v < config->cell_volt_3_v ||
+        config->cell_volt_5_v < config->cell_volt_4_v ||
+        config->temp_2_c < config->temp_1_c ||
+        config->temp_3_c < config->temp_2_c ||
+        config->temp_4_c < config->temp_3_c ||
+        config->temp_5_c < config->temp_4_c) {
+        return false;
+    }
+
+    if (config->source_module_count == 0U || config->source_module_count > 8U) {
+        return false;
+    }
+
+    if (config->charge_source_mode > CHARGE_SOURCE_STANDALONE_NO_BMS) {
+        return false;
+    }
+
+    if (config->module_type > CHARGE_MODULE_TYPE_TONHE) {
+        return false;
+    }
+
+    g_charge_cycle_config = *config;
+    return true;
+}
+

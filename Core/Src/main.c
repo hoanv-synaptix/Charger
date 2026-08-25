@@ -24,12 +24,14 @@
 #include "spi.h"
 #include "tim.h"
 #include "usart.h"
-#include "usb_drd_fs.h"
+#include "usb_device.h"
 #include "gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "app_main.h"
+#include "iwdg.h"
+#include "bsp_failsafe.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -97,7 +99,6 @@ int main(void)
   MX_ADC1_Init();
   MX_SPI1_Init();
   MX_USART1_UART_Init();
-  MX_USB_DRD_FS_PCD_Init();
   MX_FDCAN1_Init();
   MX_FDCAN2_Init();
   MX_SPI2_Init();
@@ -105,7 +106,10 @@ int main(void)
   MX_USART5_UART_Init();
   MX_TIM6_Init();
   MX_TIM7_Init();
+  MX_IWDG_Init();
+  MX_USB_Device_Init();
   /* USER CODE BEGIN 2 */
+  App_Init();
 
   /* USER CODE END 2 */
 
@@ -116,6 +120,7 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    App_Loop();
   }
   /* USER CODE END 3 */
 }
@@ -178,7 +183,8 @@ void SystemClock_Config(void)
 void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
-  /* User can add his own implementation to report the HAL error return state */
+  /* Safe-state before halting */
+  Safety_Shutdown();
   __disable_irq();
   while (1)
   {
