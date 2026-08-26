@@ -295,24 +295,23 @@ static void set_state(MXR_Internal_t *m, CHG_LIB_State_t new_state, uint32_t now
  * @note Called FIRST in process_module() for all states except OFFLINE/RECOVERING
  */
 static void check_offline_timeout(MXR_Internal_t *mod, uint32_t now) {
-    if (mod->view.state == CHG_LIB_STATE_OFFLINE ||
-        mod->view.state == CHG_LIB_STATE_RECOVERING) {
-        return;
-    }
-    
-    uint32_t since_rx = now - mod->view.last_rx_tick;
-    
-    if (since_rx > MXR_OFFLINE_TIMEOUT_MS) {
+    CHG_LIB_State_t new_state;
+    bool timeout_flag;
+    CHG_LIB_FSM_CheckOfflineTimeout(
+        &mod->view.state,
+        mod->view.last_rx_tick,
+        mod->setpoint.should_run,
+        MXR_OFFLINE_TIMEOUT_MS,
+        MXR_WARNING_TIMEOUT_MS,
+        now,
+        &new_state,
+        &timeout_flag
+    );
+    if (timeout_flag) {
         mod->view.stats.timeout_count++;
-        set_state(mod, CHG_LIB_STATE_OFFLINE, now);
-    } else if (since_rx > MXR_WARNING_TIMEOUT_MS) {
-        if (mod->view.state == CHG_LIB_STATE_RUNNING || mod->view.state == CHG_LIB_STATE_STARTING) {
-            set_state(mod, CHG_LIB_STATE_WARNING, now);
-        }
-    } else {
-        if (mod->view.state == CHG_LIB_STATE_WARNING) {
-            set_state(mod, mod->setpoint.should_run ? CHG_LIB_STATE_RUNNING : CHG_LIB_STATE_IDLE, now);
-        }
+    }
+    if (new_state != mod->view.state) {
+        set_state(mod, new_state, now);
     }
 }
 
@@ -380,8 +379,7 @@ static void apply_response(MXR_Internal_t *m, const uint8_t *data, uint32_t now)
  case CHG_LIB_REG_TEMP_AMBIENT: m->view.temp_ambient = CHG_LIB_ProtocolBEToFloat(&data[4]); break;
  case CHG_LIB_REG_ALARM_STATUS: {
      m->view.alarm_status = CHG_LIB_ProtocolBEToU32(&data[4]);
-     /* Preserve COMM_FAIL from software timeout */
-     m->view.alarm_flags = parse_maxwell_alarm(m->view.alarm_status) | (m->view.alarm_flags & CHG_LIB_ALARM_COMM_FAIL);
+     m->view.alarm_flags = parse_maxwell_alarm(m->view.alarm_status);
      break;
  }
  case CHG_LIB_REG_INPUT_POWER: {
@@ -528,6 +526,7 @@ static void process_module(MXR_Internal_t *m, uint32_t now)
  case CHG_LIB_STATE_RECOVERING:
  if ((now - m->view.last_rx_tick) <= MXR_WARNING_TIMEOUT_MS) {
      if ((m->view.stats.rx_count - m->recovery_start_rx_count) >= 5) {
+         m->view.alarm_flags &= ~CHG_LIB_ALARM_COMM_FAIL;
          set_state(m, m->setpoint.should_run ? CHG_LIB_STATE_STARTING : CHG_LIB_STATE_IDLE, now);
          break;
      }
@@ -733,28 +732,11 @@ static void mx_feed_frame(uint32_t ext_id, const uint8_t *data, uint8_t dlc)
 
 static void mx_get_system_summary(CHG_LIB_SystemSummary_t *summary)
 {
- if (summary == 0) return;
- memset(summary, 0, sizeof(*summary));
-
- for (uint8_t i = 0; i < g_module_count; i++) {
- CHG_LIB_ModuleView_t *v = &g_modules[i].view;
- if (!v->enabled) continue;
- if (v->online && (v->state == CHG_LIB_STATE_RUNNING || v->state == CHG_LIB_STATE_STARTING || v->state == CHG_LIB_STATE_IDLE || v->state == CHG_LIB_STATE_WARNING)) {
-     summary->modules_online++;
-     summary->total_current += v->current;
-     summary->total_power_in += (float)v->input_power;
-     if (summary->voltage == 0.0f && v->voltage > 0.0f) {
-         summary->voltage = v->voltage;
-     }
- }
- if (v->state == CHG_LIB_STATE_FAULT) {
- summary->modules_fault++;
- summary->any_critical = true;
- }
- if (v->alarm_flags != CHG_LIB_ALARM_NONE) {
- summary->any_critical = true;
- }
- }
+    if (summary == 0) return;
+    memset(summary, 0, sizeof(*summary));
+    for (uint8_t i = 0; i < g_module_count; i++) {
+        CHG_LIB_Summary_Accumulate(summary, &g_modules[i].view, 0.0f);
+    }
 }
 
 static uint8_t mx_get_module_count(void)

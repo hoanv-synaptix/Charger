@@ -83,6 +83,16 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
+  /* EARLY DIAGNOSTIC: Blink PC6 (RUN LED) immediately after HAL_Init
+   * to confirm MCU is alive. If this LED never toggles, the issue is
+   * in SystemClock_Config or startup, not in App_Init. */
+  __HAL_RCC_GPIOC_CLK_ENABLE();
+  GPIOC->MODER &= ~(3u << (6 * 2));
+  GPIOC->MODER |=  (1u << (6 * 2));   /* PC6 output */
+  GPIOC->BSRR = (1u << 6);            /* PC6 HIGH */
+  for(volatile uint32_t i = 0; i < 500000; i++); /* ~100ms delay */
+  GPIOC->BSRR = (1u << (6 + 16));     /* PC6 LOW */
+  for(volatile uint32_t i = 0; i < 500000; i++);
 
   /* USER CODE END Init */
 
@@ -99,17 +109,40 @@ int main(void)
   MX_ADC1_Init();
   MX_SPI1_Init();
   MX_USART1_UART_Init();
+  /* EARLY DIAGNOSTIC: Send immediate print via UART1 to confirm USART1 works
+   * BEFORE any FDCAN or USB init. If this appears, boot is alive up to here. */
+  {
+      const char *early_msg = "\r\n[EARLY] UART1 alive - booting...\r\n";
+      HAL_UART_Transmit(&huart1, (uint8_t *)early_msg, (uint16_t)35, 100);
+  }
   MX_FDCAN1_Init();
   MX_FDCAN2_Init();
+  /* EARLY DIAGNOSTIC: Confirm FDCAN inits passed without Error_Handler */
+  {
+      const char *fdcan_msg = "[EARLY] FDCAN1+2 init OK\r\n";
+      HAL_UART_Transmit(&huart1, (uint8_t *)fdcan_msg, (uint16_t)27, 100);
+  }
   MX_SPI2_Init();
   MX_USART3_UART_Init();
   MX_USART5_UART_Init();
   MX_TIM6_Init();
   MX_TIM7_Init();
-  MX_IWDG_Init();
+  /* EARLY DIAGNOSTIC: Confirm we reached USB init */
+  {
+      const char *pre_usb = "[EARLY] About to init USB...\r\n";
+      HAL_UART_Transmit(&huart1, (uint8_t *)pre_usb, (uint16_t)30, 100);
+  }
   MX_USB_Device_Init();
+  /* EARLY DIAGNOSTIC: Confirm USB init passed */
+  {
+      const char *post_usb = "[EARLY] USB init done\r\n";
+      HAL_UART_Transmit(&huart1, (uint8_t *)post_usb, (uint16_t)23, 100);
+  }
   /* USER CODE BEGIN 2 */
   App_Init();
+
+  /* IWDG must start AFTER App_Init() to avoid reset during boot sequence */
+  MX_IWDG_Init();
 
   /* USER CODE END 2 */
 

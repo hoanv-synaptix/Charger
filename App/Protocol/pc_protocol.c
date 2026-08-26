@@ -360,7 +360,7 @@ static void process_frame(uint8_t cmd, const uint8_t *payload, uint8_t len)
     case PC_CMD_SET_DRIVER:
         if (len != 1) { send_nack(cmd, PC_ERR_BAD_LENGTH); return; }
         if (!CHG_LIB_SelectDriver((CHG_LIB_DriverId_t)payload[0])) {
-            send_nack(cmd, PC_ERR_CAN_TX_FAIL);
+            send_nack(cmd, PC_ERR_BAD_PARAM);
             return;
         }
         CHG_LIB_Init();

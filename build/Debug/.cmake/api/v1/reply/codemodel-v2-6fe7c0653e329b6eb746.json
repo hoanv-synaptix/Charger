@@ -1,0 +1,249 @@
+{
+	"configurations" : 
+	[
+		{
+			"directories" : 
+			[
+				{
+					"build" : ".",
+					"childIndexes" : 
+					[
+						1,
+						2,
+						3,
+						7,
+						11
+					],
+					"jsonFile" : "directory-.-Debug-d0094a50bb2071803777.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.22"
+					},
+					"projectIndex" : 0,
+					"source" : ".",
+					"targetIndexes" : 
+					[
+						0
+					]
+				},
+				{
+					"build" : "cmake/stm32cubemx",
+					"jsonFile" : "directory-cmake.stm32cubemx-Debug-a874d3cc84b5982fda2e.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.22"
+					},
+					"parentIndex" : 0,
+					"projectIndex" : 0,
+					"source" : "cmake/stm32cubemx",
+					"targetIndexes" : 
+					[
+						1,
+						2
+					]
+				},
+				{
+					"build" : "BSP",
+					"jsonFile" : "directory-BSP-Debug-01d1a4265031c46cb17b.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.22"
+					},
+					"parentIndex" : 0,
+					"projectIndex" : 0,
+					"source" : "BSP"
+				},
+				{
+					"build" : "Modules",
+					"childIndexes" : 
+					[
+						4,
+						5,
+						6
+					],
+					"jsonFile" : "directory-Modules-Debug-e28d338f33e3f94bd6d9.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.22"
+					},
+					"parentIndex" : 0,
+					"projectIndex" : 0,
+					"source" : "Modules"
+				},
+				{
+					"build" : "Modules/bms",
+					"jsonFile" : "directory-Modules.bms-Debug-335ffc9f2d335367030a.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.22"
+					},
+					"parentIndex" : 3,
+					"projectIndex" : 0,
+					"source" : "Modules/bms"
+				},
+				{
+					"build" : "Modules/hmi",
+					"jsonFile" : "directory-Modules.hmi-Debug-81d4f1e174ed8d95c4d1.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.22"
+					},
+					"parentIndex" : 3,
+					"projectIndex" : 0,
+					"source" : "Modules/hmi"
+				},
+				{
+					"build" : "Modules/chg_lib",
+					"jsonFile" : "directory-Modules.chg_lib-Debug-4204683a169ad99d9c43.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.22"
+					},
+					"parentIndex" : 3,
+					"projectIndex" : 0,
+					"source" : "Modules/chg_lib"
+				},
+				{
+					"build" : "App",
+					"childIndexes" : 
+					[
+						8,
+						9,
+						10
+					],
+					"jsonFile" : "directory-App-Debug-9910e6dded6739cc0f00.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.22"
+					},
+					"parentIndex" : 0,
+					"projectIndex" : 0,
+					"source" : "App"
+				},
+				{
+					"build" : "App/Charge",
+					"jsonFile" : "directory-App.Charge-Debug-f59336fd645bbbf7165a.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.22"
+					},
+					"parentIndex" : 7,
+					"projectIndex" : 0,
+					"source" : "App/Charge"
+				},
+				{
+					"build" : "App/Protocol",
+					"jsonFile" : "directory-App.Protocol-Debug-41dee6885b238a7387cb.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.22"
+					},
+					"parentIndex" : 7,
+					"projectIndex" : 0,
+					"source" : "App/Protocol"
+				},
+				{
+					"build" : "App/System",
+					"jsonFile" : "directory-App.System-Debug-1ccdc9ff28ff8ad64d59.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.22"
+					},
+					"parentIndex" : 7,
+					"projectIndex" : 0,
+					"source" : "App/System"
+				},
+				{
+					"build" : "Utils",
+					"childIndexes" : 
+					[
+						12
+					],
+					"jsonFile" : "directory-Utils-Debug-41eaf4291e881bd200c4.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.22"
+					},
+					"parentIndex" : 0,
+					"projectIndex" : 0,
+					"source" : "Utils"
+				},
+				{
+					"build" : "Utils/Log",
+					"jsonFile" : "directory-Utils.Log-Debug-35cb1a0722aee81a4ffb.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.22"
+					},
+					"parentIndex" : 11,
+					"projectIndex" : 0,
+					"source" : "Utils/Log"
+				}
+			],
+			"name" : "Debug",
+			"projects" : 
+			[
+				{
+					"directoryIndexes" : 
+					[
+						0,
+						1,
+						2,
+						3,
+						4,
+						5,
+						6,
+						7,
+						8,
+						9,
+						10,
+						11,
+						12
+					],
+					"name" : "Charger",
+					"targetIndexes" : 
+					[
+						0,
+						1,
+						2
+					]
+				}
+			],
+			"targets" : 
+			[
+				{
+					"directoryIndex" : 0,
+					"id" : "Charger::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-Charger-Debug-92a0c568e7c30df66677.json",
+					"name" : "Charger",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 1,
+					"id" : "STM32_Drivers::@768a070a0fe75716b479",
+					"jsonFile" : "target-STM32_Drivers-Debug-cba02f03138b190352bb.json",
+					"name" : "STM32_Drivers",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 1,
+					"id" : "USB_Device_Library::@768a070a0fe75716b479",
+					"jsonFile" : "target-USB_Device_Library-Debug-6bc815cb38789e9a994e.json",
+					"name" : "USB_Device_Library",
+					"projectIndex" : 0
+				}
+			]
+		}
+	],
+	"kind" : "codemodel",
+	"paths" : 
+	{
+		"build" : "D:/Projects/Charger_CTRL/Charger/build/Debug",
+		"source" : "D:/Projects/Charger_CTRL/Charger"
+	},
+	"version" : 
+	{
+		"major" : 2,
+		"minor" : 6
+	}
+}

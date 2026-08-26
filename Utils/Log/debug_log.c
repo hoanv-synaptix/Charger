@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>
+#include <stdbool.h>
 
 #define LOG_BUF_SIZE  128
 
@@ -37,9 +38,6 @@ void LOG_Banner(void)
     LOG("  UART1 Debug: PA9 TX @ 115200\r\n");
     LOG("========================================\r\n");
 }
-
-
-
 
 /* Retarget printf() to UART1 */
 int __io_putchar(int ch)

@@ -1,0 +1,104 @@
+name: Charger Firmware CI
+
+on:
+  push:
+    branches: [ "main", "release/*" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  static-analysis:
+    name: 1. Static Analysis & Drift Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+        
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+          
+      - name: Check CubeMX (.ioc) Drift
+        run: python check_ioc.py
+
+      # Optional: Cppcheck for C static analysis
+      - name: Install Cppcheck
+        run: sudo apt-get install -y cppcheck
+        
+      - name: Run Cppcheck (MISRA / Bugs)
+        run: cppcheck --enable=warning,performance,portability --inline-suppr --error-exitcode=1 -I Core/Inc -I Modules -I App Core/Src/ Modules/ App/ BSP/
+
+  unit-test:
+    name: 2. Native Logic Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+        
+      - name: Compile and Run test_logic.c
+        run: |
+          gcc -I"Modules/bms" -I"Modules/chg_lib" -I"test/mock_hal" test/test_logic.c Modules/bms/bms_protocol.c Modules/chg_lib/chg_lib_fsm.c -o test_logic.elf
+          ./test_logic.elf
+
+  build-firmware:
+    name: 3. Build Firmware (Release)
+    runs-on: ubuntu-latest
+    needs: [static-analysis, unit-test]
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+        
+      - name: Install ARM GCC Toolchain
+        uses: carlosperate/arm-none-eabi-gcc-action@v1
+        with:
+          release: '12.2.Rel1'
+          
+      - name: Install CMake & Ninja
+        run: sudo apt-get install -y cmake ninja-build
+        
+      - name: Build Project
+        run: |
+          cmake --preset Release
+          cmake --build build/Release
+          
+      - name: Check RAM/ROM Footprint
+        run: arm-none-eabi-size build/Release/Charger.elf
+        
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: firmware-release
+          path: |
+            build/Release/Charger.elf
+            build/Release/Charger.hex
+            build/Release/Charger.bin
+
+  hil-automation:
+    name: 4. HIL & Fuzzing (Hardware-In-The-Loop)
+    # This job requires a 'self-hosted' runner (a PC in your lab connected to the board)
+    runs-on: self-hosted
+    needs: [build-firmware]
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+        
+      - name: Download Firmware Artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: firmware-release
+          path: build/Release/
+          
+      - name: Flash Firmware to STM32 (ST-Link)
+        run: |
+          # Dùng STM32CubeProgrammer CLI d? n?p code t? d?ng
+          STM32_Programmer_CLI -c port=SWD -d build/Release/Charger.hex -v -rst
+          
+      - name: Install Python requirements
+        run: pip install pyserial python-can
+        
+      - name: Run E2E Integration Sync Test
+        run: python test/integration_sync_test.py
+        
+      - name: Run Fuzzing Test (Robustness)
+        run: python test/fuzz_pc.py

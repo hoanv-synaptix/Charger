@@ -1,0 +1,4 @@
+D:/Projects/Charger_CTRL/Charger/App/System/app_main.c:68:6:App_Init	8	static
+D:/Projects/Charger_CTRL/Charger/App/System/app_main.c:125:6:App_Loop	256	static
+D:/Projects/Charger_CTRL/Charger/App/System/app_main.c:247:20:App_GetCurrentDriver	8	static
+D:/Projects/Charger_CTRL/Charger/App/System/app_main.c:249:6:DWIN_OnCommandReceived	8	static

@@ -1,0 +1,4 @@
+D:/Projects/Charger_CTRL/Charger/Core/Src/spi.c:31:6:MX_SPI1_Init	8	static
+D:/Projects/Charger_CTRL/Charger/Core/Src/spi.c:65:6:MX_SPI2_Init	8	static
+D:/Projects/Charger_CTRL/Charger/Core/Src/spi.c:99:6:HAL_SPI_MspInit	48	static
+D:/Projects/Charger_CTRL/Charger/Core/Src/spi.c:162:6:HAL_SPI_MspDeInit	8	static

@@ -17,6 +17,12 @@
   */
 void MX_IWDG_Init(void)
 {
+  /* Enable LSI Clock required for IWDG */
+  SET_BIT(RCC->CSR, RCC_CSR_LSION);
+  while ((RCC->CSR & RCC_CSR_LSIRDY) == 0U) {
+      /* Wait for LSI to be ready */
+  }
+
   /* USER CODE BEGIN IWDG_Init 0 */
 
   /* USER CODE END IWDG_Init 0 */

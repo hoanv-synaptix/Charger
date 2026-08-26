@@ -125,7 +125,7 @@ void HAL_TIM_Base_MspInit(TIM_HandleTypeDef* tim_baseHandle)
     __HAL_LINKDMA(tim_baseHandle,hdma[TIM_DMA_ID_UPDATE],hdma_tim6_up);
 
     /* TIM6 interrupt Init */
-    HAL_NVIC_SetPriority(TIM6_DAC_LPTIM1_IRQn, 0, 0);
+    HAL_NVIC_SetPriority(TIM6_DAC_LPTIM1_IRQn, 2, 0);
     HAL_NVIC_EnableIRQ(TIM6_DAC_LPTIM1_IRQn);
   /* USER CODE BEGIN TIM6_MspInit 1 */
 
@@ -140,7 +140,7 @@ void HAL_TIM_Base_MspInit(TIM_HandleTypeDef* tim_baseHandle)
     __HAL_RCC_TIM7_CLK_ENABLE();
 
     /* TIM7 interrupt Init */
-    HAL_NVIC_SetPriority(TIM7_LPTIM2_IRQn, 0, 0);
+    HAL_NVIC_SetPriority(TIM7_LPTIM2_IRQn, 2, 0);
     HAL_NVIC_EnableIRQ(TIM7_LPTIM2_IRQn);
   /* USER CODE BEGIN TIM7_MspInit 1 */
 

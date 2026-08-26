@@ -14,6 +14,7 @@
 
 #include "charge_controller.h"
 #include "charge_cycle_config.h"
+#include "bsp_adc.h"
 #include "charge_cycle_storage.h"
 #include "chg_lib.h"
 #include "bms_core.h"
@@ -153,8 +154,7 @@ static void set_fault(uint32_t flags) {
                         CHARGE_CTRL_FAULT_NO_DRIVER)) {
         g_ctrl.stop_reason = CHARGE_STOP_PRECONDITION;
     }
-    if (g_ctrl.state == CHARGE_CTRL_STATE_RUNNING ||
-        g_ctrl.state == CHARGE_CTRL_STATE_DERATING) {
+    if (g_ctrl.state == CHARGE_CTRL_STATE_RUNNING) {
         transition_to(CHARGE_CTRL_STATE_FAULT);
     }
 }
@@ -262,24 +262,26 @@ static bool check_preconditions_set_fault(void) {
 }
 
 static void apply_charge_targets(void) {
-    /* Apply voltage to all modules */
-    CHG_LIB_SetVoltageAll(g_ctrl.target_voltage_v);
-
-    /* Apply current limit per module */
-    CHG_LIB_SetCurrentLimitAll(g_ctrl.target_current_per_module_a);
-
-    /* Store applied values */
-    g_ctrl.applied_voltage_v = g_ctrl.target_voltage_v;
-    g_ctrl.applied_current_per_module_a = g_ctrl.target_current_per_module_a;
-
-    /* Start or stop based on current - only log on state change */
     bool should_run = (g_ctrl.target_current_total_a > 0.0f && !g_ctrl.inhibit);
+
     if (should_run && !g_ctrl.last_running) {
+        /* Force apply on start */
+        CHG_LIB_SetVoltageAll(g_ctrl.target_voltage_v);
+        CHG_LIB_SetCurrentLimitAll(g_ctrl.target_current_per_module_a);
         CHG_LIB_StartAll();
+        
         int v_int = (int)(g_ctrl.target_voltage_v * 10.0f);
         int i_int = (int)(g_ctrl.target_current_per_module_a * 10.0f);
         LOG("CC: Start V=%d.%dV I=%d.%dA/mod\r\n",
             v_int / 10, v_int % 10, i_int / 10, i_int % 10);
+    } else if (should_run) {
+        /* Only send if changed */
+        if (g_ctrl.target_voltage_v != g_ctrl.applied_voltage_v) {
+            CHG_LIB_SetVoltageAll(g_ctrl.target_voltage_v);
+        }
+        if (g_ctrl.target_current_per_module_a != g_ctrl.applied_current_per_module_a) {
+            CHG_LIB_SetCurrentLimitAll(g_ctrl.target_current_per_module_a);
+        }
     } else if (!should_run && g_ctrl.last_running) {
         CHG_LIB_StopAll();
         if (g_ctrl.inhibit) {
@@ -288,6 +290,9 @@ static void apply_charge_targets(void) {
         LOG("CC: Stop inhibit=%u derating=%u\r\n",
             g_ctrl.inhibit, g_ctrl.derating);
     }
+
+    g_ctrl.applied_voltage_v = g_ctrl.target_voltage_v;
+    g_ctrl.applied_current_per_module_a = g_ctrl.target_current_per_module_a;
     g_ctrl.last_running = should_run;
 }
 
@@ -563,10 +568,17 @@ static ChargeStageEval_t eval_temp_stage(const ChargeCycleConfig_t *cfg, const B
     }
 
     /* Apply hysteresis */
-    if (g_ctrl.last_temp_band != CHARGE_STAGE_BAND_NONE && new_band < g_ctrl.last_temp_band) {
-        float lower_thresh = get_lower_threshold_for_band(cfg, CHARGE_LIMIT_SOURCE_TEMPERATURE, g_ctrl.last_temp_band);
-        if (temp_c >= (lower_thresh - cfg->temp_delta_c)) {
-            new_band = g_ctrl.last_temp_band; /* Keep current band */
+    if (g_ctrl.last_temp_band != CHARGE_STAGE_BAND_NONE) {
+        if (new_band < g_ctrl.last_temp_band) {
+            float lower_thresh = get_lower_threshold_for_band(cfg, CHARGE_LIMIT_SOURCE_TEMPERATURE, g_ctrl.last_temp_band);
+            if (temp_c >= (lower_thresh - cfg->temp_delta_c)) {
+                new_band = g_ctrl.last_temp_band; /* Keep current band */
+            }
+        } else if (new_band > g_ctrl.last_temp_band) {
+            float upper_thresh = get_lower_threshold_for_band(cfg, CHARGE_LIMIT_SOURCE_TEMPERATURE, new_band);
+            if (temp_c <= (upper_thresh + cfg->temp_delta_c)) {
+                new_band = g_ctrl.last_temp_band; /* Keep current band */
+            }
         }
     }
     
@@ -763,8 +775,16 @@ static bool compute_stage_limits(const ChargeCycleConfig_t *cfg, const BMS_View_
 
 static void apply_jack_temp_derating(const ChargeCycleConfig_t *cfg, uint32_t now_tick) {
     /* ----- Jack temperature soft derating ----- */
-    /* TODO: Hàm đọc ADC thực tế sẽ được implement sau. Tạm thời dùng biến giả lập */
-    float mcu_adc_temp_c = 25.0f; 
+    float mcu_adc_temp_c = -273.15f;
+    for (uint8_t i = 0; i < 4; i++) {
+        float temp = BSP_ADC_GetTempC(i);
+        if (isfinite(temp) && temp > mcu_adc_temp_c) {
+            mcu_adc_temp_c = temp;
+        }
+    }
+    if (mcu_adc_temp_c < -50.0f) {
+        mcu_adc_temp_c = 25.0f; // Fallback if all disconnected
+    }
 
     if (cfg->protect_jack_temp_enabled) {
         if (mcu_adc_temp_c >= cfg->protect_jack_temp_threshold_c) {
@@ -1032,8 +1052,7 @@ void ChargeController_Process(uint32_t now_tick) {
     g_ctrl.actual_module_count = get_active_module_count();
 
     /* Check for module count mismatch during running */
-    if ((g_ctrl.state == CHARGE_CTRL_STATE_RUNNING ||
-         g_ctrl.state == CHARGE_CTRL_STATE_DERATING) &&
+    if (g_ctrl.state == CHARGE_CTRL_STATE_RUNNING &&
         g_ctrl.actual_module_count != g_ctrl.source_module_count) {
         
         if (g_ctrl.module_mismatch_timer_tick == 0) {
@@ -1061,8 +1080,7 @@ void ChargeController_Process(uint32_t now_tick) {
             }
             break;
 
-        case CHARGE_CTRL_STATE_RUNNING:
-        case CHARGE_CTRL_STATE_DERATING: {
+        case CHARGE_CTRL_STATE_RUNNING: {
             ChargeCycleConfig_t cfg;
             BMS_View_t bms;
             ChargeCycleConfig_Get(&cfg);
@@ -1127,8 +1145,7 @@ bool ChargeController_CheckPreconditions(uint32_t *fault_flags_out) {
 }
 
 bool ChargeController_Start(ChargeCtrlOwner_t owner, bool manual_mode) {
-    if (g_ctrl.state == CHARGE_CTRL_STATE_RUNNING ||
-        g_ctrl.state == CHARGE_CTRL_STATE_DERATING) {
+    if (g_ctrl.state == CHARGE_CTRL_STATE_RUNNING) {
         LOG("CC: Already running\r\n");
         return true;  /* Already running */
     }
@@ -1216,8 +1233,7 @@ void ChargeController_EmergencyStop(void) {
 }
 
 bool ChargeController_IsRunning(void) {
-    return (g_ctrl.state == CHARGE_CTRL_STATE_RUNNING ||
-            g_ctrl.state == CHARGE_CTRL_STATE_DERATING);
+    return (g_ctrl.state == CHARGE_CTRL_STATE_RUNNING);
 }
 
 void ChargeController_GetView(ChargeCtrlView_t *view) {

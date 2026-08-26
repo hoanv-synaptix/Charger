@@ -1,0 +1,12 @@
+D:/Projects/Charger_CTRL/Charger/Modules/bms/bms_protocol.c:20:24:get_u16_le	0	static
+D:/Projects/Charger_CTRL/Charger/Modules/bms/bms_protocol.c:43:13:parse_batt_st1	16	static
+D:/Projects/Charger_CTRL/Charger/Modules/bms/bms_protocol.c:53:13:parse_cell_volt	16	static
+D:/Projects/Charger_CTRL/Charger/Modules/bms/bms_protocol.c:64:13:parse_cell_temp	0	static
+D:/Projects/Charger_CTRL/Charger/Modules/bms/bms_protocol.c:98:13:parse_batt_st2	16	static
+D:/Projects/Charger_CTRL/Charger/Modules/bms/bms_protocol.c:118:13:parse_bms_sw_sta	0	static
+D:/Projects/Charger_CTRL/Charger/Modules/bms/bms_protocol.c:132:13:parse_cell_volt_full	24	static
+D:/Projects/Charger_CTRL/Charger/Modules/bms/bms_protocol.c:148:13:parse_cell_temp_full	0	static
+D:/Projects/Charger_CTRL/Charger/Modules/bms/bms_protocol.c:76:13:parse_alm_info	8	static
+D:/Projects/Charger_CTRL/Charger/Modules/bms/bms_protocol.c:109:13:parse_chg_request	0	static
+D:/Projects/Charger_CTRL/Charger/Modules/bms/bms_protocol.c:188:6:BMS_ParseFrame	32	static
+D:/Projects/Charger_CTRL/Charger/Modules/bms/bms_protocol.c:222:6:BMS_BuildCtrlInfo	16	static

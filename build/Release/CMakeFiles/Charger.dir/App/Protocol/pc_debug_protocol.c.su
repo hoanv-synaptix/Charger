@@ -1,0 +1,15 @@
+D:/Projects/Charger_CTRL/Charger/App/Protocol/pc_debug_protocol.c:156:10:DebugProtocol_BuildSystemInfo.part.0	304	static
+D:/Projects/Charger_CTRL/Charger/App/Protocol/pc_debug_protocol.c:224:10:DebugProtocol_BuildBMSData.part.0	128	static
+D:/Projects/Charger_CTRL/Charger/App/Protocol/pc_debug_protocol.c:296:10:DebugProtocol_BuildChargeConfig.part.0	224	static
+D:/Projects/Charger_CTRL/Charger/App/Protocol/pc_debug_protocol.c:27:6:DebugProtocol_Init	0	static
+D:/Projects/Charger_CTRL/Charger/App/Protocol/pc_debug_protocol.c:34:6:DebugProtocol_Enter	16	static
+D:/Projects/Charger_CTRL/Charger/App/Protocol/pc_debug_protocol.c:48:6:DebugProtocol_Exit	8	static
+D:/Projects/Charger_CTRL/Charger/App/Protocol/pc_debug_protocol.c:54:6:DebugProtocol_IsActive	0	static
+D:/Projects/Charger_CTRL/Charger/App/Protocol/pc_debug_protocol.c:59:10:DebugProtocol_BuildModuleData	120	static
+D:/Projects/Charger_CTRL/Charger/App/Protocol/pc_debug_protocol.c:124:10:DebugProtocol_BuildAllModulesData	32	static
+D:/Projects/Charger_CTRL/Charger/App/Protocol/pc_debug_protocol.c:156:10:DebugProtocol_BuildSystemInfo	8	static
+D:/Projects/Charger_CTRL/Charger/App/Protocol/pc_debug_protocol.c:224:10:DebugProtocol_BuildBMSData	8	static
+D:/Projects/Charger_CTRL/Charger/App/Protocol/pc_debug_protocol.c:274:10:DebugProtocol_BuildCommStats	120	static
+D:/Projects/Charger_CTRL/Charger/App/Protocol/pc_debug_protocol.c:296:10:DebugProtocol_BuildChargeConfig	8	static
+D:/Projects/Charger_CTRL/Charger/App/Protocol/pc_debug_protocol.c:309:6:DebugProtocol_SendStream	264	static
+D:/Projects/Charger_CTRL/Charger/App/Protocol/pc_debug_protocol.c:329:6:DebugProtocol_HandleCommand	488	static

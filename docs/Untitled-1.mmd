@@ -1,0 +1,130 @@
+---
+references:
+  - "File: /App/Charge/charge_controller.c"
+  - "File: /App/Charge/charge_cycle_config.c"
+  - "File: /App/Protocol/pc_protocol.c"
+  - "File: /App/System/app_main.c"
+  - "File: /BSP/bsp_can.c"
+  - "File: /BSP/bsp_failsafe.c"
+  - "File: /BSP/bsp_failsafe.h"
+  - "File: /BSP/bsp_flash.c"
+  - "File: /Core/Inc/iwdg.h"
+  - "File: /Core/Inc/stm32g0xx_hal_conf.h"
+  - "File: /Core/Src/fdcan.c"
+  - "File: /Core/Src/iwdg.c"
+  - "File: /Core/Src/main.c"
+  - "File: /Core/Src/stm32g0xx_it.c"
+  - "File: /Core/Src/usart.c"
+  - "File: /Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_hal_iwdg.h"
+  - "File: /Modules/bms/bms_core.c"
+  - "File: /Modules/chg_lib/chg_lib.h"
+  - "File: /Modules/chg_lib/chg_lib_core.c"
+  - "File: /Modules/chg_lib/chg_lib_lianming.c"
+  - "File: /Modules/chg_lib/chg_lib_maxwell.c"
+  - "File: /Modules/chg_lib/chg_lib_tonhe.c"
+  - "File: /Utils/Log/debug_log.c"
+  - "File: /test/test_sprint1_driver.py"
+  - "File: /test/test_sprint1_filter.py"
+  - "File: /test/test_sprint1_iwdg_failsafe.py"
+  - "File: /test/test_sprint1_nan_inf.py"
+  - "File: /test/test_sprint1_race.py"
+generationTime: 2026-08-25T21:25:16.695Z
+---
+flowchart TD
+    Main["main()"] --> HAL["HAL_Init() and SystemClock_Config()"]
+    HAL --> Periph["Initialize GPIO, DMA, ADC, SPI, UART, FDCAN, timers, IWDG, USB"]
+    Periph --> AppInit["App_Init()"]
+    AppInit --> BusInit["Start CAN1 charger bus and CAN2 BMS bus"]
+    AppInit --> BMSInit["BMS_Init()"]
+    AppInit --> DriverReg["Register Maxwell, Lianming, and TonHe drivers"]
+    AppInit --> ConfigInit["Initialize and load charge-cycle configuration"]
+    AppInit --> CtrlInit["ChargeController_Init()"]
+    CtrlInit --> MainLoop["Infinite App_Loop()"]
+
+    MainLoop --> TxProcess["Process queued USB TX"]
+    TxProcess --> CANWatch["BSP_CAN_Process(): recover bus-off controllers"]
+    CANWatch --> Periodic{"20 ms elapsed?"}
+    Periodic -->|Yes| CoreProcess["CHG_LIB_Process() and BMS_Process()"]
+    CoreProcess --> CtrlProcess["ChargeController_Process()"]
+    Periodic -->|No| Buttons["Debounced START and STOP buttons"]
+    CtrlProcess --> Buttons
+    Buttons --> LEDs["Update RUN and FAULT LEDs"]
+    LEDs --> Watchdog["MX_IWDG_Refresh()"]
+    Watchdog --> MainLoop
+
+    subgraph Controller["Charge Controller State Machine"]
+        CtrlProcess --> CtrlState{"Controller state"}
+        CtrlState -->|IDLE| Idle["Wait"]
+        CtrlState -->|READY| Preconditions["Validate driver, modules, and configuration"]
+        Preconditions -->|Pass| Running["RUNNING"]
+        Preconditions -->|Fail| Fault["FAULT"]
+        CtrlState -->|RUNNING| Mode{"Manual or configured mode?"}
+        Mode -->|Manual| Manual["Apply manual voltage and current targets"]
+        Mode -->|Standalone| Standalone["Apply configured targets and fresh module-voltage completion"]
+        Mode -->|BMS-controlled| BMSMode["Read BMS, alarms, stage limits, and protections"]
+        Manual --> Apply["Set voltage/current and start or stop all modules"]
+        Standalone --> Apply
+        BMSMode --> Stage["Evaluate cell voltage, temperature, and SOC stages"]
+        Stage --> Limit["Select minimum current limit or inhibit"]
+        Limit --> Apply
+        Apply --> Running
+        Running --> StopDecision{"Stop, completion, or hard fault?"}
+        StopDecision -->|Stop or completion| Stopping["STOPPING"]
+        StopDecision -->|Hard fault| Fault
+        Stopping --> Idle
+        Fault --> FaultStop["Stop charging and retain fault"]
+    end
+
+    subgraph Protocol["PC USB CDC Protocol"]
+        USB["USB CDC receive interrupt"] --> Feed["PC_Protocol_FeedByte()"]
+        Feed --> RxFSM{"SOF, command, length, payload, and CRC valid?"}
+        RxFSM -->|No| Nack["Queue NACK"]
+        RxFSM -->|Yes| Command["process_frame()"]
+        Command --> PCAction{"Command type"}
+        PCAction -->|Start, stop, emergency stop| ControllerAPI["Call ChargeController API"]
+        PCAction -->|Set voltage/current| ManualAPI["Validate finite float and set manual target"]
+        PCAction -->|Driver or module setup| DriverAPI["Select driver, initialize, or add module"]
+        PCAction -->|Read register| ReadReg["Read module view and queue response"]
+        Command --> TxQueue["Enqueue ACK, NACK, status, or response"]
+        ControllerAPI --> TxQueue
+        ManualAPI --> TxQueue
+        DriverAPI --> TxQueue
+        ReadReg --> TxQueue
+        TxQueue --> TxProcess
+    end
+
+    subgraph CANPath["CAN Reception and Driver Dispatch"]
+        CANIRQ["FDCAN RX interrupt"] --> CANCallback["HAL_FDCAN_RxFifo0Callback()"]
+        CANCallback --> BusSelect{"FDCAN instance"}
+        BusSelect -->|FDCAN1| ChargerFrame["CHG_LIB_FeedCanFrame()"]
+        BusSelect -->|FDCAN2| BMSFrame["BMS_FeedFrame()"]
+        ChargerFrame --> DriverCore["Active driver operation table"]
+        DriverCore --> SelectedDriver{"Selected charger driver"}
+        SelectedDriver -->|Maxwell| Maxwell["Maxwell protocol parser and module FSM"]
+        SelectedDriver -->|Lianming| Lianming["Lianming protocol parser and module FSM"]
+        SelectedDriver -->|TonHe| TonHe["TonHe J1939 parser and module FSM"]
+        BMSFrame --> BMSData["Parse valid BMS data and update view"]
+        BMSData --> BMSProcess["BMS online, stale, alarm, and recovery logic"]
+        BMSProcess --> CtrlProcess
+        Maxwell --> DriverCore
+        Lianming --> DriverCore
+        TonHe --> DriverCore
+    end
+
+    subgraph Storage["Configuration and Safety"]
+        ConfigInit --> Validate["Validate finite values, ranges, ordering, and module limits"]
+        Validate -->|Valid| ConfigStore["Store active configuration"]
+        Validate -->|Invalid| ConfigReject["Reject configuration"]
+        ErrorPath["Error_Handler() or HardFault_Handler()"] --> Safety["Safety_Shutdown()"]
+        Safety --> Relays["Disable relays and POWER_EN"]
+        Safety --> StopCAN["Stop FDCAN controllers"]
+        Safety --> FaultLED["Turn on fault LED"]
+    end
+
+    subgraph Verification["Regression Tests"]
+        Tests["Sprint tests"] --> FilterTest["CAN standard and extended filter checks"]
+        Tests --> DriverTest["Driver selection, removal, and recovery checks"]
+        Tests --> SafetyTest["IWDG and failsafe checks"]
+        Tests --> NumericTest["NaN, Inf, and flash safety checks"]
+        Tests --> RaceTest["ISR safety, queue, atomic view, and tick checks"]
+    end

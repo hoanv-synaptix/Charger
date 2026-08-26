@@ -1,0 +1,10 @@
+D:/Projects/Charger_CTRL/Charger/App/System/app_main.c:56:13:led_run_on	8	static
+D:/Projects/Charger_CTRL/Charger/App/System/app_main.c:57:13:led_run_off	8	static
+D:/Projects/Charger_CTRL/Charger/App/System/app_main.c:58:13:led_fault_on	8	static
+D:/Projects/Charger_CTRL/Charger/App/System/app_main.c:59:13:led_fault_off	8	static
+D:/Projects/Charger_CTRL/Charger/App/System/app_main.c:63:16:read_btn_start	8	static
+D:/Projects/Charger_CTRL/Charger/App/System/app_main.c:64:16:read_btn_stop	8	static
+D:/Projects/Charger_CTRL/Charger/App/System/app_main.c:68:6:App_Init	8	static
+D:/Projects/Charger_CTRL/Charger/App/System/app_main.c:125:6:App_Loop	280	static
+D:/Projects/Charger_CTRL/Charger/App/System/app_main.c:247:20:App_GetCurrentDriver	8	static
+D:/Projects/Charger_CTRL/Charger/App/System/app_main.c:249:6:DWIN_OnCommandReceived	16	static

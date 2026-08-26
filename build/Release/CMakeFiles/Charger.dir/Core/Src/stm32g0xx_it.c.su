@@ -1,0 +1,16 @@
+D:/Projects/Charger_CTRL/Charger/Core/Src/stm32g0xx_it.c:83:6:NMI_Handler	0	static
+D:/Projects/Charger_CTRL/Charger/Core/Src/stm32g0xx_it.c:98:6:HardFault_Handler	8	static,ignoring_inline_asm
+D:/Projects/Charger_CTRL/Charger/Core/Src/stm32g0xx_it.c:114:6:SVC_Handler	0	static
+D:/Projects/Charger_CTRL/Charger/Core/Src/stm32g0xx_it.c:127:6:PendSV_Handler	0	static
+D:/Projects/Charger_CTRL/Charger/Core/Src/stm32g0xx_it.c:140:6:SysTick_Handler	8	static
+D:/Projects/Charger_CTRL/Charger/Core/Src/stm32g0xx_it.c:161:6:USB_UCPD1_2_IRQHandler	8	static
+D:/Projects/Charger_CTRL/Charger/Core/Src/stm32g0xx_it.c:175:6:DMA1_Channel1_IRQHandler	8	static
+D:/Projects/Charger_CTRL/Charger/Core/Src/stm32g0xx_it.c:189:6:DMA1_Channel2_3_IRQHandler	8	static
+D:/Projects/Charger_CTRL/Charger/Core/Src/stm32g0xx_it.c:204:6:DMA1_Ch4_7_DMA2_Ch1_5_DMAMUX1_OVR_IRQHandler	8	static
+D:/Projects/Charger_CTRL/Charger/Core/Src/stm32g0xx_it.c:219:6:ADC1_COMP_IRQHandler	8	static
+D:/Projects/Charger_CTRL/Charger/Core/Src/stm32g0xx_it.c:233:6:TIM6_DAC_LPTIM1_IRQHandler	8	static
+D:/Projects/Charger_CTRL/Charger/Core/Src/stm32g0xx_it.c:247:6:TIM7_LPTIM2_IRQHandler	8	static
+D:/Projects/Charger_CTRL/Charger/Core/Src/stm32g0xx_it.c:261:6:TIM16_FDCAN_IT0_IRQHandler	8	static
+D:/Projects/Charger_CTRL/Charger/Core/Src/stm32g0xx_it.c:276:6:TIM17_FDCAN_IT1_IRQHandler	8	static
+D:/Projects/Charger_CTRL/Charger/Core/Src/stm32g0xx_it.c:291:6:USART1_IRQHandler	8	static
+D:/Projects/Charger_CTRL/Charger/Core/Src/stm32g0xx_it.c:305:6:USART3_4_5_6_LPUART1_IRQHandler	8	static

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file    app_main.c
  * @brief   Application layer - main loop logic
  * @note    CAN1 (FDCAN1, PD0/PD1): 125Kbps - charger modules (Maxwell/Lianming/TonHe)
@@ -9,9 +9,11 @@
 
 #include "app_main.h"
 #include "bsp_can.h"
+#include "bsp_adc.h"
 #include "bsp_rs485.h"
 #include "bms_can.h"
 #include "bms_core.h"
+#include "dwin_protocol.h"
 #include "charge_cycle_config.h"
 #include "charge_cycle_storage.h"
 #include "charge_controller.h"
@@ -46,6 +48,8 @@ static uint32_t btn_start_last    = 0;
 static uint32_t btn_stop_last     = 0;
 static uint8_t  btn_start_prev    = 0;
 static uint8_t  btn_stop_prev     = 0;
+static uint8_t  btn_start_db      = 0;
+static uint8_t  btn_stop_db       = 0;
 
 /* ============== LED control ============== */
 
@@ -68,6 +72,7 @@ void App_Init(void)
 
     /* Enable Peripheral Power (RS485/CAN/HMI) - assert early */
     HAL_GPIO_WritePin(GPIOA, MCU_PA4_POWER_EN_Pin, GPIO_PIN_SET);
+    HAL_Delay(10);
 
     led_run_off();
     led_fault_off();
@@ -108,6 +113,10 @@ void App_Init(void)
     ChargeController_Init();
     LOG("App_Init: Charge controller initialized.\r\n");
 
+    /* Initialize ADC for NTC */
+    BSP_ADC_Init();
+    LOG("App_Init: NTC ADC initialized.\r\n");
+
     LOG("App_Init: Hoan tat khoi tao.\r\n");
 }
 
@@ -129,28 +138,56 @@ void App_Loop(void)
         CHG_LIB_Process(now);
         BMS_Process(now);
         ChargeController_Process(now);
+        
+        /* Cập nhật Rơ-le (Relay) */
+        if (BMS_ShouldCloseChargeRelay() && ChargeController_IsRunning()) {
+            HAL_GPIO_WritePin(GPIOB, MCU_PB14_RELAY_1_Pin|MCU_PB15_RELAY_2_Pin, GPIO_PIN_SET);
+        } else {
+            HAL_GPIO_WritePin(GPIOB, MCU_PB14_RELAY_1_Pin|MCU_PB15_RELAY_2_Pin, GPIO_PIN_RESET);
+        }
     }
 
     PC_Protocol_ProcessTx();
+    
+    /* DWIN HMI: Read RX and Parse */
+    uint8_t rs485_buf[64];
+    uint16_t rs485_len = BSP_RS485_Read(rs485_buf, sizeof(rs485_buf));
+    if (rs485_len > 0) {
+        DWIN_ParseRX(rs485_buf, rs485_len);
+    }
 
     /* (2) Button handling with debounce */
     {
         uint8_t start_raw = read_btn_start();
         uint8_t stop_raw  = read_btn_stop();
 
-        if (start_raw && !btn_start_prev && (now - btn_start_last) > APP_BTN_DEBOUNCE_MS) {
+        if (start_raw != btn_start_db) {
+            btn_start_db = start_raw;
             btn_start_last = now;
-            LOG("App_Loop: Nhan nut START -> Khoi dong chu trinh sac\r\n");
-            ChargeController_Start(CHARGE_CTRL_OWNER_DWIN, false);
         }
-        btn_start_prev = start_raw;
+        if ((now - btn_start_last) > APP_BTN_DEBOUNCE_MS) {
+            if (btn_start_db != btn_start_prev) {
+                btn_start_prev = btn_start_db;
+                if (btn_start_prev) {
+                    LOG("App_Loop: Nhan nut START -> Khoi dong chu trinh sac\r\n");
+                    ChargeController_Start(CHARGE_CTRL_OWNER_DWIN, false);
+                }
+            }
+        }
 
-        if (stop_raw && !btn_stop_prev && (now - btn_stop_last) > APP_BTN_DEBOUNCE_MS) {
+        if (stop_raw != btn_stop_db) {
+            btn_stop_db = stop_raw;
             btn_stop_last = now;
-            LOG("App_Loop: Nhan nut STOP -> Dung chu trinh sac\r\n");
-            ChargeController_Stop();
         }
-        btn_stop_prev = stop_raw;
+        if ((now - btn_stop_last) > APP_BTN_DEBOUNCE_MS) {
+            if (btn_stop_db != btn_stop_prev) {
+                btn_stop_prev = btn_stop_db;
+                if (btn_stop_prev) {
+                    LOG("App_Loop: Nhan nut STOP -> Dung chu trinh sac\r\n");
+                    ChargeController_Stop();
+                }
+            }
+        }
     }
 
     /* (3) LED update */
@@ -175,8 +212,46 @@ void App_Loop(void)
         }
     }
 
-    /* (4) Refresh IWDG — main loop only, never in ISR (~1s timeout) */
+    /* (4) DWIN Update */
+    static uint32_t last_dwin_tick = 0;
+    if ((now - last_dwin_tick) >= 50) { // Call every 50ms (so all 12 frames take 600ms)
+        last_dwin_tick = now;
+        DWIN_SystemData_t dwin_data = {0};
+        
+        ChargeCtrlView_t cc_view;
+        ChargeController_GetView(&cc_view);
+        
+        dwin_data.sys_status = cc_view.state;
+        dwin_data.dc_volt_x10 = (uint16_t)(cc_view.applied_voltage_v * 10);
+        dwin_data.dc_curr_x10 = (uint16_t)(cc_view.applied_current_per_module_a * cc_view.actual_module_count * 10);
+        
+        BMS_View_t bms;
+        BMS_GetView(&bms);
+        if (bms.online) {
+            dwin_data.bat_soc = bms.soc;
+            dwin_data.bat_pack_v_x10 = (uint16_t)(bms.batt_voltage * 10);
+            dwin_data.bat_cell_v_x100 = (uint16_t)(bms.max_cell_volt / 10); // mV to x100
+            dwin_data.temp_bat = bms.max_cell_temp;
+        }
+        
+        dwin_data.temp_charger = (int16_t)BSP_ADC_GetTempC(0);
+        dwin_data.fault_code = cc_view.fault_flags;
+        
+        DWIN_UpdateData(&dwin_data);
+    }
+
+    /* (5) Refresh IWDG — main loop only, never in ISR (~1s timeout) */
     MX_IWDG_Refresh();
 }
 
 CHG_LIB_DriverId_t App_GetCurrentDriver(void) { return CHG_LIB_GetActiveDriverId(); }
+
+void DWIN_OnCommandReceived(uint16_t command) {
+    if (command == 1) {
+        LOG("DWIN: Nhan lenh START\r\n");
+        ChargeController_Start(CHARGE_CTRL_OWNER_DWIN, false);
+    } else if (command == 2) {
+        LOG("DWIN: Nhan lenh STOP\r\n");
+        ChargeController_Stop();
+    }
+}

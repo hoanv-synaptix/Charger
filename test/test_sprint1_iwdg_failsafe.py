@@ -32,8 +32,8 @@ def test_iwdg_files_exist():
 def test_main_calls_iwdg():
     main = read("Core/Src/main.c")
     assert "MX_IWDG_Init" in main
-    # MX_IWDG_Init should be before App_Init
-    assert main.find("MX_IWDG_Init") < main.find("App_Init")
+    # IWDG must start AFTER App_Init to avoid reset during boot (init takes >1s)
+    assert main.find("MX_IWDG_Init") > main.find("App_Init")
     # Error_Handler should call Safety_Shutdown before disable irq
     assert "Safety_Shutdown" in main
     eh = main[main.find("void Error_Handler"):main.find("void Error_Handler")+600]

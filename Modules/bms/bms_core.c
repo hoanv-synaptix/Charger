@@ -248,8 +248,24 @@ void BMS_Process(uint32_t now_tick)
     if (now_tick >= last_rx_snapshot) {
         elapsed = now_tick - last_rx_snapshot;
     } else {
-        /* now_tick < last_rx_snapshot: likely case #2 above, treat as recent */
         elapsed = 0U;
+    }
+
+    uint32_t last_rx_frames[BMS_FRAME_MAX];
+    __disable_irq();
+    memcpy(last_rx_frames, (const void*)g_bms_data.last_rx_tick, sizeof(last_rx_frames));
+    __enable_irq();
+
+    bool is_stale = false;
+    for (int i = 0; i < BMS_FRAME_MAX; i++) {
+        if (i == BMS_FRAME_BMS_SW_STA || i == BMS_FRAME_CELL_VOLT_FULL || i == BMS_FRAME_CELL_TEMP_FULL) {
+            continue; /* Ignore optional/slow frames for stale check */
+        }
+        uint32_t f_elapsed = (now_tick >= last_rx_frames[i]) ? (now_tick - last_rx_frames[i]) : 0;
+        if (f_elapsed >= BMS_STALE_THRESHOLD_MS) {
+            is_stale = true;
+            break;
+        }
     }
 
     /* DEBUG: Log timeout calculation */
@@ -285,7 +301,7 @@ void BMS_Process(uint32_t now_tick)
             /* Connectivity is based on any valid BMS frame.  STALE is a
              * data-quality warning, not an offline condition. */
             g_bms_view.online = true;
-            if (elapsed >= BMS_STALE_THRESHOLD_MS) {
+            if (is_stale) {
                 g_bms_view.alarm_flags |= BMS_ALARM_STALE_DATA;
             }
             /* Only critical alarms (not STALE_DATA) transition to FAULT */
@@ -310,15 +326,18 @@ void BMS_Process(uint32_t now_tick)
             LOG("BMS: OFFLINE (timeout while faulted)\r\n");
         } else {
             g_bms_view.online = true;
-            if (elapsed >= BMS_STALE_THRESHOLD_MS) {
+            if (is_stale) {
                 g_bms_view.alarm_flags |= BMS_ALARM_STALE_DATA;
+            } else {
+                g_bms_view.alarm_flags &= (BMS_AlarmFlag_t)~BMS_ALARM_STALE_DATA;
             }
         }
 
         /* Fault recovery: auto-recover when alarms clear and data resumes */
+        BMS_AlarmFlag_t active_alarms = g_bms_view.alarm_flags & (BMS_AlarmFlag_t)~BMS_ALARM_STALE_DATA;
         if (g_bms_state == BMS_STATE_FAULT &&
-            (g_bms_view.alarm_flags == BMS_ALARM_NONE) &&
-            (elapsed < BMS_STALE_THRESHOLD_MS)) {
+            (active_alarms == BMS_ALARM_NONE) &&
+            (!is_stale)) {
             g_bms_state = BMS_STATE_ONLINE;
             LOG("BMS: Recovered from FAULT -> ONLINE\r\n");
         }
@@ -428,6 +447,10 @@ bool BMS_ShouldCloseChargeRelay(void)
         return false;
     }
 
+    if (BMS_HasCriticalAlarm()) {
+        return false;
+    }
+
     BMS_View_t snap;
     __disable_irq();
     snap = *(BMS_View_t *)&g_bms_view;
@@ -438,7 +461,6 @@ bool BMS_ShouldCloseChargeRelay(void)
         return false;
     }
 
-    (void)snap;
     return true;
 }
 

@@ -1,0 +1,457 @@
+/**
+ * @file pc_debug_protocol.c
+ * @brief PC Debug Protocol Implementation
+ * @note Handles debug commands from PC and streams module data
+ */
+
+#include "pc_debug_protocol.h"
+#include "pc_protocol.h"
+#include "chg_lib.h"
+#include "bms_core.h"
+#include "charge_cycle_config.h"
+#include "charge_cycle_storage.h"
+#include "charge_controller.h"
+#include "app_main.h"
+#include "debug_log.h"
+#include "main.h"
+#include <string.h>
+
+/* ============== Private State ============== */
+
+static bool g_debug_active = false;
+static uint32_t g_last_stream_tick = 0;
+static uint8_t g_stream_sequence = 0;
+
+/* ============== Public API ============== */
+
+void DebugProtocol_Init(void)
+{
+    g_debug_active = false;
+    g_last_stream_tick = 0;
+    g_stream_sequence = 0;
+}
+
+void DebugProtocol_Enter(void)
+{
+    g_debug_active = true;
+    g_stream_sequence = 0;
+    g_last_stream_tick = HAL_GetTick();
+    LOG("[DEBUG] Enter debug mode (no auto stream)\r\n");
+    LOG("[DEBUG] Active driver: %s (%u), modules=%u\r\n",
+        CHG_LIB_GetActiveDriverName(),
+        (unsigned)CHG_LIB_GetActiveDriverId(),
+        (unsigned)CHG_LIB_GetModuleCount());
+
+    /* Do NOT send stream automatically - wait for PC to request */
+}
+
+void DebugProtocol_Exit(void)
+{
+    g_debug_active = false;
+    LOG("[DEBUG] Exit debug mode\r\n");
+}
+
+bool DebugProtocol_IsActive(void)
+{
+    return g_debug_active;
+}
+
+uint16_t DebugProtocol_BuildModuleData(uint8_t idx, uint8_t *data)
+{
+    CHG_LIB_ModuleView_t view;
+    if (!CHG_LIB_GetModuleView(idx, &view)) {
+        return 0;
+    }
+
+    DebugModuleData_t *mod = (DebugModuleData_t *)data;
+    memset(mod, 0, sizeof(DebugModuleData_t));
+
+    /* Identity */
+    mod->module_idx = idx;
+    mod->driver_id = App_GetCurrentDriver();
+    mod->enabled = view.enabled ? 1U : 0U;
+    mod->online = view.online ? 1U : 0U;
+    mod->running = view.running ? 1U : 0U;
+    mod->state = (uint8_t)view.state;
+
+    /* Output */
+    mod->voltage = view.voltage;
+    mod->current = view.current;
+    mod->current_limit = view.current_limit;
+
+    /* Temperatures */
+    mod->temp_dcdc = view.temp_dcdc;
+    mod->temp_ambient = view.temp_ambient;
+    mod->temp_pfc = view.temp_pfc;
+
+    /* AC Input 3-phase */
+    mod->ac_phase_a_voltage = view.ac_phase_a_voltage;
+    mod->ac_phase_b_voltage = view.ac_phase_b_voltage;
+    mod->ac_phase_c_voltage = view.ac_phase_c_voltage;
+
+    /* PFC Bus */
+    mod->pfc_bus_pos_voltage = view.pfc_bus_pos_voltage;
+    mod->pfc_bus_neg_voltage = view.pfc_bus_neg_voltage;
+
+    /* Power & Ratings */
+    mod->input_power = view.input_power;
+    mod->rated_power = view.rated_power;
+    mod->rated_current = view.rated_current;
+
+    /* Alarms */
+    mod->alarm_status = view.alarm_status;
+    mod->alarm_flags = (uint32_t)view.alarm_flags;
+    mod->pfc_fault = view.pfc_fault;
+
+    /* Address */
+    mod->addr = view.addr;
+    mod->group = view.group;
+
+    /* Timing */
+    mod->last_rx_tick = view.last_rx_tick;
+    mod->last_tx_tick = view.last_tx_tick;
+
+    /* Communication Stats */
+    mod->tx_count = view.stats.tx_count;
+    mod->rx_count = view.stats.rx_count;
+    mod->error_count = view.stats.error_count;
+    mod->timeout_count = view.stats.timeout_count;
+    mod->recovery_count = view.stats.recovery_count;
+
+    return sizeof(DebugModuleData_t);
+}
+
+uint16_t DebugProtocol_BuildAllModulesData(uint8_t *data, uint16_t max_len)
+{
+    uint16_t written = 0;
+    uint8_t module_count = CHG_LIB_GetModuleCount();
+    uint8_t modules_written = 0;
+
+    /* Check minimum space for header */
+    if (written + 2 > max_len) {
+        return 0;
+    }
+
+    /* Header: sequence + module count */
+    data[written++] = g_stream_sequence++;
+    data[written++] = 0U;
+
+    /* Build data for each module */
+    for (uint8_t i = 0; i < module_count; i++) {
+        uint16_t mod_len = DebugProtocol_BuildModuleData(i, &data[written]);
+        if (mod_len == 0) {
+            break;
+        }
+        if (written + mod_len > max_len) {
+            break;
+        }
+        written += mod_len;
+        modules_written++;
+    }
+
+    data[1] = modules_written;
+    return written;
+}
+
+uint16_t DebugProtocol_BuildSystemInfo(uint8_t *data, uint16_t max_len)
+{
+    if (max_len < sizeof(DebugSystemInfo_t)) {
+        return 0;
+    }
+
+    DebugSystemInfo_t *info = (DebugSystemInfo_t *)data;
+    CHG_LIB_SystemSummary_t summary;
+    ChargeCtrlView_t ctrl_view;
+    CHG_LIB_ModuleView_t module_view;
+    float max_temp_dcdc = 0.0f;
+
+    CHG_LIB_GetSystemSummary(&summary);
+    ChargeController_GetView(&ctrl_view);
+
+    BMS_View_t bms_view;
+    BMS_GetView(&bms_view);
+
+    memset(info, 0, sizeof(DebugSystemInfo_t));
+
+    /* TODO: Get real firmware version */
+    info->fw_major = 2;
+    info->fw_minor = 0;
+    info->fw_patch = 0;
+
+    info->driver_id = App_GetCurrentDriver();
+    info->modules_total = CHG_LIB_GetModuleCount();
+    info->modules_online = summary.modules_online;
+    info->modules_fault = summary.modules_fault;
+    info->charging = ctrl_view.running ? 1U : 0U;
+    info->controller_state = (uint8_t)ctrl_view.state;
+    info->controller_derating = ctrl_view.derating;
+    info->controller_inhibit = ctrl_view.inhibit;
+    info->charge_source_mode = ctrl_view.charge_source_mode;
+    info->active_limit_source = ctrl_view.active_limit_source;
+    info->active_stage_band = ctrl_view.active_stage_band;
+
+    for (uint8_t i = 0; i < CHG_LIB_GetModuleCount(); i++) {
+        if (!CHG_LIB_GetModuleView(i, &module_view) || !module_view.enabled) {
+            continue;
+        }
+        if (module_view.temp_dcdc > max_temp_dcdc) {
+            max_temp_dcdc = module_view.temp_dcdc;
+        }
+    }
+
+    info->total_voltage = summary.voltage;
+    info->total_current = summary.total_current;
+    info->total_power_in = summary.total_power_in;
+    info->max_temp_dcdc = max_temp_dcdc;
+    info->controller_target_voltage = ctrl_view.target_voltage_v;
+    info->controller_target_current_total = ctrl_view.target_current_total_a;
+    info->active_limit_current_c = ctrl_view.active_limit_current_c;
+    
+    extern uint32_t g_c1_tx, g_c1_rx, g_c2_tx, g_c2_rx;
+    info->can1_tx_count = g_c1_tx;
+    info->can1_rx_count = g_c1_rx;
+    info->can2_tx_count = g_c2_tx;
+    info->can2_rx_count = g_c2_rx;
+    
+    info->controller_fault_flags = ctrl_view.fault_flags;
+    info->controller_stop_reason = (uint8_t)ctrl_view.stop_reason;
+    info->bms_stale = ((bms_view.alarm_flags & BMS_ALARM_STALE_DATA) != 0) ? 1U : 0U;
+
+
+    return sizeof(DebugSystemInfo_t);
+}
+
+uint16_t DebugProtocol_BuildBMSData(uint8_t *data, uint16_t max_len)
+{
+    if (max_len < 54) {
+        return 0;
+    }
+
+    BMS_View_t bms;
+    BMS_GetView(&bms);
+    uint16_t written = 0;
+    float cap_remain_ah = BMS_RAW_TO_CAP_AH(bms.cap_remain);
+    float rate_cap_ah = BMS_RAW_TO_CAP_AH(bms.rate_cap);
+
+    /* State and relay info (4 bytes) */
+    data[written++] = (uint8_t)bms.state;
+    data[written++] = bms.online ? 1 : 0;
+    data[written++] = bms.charge_relay_closed ? 1 : 0;
+    data[written++] = bms.discharge_relay_closed ? 1 : 0;
+
+    /* Battery (20 bytes) */
+    memcpy(&data[written], &bms.batt_voltage, sizeof(float)); written += 4;
+    memcpy(&data[written], &bms.batt_current, sizeof(float)); written += 4;
+    memcpy(&data[written], &cap_remain_ah, sizeof(float));    written += 4;
+    memcpy(&data[written], &rate_cap_ah, sizeof(float));      written += 4;
+    data[written++] = bms.soc;
+    data[written++] = bms.soh;
+
+    /* Cell voltages (4 bytes) */
+    uint16_t max_cv = (uint16_t)bms.max_cell_volt;
+    uint16_t min_cv = (uint16_t)bms.min_cell_volt;
+    data[written++] = (uint8_t)(max_cv & 0xFF);
+    data[written++] = (uint8_t)(max_cv >> 8);
+    data[written++] = (uint8_t)(min_cv & 0xFF);
+    data[written++] = (uint8_t)(min_cv >> 8);
+
+    /* Temperatures (8 bytes) */
+    memcpy(&data[written], &bms.max_cell_temp, sizeof(float)); written += 4;
+    memcpy(&data[written], &bms.min_cell_temp, sizeof(float)); written += 4;
+
+    /* Charging requests (8 bytes) */
+    memcpy(&data[written], &bms.chg_volt_request, sizeof(float)); written += 4;
+    memcpy(&data[written], &bms.chg_curr_request, sizeof(float)); written += 4;
+
+    /* Alarms + timing (8 bytes) */
+    uint32_t alarm = (uint32_t)bms.alarm_flags;
+    memcpy(&data[written], &alarm, sizeof(uint32_t)); written += 4;
+    memcpy(&data[written], &bms.last_rx_tick, sizeof(uint32_t)); written += 4;
+
+    return written;
+}
+
+uint16_t DebugProtocol_BuildCommStats(uint8_t idx, uint8_t *data)
+{
+    CHG_LIB_ModuleView_t view;
+    if (!CHG_LIB_GetModuleView(idx, &view)) {
+        return 0;
+    }
+
+    uint16_t written = 0;
+
+    /* Module index */
+    data[written++] = idx;
+
+    /* Statistics */
+    memcpy(&data[written], &view.stats.tx_count, sizeof(uint32_t)); written += 4;
+    memcpy(&data[written], &view.stats.rx_count, sizeof(uint32_t)); written += 4;
+    memcpy(&data[written], &view.stats.error_count, sizeof(uint32_t)); written += 4;
+    memcpy(&data[written], &view.stats.timeout_count, sizeof(uint32_t)); written += 4;
+    memcpy(&data[written], &view.stats.recovery_count, sizeof(uint32_t)); written += 4;
+
+    return written;
+}
+
+uint16_t DebugProtocol_BuildChargeConfig(uint8_t *data, uint16_t max_len)
+{
+    ChargeCycleConfig_t config;
+
+    if (max_len < sizeof(config)) {
+        return 0;
+    }
+
+    ChargeCycleConfig_Get(&config);
+    memcpy(data, &config, sizeof(config));
+    return sizeof(config);
+}
+
+void DebugProtocol_SendStream(void)
+{
+    if (!g_debug_active) {
+        return;
+    }
+
+    uint32_t now = HAL_GetTick();
+    if ((now - g_last_stream_tick) < DEBUG_STREAM_INTERVAL_MS) {
+        return;
+    }
+    g_last_stream_tick = now;
+
+    uint8_t buf[PC_MAX_PAYLOAD];
+    uint16_t len = DebugProtocol_BuildAllModulesData(buf, sizeof(buf));
+
+    if (len > 0) {
+        PC_Protocol_SendFrame(DEBUG_RSP_ALL_MODULES, buf, len);
+    }
+}
+
+bool DebugProtocol_HandleCommand(uint8_t cmd, const uint8_t *payload, uint16_t len)
+{
+    uint8_t reply[PC_MAX_PAYLOAD];
+
+    switch (cmd) {
+    case DEBUG_CMD_ENTER:
+        PC_Protocol_ResetTx();
+        DebugProtocol_Enter();
+        PC_Protocol_SendFrame(PC_RSP_ACK, &cmd, 1);
+        return true;
+
+    case DEBUG_CMD_EXIT:
+        DebugProtocol_Exit();
+        PC_Protocol_SendFrame(PC_RSP_ACK, &cmd, 1);
+        return true;
+
+    case DEBUG_CMD_READ_ALL: {
+        uint16_t data_len = DebugProtocol_BuildAllModulesData(reply, sizeof(reply));
+        if (data_len > 0) {
+            PC_Protocol_SendFrame(DEBUG_RSP_ALL_MODULES, reply, data_len);
+        } else {
+            reply[0] = 0x01; /* BAD_PARAM */
+            PC_Protocol_SendFrame(DEBUG_RSP_ERROR, reply, 1);
+        }
+        return true;
+    }
+
+    case DEBUG_CMD_READ_ONE: {
+        if (len < 1) {
+            reply[0] = 0x01; /* BAD_PARAM */
+            PC_Protocol_SendFrame(DEBUG_RSP_ERROR, reply, 1);
+            return true;
+        }
+        uint16_t data_len = DebugProtocol_BuildModuleData(payload[0], reply);
+        if (data_len > 0) {
+            PC_Protocol_SendFrame(DEBUG_RSP_MODULE_DATA, reply, data_len);
+        } else {
+            reply[0] = 0x02; /* MODULE_OFFLINE */
+            PC_Protocol_SendFrame(DEBUG_RSP_ERROR, reply, 1);
+        }
+        return true;
+    }
+
+    case DEBUG_CMD_READ_STATS: {
+        if (len < 1) {
+            reply[0] = 0x01; /* BAD_PARAM */
+            PC_Protocol_SendFrame(DEBUG_RSP_ERROR, reply, 1);
+            return true;
+        }
+        uint16_t data_len = DebugProtocol_BuildCommStats(payload[0], reply);
+        if (data_len > 0) {
+            PC_Protocol_SendFrame(DEBUG_RSP_COMM_STATS, reply, data_len);
+        } else {
+            reply[0] = 0x02; /* MODULE_OFFLINE */
+            PC_Protocol_SendFrame(DEBUG_RSP_ERROR, reply, 1);
+        }
+        return true;
+    }
+
+    case DEBUG_CMD_READ_BMS: {
+        uint16_t data_len = DebugProtocol_BuildBMSData(reply, sizeof(reply));
+        if (data_len > 0) {
+            PC_Protocol_SendFrame(DEBUG_RSP_BMS_DATA, reply, data_len);
+        }
+        return true;
+    }
+
+    case DEBUG_CMD_GET_SYSTEM: {
+        uint16_t data_len = DebugProtocol_BuildSystemInfo(reply, sizeof(reply));
+        if (data_len > 0) {
+            PC_Protocol_SendFrame(DEBUG_RSP_SYSTEM_INFO, reply, data_len);
+        }
+        return true;
+    }
+
+    case DEBUG_CMD_GET_CHARGE_CFG: {
+        LOG("PCDebug: GET_CHARGE_CFG received\r\n");
+        uint16_t data_len = DebugProtocol_BuildChargeConfig(reply, sizeof(reply));
+        if (data_len > 0) {
+            LOG("PCDebug: Sending CHARGE_CFG response, len=%u\r\n", (unsigned)data_len);
+            PC_Protocol_SendFrame(DEBUG_RSP_CHARGE_CFG, reply, data_len);
+        } else {
+            LOG("PCDebug: BuildChargeConfig failed, sending ERROR\r\n");
+            reply[0] = 0x03; /* NOT_SUPPORTED / BUFFER */
+            PC_Protocol_SendFrame(DEBUG_RSP_ERROR, reply, 1);
+        }
+        return true;
+    }
+
+    case DEBUG_CMD_SET_CHARGE_CFG: {
+        ChargeCycleConfig_t config;
+
+        if (len != sizeof(config)) {
+            reply[0] = 0x01; /* BAD_PARAM */
+            PC_Protocol_SendFrame(DEBUG_RSP_ERROR, reply, 1);
+            return true;
+        }
+
+        memcpy(&config, payload, sizeof(config));
+
+        /* Validate and set to RAM */
+        if (!ChargeCycleConfig_Set(&config)) {
+            reply[0] = 0x01; /* BAD_PARAM */
+            PC_Protocol_SendFrame(DEBUG_RSP_ERROR, reply, 1);
+            return true;
+        }
+
+        /* Save to flash */
+        if (!ChargeCycleStorage_Save(&config)) {
+            reply[0] = 0x04; /* FLASH_SAVE_FAIL */
+            PC_Protocol_SendFrame(DEBUG_RSP_ERROR, reply, 1);
+            return true;
+        }
+
+        uint16_t data_len = DebugProtocol_BuildChargeConfig(reply, sizeof(reply));
+        if (data_len > 0) {
+            PC_Protocol_SendFrame(DEBUG_RSP_CHARGE_CFG, reply, data_len);
+        } else {
+            PC_Protocol_SendFrame(PC_RSP_ACK, &cmd, 1);
+        }
+        return true;
+    }
+
+    default:
+        /* Not handled - let standard protocol handler try */
+        return false;
+    }
+}
+

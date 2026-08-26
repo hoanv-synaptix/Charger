@@ -1,0 +1,12 @@
+D:/Projects/Charger_CTRL/Charger/App/Protocol/pc_protocol.c:69:16:crc8	20	static
+D:/Projects/Charger_CTRL/Charger/App/Protocol/pc_protocol.c:83:13:enqueue_frame.isra	32	static,ignoring_inline_asm
+D:/Projects/Charger_CTRL/Charger/App/Protocol/pc_protocol.c:210:13:send_read_reg_response.part.0	24	static
+D:/Projects/Charger_CTRL/Charger/App/Protocol/pc_protocol.c:170:13:send_nack	16	static
+D:/Projects/Charger_CTRL/Charger/App/Protocol/pc_protocol.c:117:6:PC_Protocol_ProcessTx	8	static,ignoring_inline_asm
+D:/Projects/Charger_CTRL/Charger/App/Protocol/pc_protocol.c:145:6:PC_Protocol_NotifyTxComplete	8	static,ignoring_inline_asm
+D:/Projects/Charger_CTRL/Charger/App/Protocol/pc_protocol.c:159:6:PC_Protocol_ResetTx	0	static,ignoring_inline_asm
+D:/Projects/Charger_CTRL/Charger/App/Protocol/pc_protocol.c:458:6:PC_Protocol_SendStatus	304	static
+D:/Projects/Charger_CTRL/Charger/App/Protocol/pc_protocol.c:501:6:PC_Protocol_SendPong	16	static
+D:/Projects/Charger_CTRL/Charger/App/Protocol/pc_protocol.c:419:6:PC_Protocol_FeedByte	512	static
+D:/Projects/Charger_CTRL/Charger/App/Protocol/pc_protocol.c:509:6:PC_Protocol_SendFrame	8	static
+D:/Projects/Charger_CTRL/Charger/App/Protocol/pc_protocol.c:515:6:PC_Protocol_IsCharging	8	static

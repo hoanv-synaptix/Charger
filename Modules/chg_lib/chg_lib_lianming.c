@@ -190,7 +190,7 @@ static CHG_LIB_State_t lm_state_from_flags(const LM_Module_t *mod, bool fault, b
     if (mod->should_run) {
         return mod->view.running ? CHG_LIB_STATE_RUNNING : CHG_LIB_STATE_STARTING;
     }
-    return CHG_LIB_STATE_IDLE;
+    return mod->view.running ? CHG_LIB_STATE_STOPPING : CHG_LIB_STATE_IDLE;
 }
 
 static void clear_view(CHG_LIB_ModuleView_t *view)
@@ -249,25 +249,23 @@ static void set_state(LM_Module_t *mod, CHG_LIB_State_t state, uint32_t now)
  * @note Called FIRST in process_module() for all States except OFFLINE/RECOVERING
  */
 static void check_offline_timeout(LM_Module_t *mod, uint32_t now) {
-    /* Already offline or recovering - no need to check */
-    if (mod->view.state == CHG_LIB_STATE_OFFLINE ||
-        mod->view.state == CHG_LIB_STATE_RECOVERING) {
-        return;
-    }
-
-    uint32_t since_rx = now - mod->view.last_rx_tick;
-
-    if (since_rx > LM_OFFLINE_TIMEOUT_MS) {
+    CHG_LIB_State_t new_state;
+    bool timeout_flag;
+    CHG_LIB_FSM_CheckOfflineTimeout(
+        &mod->view.state,
+        mod->view.last_rx_tick,
+        mod->should_run,
+        LM_OFFLINE_TIMEOUT_MS,
+        LM_WARNING_TIMEOUT_MS,
+        now,
+        &new_state,
+        &timeout_flag
+    );
+    if (timeout_flag) {
         mod->view.stats.timeout_count++;
-        set_state(mod, CHG_LIB_STATE_OFFLINE, now);
-    } else if (since_rx > LM_WARNING_TIMEOUT_MS) {
-        if (mod->view.state == CHG_LIB_STATE_RUNNING || mod->view.state == CHG_LIB_STATE_STARTING) {
-            set_state(mod, CHG_LIB_STATE_WARNING, now);
-        }
-    } else {
-        if (mod->view.state == CHG_LIB_STATE_WARNING) {
-            set_state(mod, mod->should_run ? CHG_LIB_STATE_RUNNING : CHG_LIB_STATE_IDLE, now);
-        }
+    }
+    if (new_state != mod->view.state) {
+        set_state(mod, new_state, now);
     }
 }
 
@@ -797,22 +795,8 @@ static void lm_get_system_summary(CHG_LIB_SystemSummary_t *summary)
 {
     if (summary == 0) return;
     memset(summary, 0, sizeof(*summary));
-
     for (uint8_t i = 0; i < g_module_count; i++) {
-        const CHG_LIB_ModuleView_t *m = &g_modules[i].view;
-        if (!m->enabled) continue;
-        if (m->online) {
-            summary->modules_online++;
-            summary->total_current += m->current;
-            summary->total_power_in += (float)m->input_power;
-            if (summary->voltage == 0.0f && m->voltage > 0.0f) {
-                summary->voltage = m->voltage;
-            }
-        }
-        if (m->alarm_flags != CHG_LIB_ALARM_NONE) {
-            summary->any_critical = true;
-            summary->modules_fault++;
-        }
+        CHG_LIB_Summary_Accumulate(summary, &g_modules[i].view, 0.0f);
     }
 }
 

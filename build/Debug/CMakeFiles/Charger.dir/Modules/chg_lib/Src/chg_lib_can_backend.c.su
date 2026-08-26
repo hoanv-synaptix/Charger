@@ -1,0 +1,7 @@
+D:/Projects/Charger_CTRL/Charger/Modules/chg_lib/Src/chg_lib_can_backend.c:13:13:backend_transmit	48	static
+D:/Projects/Charger_CTRL/Charger/Modules/chg_lib/Src/chg_lib_can_backend.c:24:17:backend_now_tick	8	static
+D:/Projects/Charger_CTRL/Charger/Modules/chg_lib/Src/chg_lib_can_backend.c:34:29:CHG_LIB_CanBackend_BSP	8	static
+D:/Projects/Charger_CTRL/Charger/Modules/chg_lib/Src/chg_lib_can_backend.c:39:6:CHG_LIB_CanBackend_Init	8	static
+D:/Projects/Charger_CTRL/Charger/Modules/chg_lib/Src/chg_lib_can_backend.c:44:6:CHG_LIB_CanBackend_Set	16	static
+D:/Projects/Charger_CTRL/Charger/Modules/chg_lib/Src/chg_lib_can_backend.c:51:10:CHG_LIB_CanBackend_NowTick	8	static
+D:/Projects/Charger_CTRL/Charger/Modules/chg_lib/Src/chg_lib_can_backend.c:60:6:CHG_LIB_CanBackend_Transmit	24	static

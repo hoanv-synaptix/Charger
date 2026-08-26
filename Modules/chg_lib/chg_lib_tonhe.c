@@ -466,24 +466,23 @@ static void set_state(TONHE_Internal_t *mod, CHG_LIB_State_t st, uint32_t now)
 }
 
 static void check_offline_timeout(TONHE_Internal_t *mod, uint32_t now) {
-    if (mod->view.state == CHG_LIB_STATE_OFFLINE ||
-        mod->view.state == CHG_LIB_STATE_RECOVERING) {
-        return;
-    }
-    
-    uint32_t since_rx = now - mod->view.last_rx_tick;
-    
-    if (since_rx > TONHE_OFFLINE_TIMEOUT_MS) {
+    CHG_LIB_State_t new_state;
+    bool timeout_flag;
+    CHG_LIB_FSM_CheckOfflineTimeout(
+        &mod->view.state,
+        mod->view.last_rx_tick,
+        mod->should_run,
+        TONHE_OFFLINE_TIMEOUT_MS,
+        TONHE_WARNING_TIMEOUT_MS,
+        now,
+        &new_state,
+        &timeout_flag
+    );
+    if (timeout_flag) {
         mod->view.stats.timeout_count++;
-        set_state(mod, CHG_LIB_STATE_OFFLINE, now);
-    } else if (since_rx > TONHE_WARNING_TIMEOUT_MS) {
-        if (mod->view.state == CHG_LIB_STATE_RUNNING || mod->view.state == CHG_LIB_STATE_STARTING) {
-            set_state(mod, CHG_LIB_STATE_WARNING, now);
-        }
-    } else {
-        if (mod->view.state == CHG_LIB_STATE_WARNING) {
-            set_state(mod, mod->should_run ? CHG_LIB_STATE_RUNNING : CHG_LIB_STATE_IDLE, now);
-        }
+    }
+    if (new_state != mod->view.state) {
+        set_state(mod, new_state, now);
     }
 }
 
@@ -860,31 +859,10 @@ static void tonhe_get_system_summary(CHG_LIB_SystemSummary_t *summary)
 {
     if (summary == NULL) return;
     memset(summary, 0, sizeof(*summary));
-
     for (uint8_t i = 0; i < g_module_count; i++) {
         CHG_LIB_ModuleView_t *v = &g_modules[i].view;
-        if (!v->enabled) continue;
-
-        /* Only count RUNNING/STARTING as online (active output).
-         * IDLE means no active output even if recently received data.
-         * OFFLINE/RECOVERING/FAULT are not online. */
-        if (v->online && (v->state == CHG_LIB_STATE_RUNNING || v->state == CHG_LIB_STATE_STARTING || v->state == CHG_LIB_STATE_WARNING)) {
-            summary->modules_online++;
-            summary->total_current += v->current;
-            summary->total_power_in += v->voltage * v->current;
-            if (summary->voltage == 0.0f && v->voltage > 0.0f) {
-                summary->voltage = v->voltage;
-            }
-        }
-
-        if (v->state == CHG_LIB_STATE_FAULT) {
-            summary->modules_fault++;
-            summary->any_critical = true;
-        }
-
-        if (v->alarm_flags != CHG_LIB_ALARM_NONE) {
-            summary->any_critical = true;
-        }
+        float pwr_in = v->voltage * v->current;
+        CHG_LIB_Summary_Accumulate(summary, v, pwr_in);
     }
 }
 
