@@ -24,9 +24,12 @@
 #   App/Protocol/pc_debug_protocol.c:bsp_can.h
 #     DEBUG_CMD_SEND_RAW_CAN intentionally bypasses BMS/chg_lib to inject a
 #     raw frame on either bus for bench testing. That is the feature; it is
-#     not a layering accident. Compiled into every build today -- if that
-#     is a concern for production units, gate it behind a build flag rather
-#     than "fixing" the include.
+#     not a layering accident. Now gated behind CHG_DEBUG_RAW_CAN
+#     (CMakeLists.txt), defined only for the Debug config -- Release builds
+#     do not compile the command in at all, so the #include only shows up
+#     as a violation in Debug builds' worth of source. The static checker
+#     is preprocessor-blind so it still flags the line unconditionally;
+#     that's expected, not a bug.
 #
 #   App/Protocol/pc_debug_protocol.c:bsp_sys.h
 #   App/Protocol/pc_protocol.c:bsp_sys.h

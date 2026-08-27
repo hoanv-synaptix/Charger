@@ -55,6 +55,12 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE)
 # Add project symbols (macros)
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined symbols
+    # CHG_DEBUG_RAW_CAN: enables DEBUG_CMD_SEND_RAW_CAN (App/Protocol/pc_debug_protocol.c),
+    # which lets the PC debug app inject an arbitrary frame on either CAN bus,
+    # bypassing BMS/chg_lib entirely. Bench-debug only -- deliberately left
+    # out of Release so a production unit's USB debug port cannot be used to
+    # send arbitrary commands onto the charger/BMS bus.
+    $<$<CONFIG:Debug>:CHG_DEBUG_RAW_CAN>
 )
 
 # Remove wrong libob.a library dependency when using cpp files

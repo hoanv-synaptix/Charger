@@ -12,7 +12,9 @@
 #include "charge_cycle_storage.h"
 #include "charge_controller.h"
 #include "debug_log.h"
+#ifdef CHG_DEBUG_RAW_CAN
 #include "bsp_can.h"
+#endif
 #include "bsp_sys.h"
 #include <string.h>
 
@@ -468,7 +470,13 @@ bool DebugProtocol_HandleCommand(uint8_t cmd, const uint8_t *payload, uint16_t l
         return true;
     }
 
+#ifdef CHG_DEBUG_RAW_CAN
     case DEBUG_CMD_SEND_RAW_CAN: {
+        /* Bench-debug only: injects an arbitrary frame on either CAN bus,
+         * bypassing BMS/chg_lib entirely. Deliberately excluded from
+         * Release builds (see CHG_DEBUG_RAW_CAN in CMakeLists.txt) so a
+         * production unit's USB debug port cannot be used to send
+         * arbitrary commands onto the charger/BMS bus. */
         /* payload: [bus(1)][id(4)][dlc(1)][data(8)] = 14 bytes */
         if (len < 14) {
             reply[0] = 0x01; /* BAD_PARAM */
@@ -485,6 +493,7 @@ bool DebugProtocol_HandleCommand(uint8_t cmd, const uint8_t *payload, uint16_t l
         PC_Protocol_SendFrame(DEBUG_RSP_RAW_CAN_TX, reply, 1);
         return true;
     }
+#endif /* CHG_DEBUG_RAW_CAN */
 
     default:
         /* Not handled - let standard protocol handler try */
