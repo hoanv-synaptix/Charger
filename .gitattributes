@@ -1,0 +1,20 @@
+# Normalize line endings so diffs reflect real content changes, not CRLF/LF
+# churn from editing on Windows. See AGENTS.md — reviewable diffs matter.
+* text=auto eol=lf
+
+# Windows-only scripts must keep CRLF (double-click / cmd.exe expects it).
+*.bat text eol=crlf
+*.sln text eol=crlf
+
+# Binary / generated artifacts: never touch line endings, diff as binary.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.pdf binary
+*.bin binary
+*.hex binary
+*.elf binary
+*.o binary
+*.obj binary
+*.a binary
+*.hmi binary
