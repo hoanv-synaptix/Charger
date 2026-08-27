@@ -11,7 +11,6 @@
 #include "charge_cycle_config.h"
 #include "charge_cycle_storage.h"
 #include "charge_controller.h"
-#include "app_main.h"
 #include "debug_log.h"
 #include "bsp_can.h"
 #include "main.h"
@@ -63,7 +62,7 @@ uint16_t DebugProtocol_BuildModuleData(uint8_t idx, uint8_t *data)
 
     /* Identity */
     mod->module_idx = idx;
-    mod->driver_id = App_GetCurrentDriver();
+    mod->driver_id = CHG_LIB_GetActiveDriverId();
     mod->enabled = view.enabled ? 1U : 0U;
     mod->online = view.online ? 1U : 0U;
     mod->running = view.running ? 1U : 0U;
@@ -173,7 +172,7 @@ uint16_t DebugProtocol_BuildSystemInfo(uint8_t *data, uint16_t max_len)
     info->fw_patch = FW_VERSION_PATCH;
     info->uptime_ticks = HAL_GetTick();
 
-    info->driver_id = App_GetCurrentDriver();
+    info->driver_id = CHG_LIB_GetActiveDriverId();
     info->modules_total = CHG_LIB_GetModuleCount();
     info->modules_online = summary.modules_online;
     info->modules_fault = summary.modules_fault;
