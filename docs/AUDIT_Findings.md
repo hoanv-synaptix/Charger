@@ -126,16 +126,16 @@ Một lỗi gốc kéo sập chuỗi phân hệ:
 
 ### 4.1 Compliance FR-BMS
 
-| ID | Kết luận | Bằng chứng |
-|---|---|---|
-| FR-BMS-01 | PARTIAL | Parse 9 loại RX đúng BE/LE + DLC check, **nhưng** Std frames bị BSP filter chặn (Critical) |
-| FR-BMS-02 | PASS | `if(!ParseFrame) return;` không refresh watchdog |
-| FR-BMS-03 | PARTIAL | OFFLINE + `memset(g_bms_data)` nhưng **không xóa `g_bms_view`** |
-| FR-BMS-04 | PARTIAL | STALE OR nhưng không clear khi <2s |
-| FR-BMS-05 | PARTIAL | Critical mask thiếu 10/13 alarm; `sev>=1` quá nhạy; recovery bị STALE chặn |
-| FR-BMS-06 | PASS | Ctrl_INFO 500ms đúng |
-| FR-BMS-07 | PARTIAL | `*view=g_bms_view` copy nhưng **race ISR/main** |
-| FR-BMS-08 | FAIL | `now<last → elapsed=0` sai cho wrap 49.7 ngày |
+| ID | Kết luận (gốc) | Kết luận (2026-08-27) | Bằng chứng |
+|---|---|---|---|
+| FR-BMS-01 | PARTIAL | **PASS** | Filter Std frames đã fix từ trước (FDCAN2 `StdFiltersNbr=1`); parse 9 loại RX đúng BE/LE + DLC check |
+| FR-BMS-02 | PASS | PASS | `if(!ParseFrame) return;` không refresh watchdog |
+| FR-BMS-03 | PARTIAL | **PASS** | `g_bms_view` giờ được memset cùng lúc với `g_bms_data` khi OFFLINE (commit `a8ec996`) |
+| FR-BMS-04 | PARTIAL | **PASS** | Nhánh ONLINE giờ có else-clear STALE_DATA giống FAULT (commit `ea6dd4a`) |
+| FR-BMS-05 | PARTIAL | **PASS** | Critical mask mở rộng 4→6/13 theo quyết định người dùng (commit `37ee2fb`); `sev>=2` đúng thang tài liệu (commit `816a973`); recovery-bị-STALE-chặn (BUG-05) đánh giá là thiết kế cố ý, không phải bug |
+| FR-BMS-06 | PASS | PASS | Ctrl_INFO 500ms đúng |
+| FR-BMS-07 | PARTIAL | **PASS** | Race ISR/main trên `alarm_flags` đã fix (preserve-mask ở ISR + critical section ở main loop, commit `a8ec996`) |
+| FR-BMS-08 | FAIL | **PASS** | `bms_tick_elapsed()` dùng signed-diff idiom, xử lý đúng cả wrap 49.7 ngày (commit `ea6dd4a`) |
 
 ### 4.2 Issues
 
