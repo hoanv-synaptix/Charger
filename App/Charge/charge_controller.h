@@ -138,6 +138,15 @@ void ChargeController_SetManualTarget(float voltage, float current);
 bool ChargeController_IsManualMode(void);
 
 /**
+ * @brief Feed the jack/connector temperature reading (max of the 4 NTC
+ *        channels) for the soft-derating check. Call once per control
+ *        cycle from the composition root, before ChargeController_Process().
+ *        App/Charge is pure policy and must not read BSP_ADC itself
+ *        (AGENTS.md sec 5-6). NaN/Inf are ignored (previous value kept).
+ */
+void ChargeController_SetJackTempC(float temp_c);
+
+/**
  * @brief Stop charge cycle (controlled stop)
  */
 void ChargeController_Stop(void);

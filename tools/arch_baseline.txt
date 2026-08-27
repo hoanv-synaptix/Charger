@@ -1,6 +1,5 @@
 # Known pre-existing architecture violations (see AGENTS.md sec 28).
 # Format: <file>:<included_header>. Remove a line once it's fixed.
-App/Charge/charge_controller.c:bsp_adc.h
 App/Charge/charge_controller.c:main.h
 App/Charge/charge_cycle_storage.c:bsp_flash.h
 App/Protocol/pc_debug_protocol.c:bsp_can.h

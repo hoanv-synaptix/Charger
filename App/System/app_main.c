@@ -38,6 +38,7 @@
 #define APP_BTN_DEBOUNCE_MS     50      /* Button debounce */
 
 #include <string.h>
+#include <math.h>
 
 /* ============== Private state ============== */
 
@@ -166,6 +167,26 @@ void App_Loop(void)
         last_process_tick = now;
         CHG_LIB_Process(now);
         BMS_Process(now);
+
+        /* Read jack/connector NTC temperature here (Platform) and hand the
+         * max of the 4 channels to charge policy (App/Charge), which must
+         * not touch BSP_ADC itself (AGENTS.md sec 5-6). Same max-of-4 +
+         * "-50C means disconnected, fall back to 25C" logic that used to
+         * live inside apply_jack_temp_derating(). */
+        {
+            float jack_temp_c = -273.15f;
+            for (uint8_t i = 0; i < 4; i++) {
+                float temp = BSP_ADC_GetTempC(i);
+                if (isfinite(temp) && temp > jack_temp_c) {
+                    jack_temp_c = temp;
+                }
+            }
+            if (jack_temp_c < -50.0f) {
+                jack_temp_c = 25.0f; /* Fallback if all disconnected */
+            }
+            ChargeController_SetJackTempC(jack_temp_c);
+        }
+
         ChargeController_Process(now);
         
         /* Cập nhật Rơ-le (Relay) */

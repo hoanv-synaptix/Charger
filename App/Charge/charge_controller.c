@@ -14,7 +14,6 @@
 
 #include "charge_controller.h"
 #include "charge_cycle_config.h"
-#include "bsp_adc.h"
 #include "charge_cycle_storage.h"
 #include "chg_lib.h"
 #include "bms_core.h"
@@ -89,6 +88,11 @@ static struct {
 
     /* Standalone voltage-completion confirmation timer */
     uint32_t standalone_vmax_reached_tick;
+
+    /* Jack/connector temperature, in degrees C, supplied by the composition
+     * root (App_Loop) once per control cycle via ChargeController_SetJackTempC().
+     * Pure charging policy must not read BSP_ADC directly (AGENTS.md sec 5-6). */
+    float jack_temp_input_c;
 } g_ctrl = {0};
 
 /* ============== Stage Evaluation Types ============== */
@@ -774,17 +778,12 @@ static bool compute_stage_limits(const ChargeCycleConfig_t *cfg, const BMS_View_
 /* ============== Mode Handlers Helpers ============== */
 
 static void apply_jack_temp_derating(const ChargeCycleConfig_t *cfg, uint32_t now_tick) {
-    /* ----- Jack temperature soft derating ----- */
-    float mcu_adc_temp_c = -273.15f;
-    for (uint8_t i = 0; i < 4; i++) {
-        float temp = BSP_ADC_GetTempC(i);
-        if (isfinite(temp) && temp > mcu_adc_temp_c) {
-            mcu_adc_temp_c = temp;
-        }
-    }
-    if (mcu_adc_temp_c < -50.0f) {
-        mcu_adc_temp_c = 25.0f; // Fallback if all disconnected
-    }
+    /* ----- Jack temperature soft derating -----
+     * mcu_adc_temp_c is the max of the 4 NTC channels, read by the
+     * composition root and pushed in via ChargeController_SetJackTempC()
+     * every control cycle (see AGENTS.md sec 5-6: no direct BSP access from
+     * pure charging policy). */
+    float mcu_adc_temp_c = g_ctrl.jack_temp_input_c;
 
     if (cfg->protect_jack_temp_enabled) {
         if (mcu_adc_temp_c >= cfg->protect_jack_temp_threshold_c) {
@@ -1044,7 +1043,16 @@ void ChargeController_Init(void) {
     g_ctrl.last_derating = 1;
     g_ctrl.last_running = 0;
     g_ctrl.stop_reason = CHARGE_STOP_NONE;
+    /* Same "no sensor reading yet" fallback apply_jack_temp_derating used
+     * to apply itself when all 4 NTC channels read invalid. */
+    g_ctrl.jack_temp_input_c = 25.0f;
     LOG("CC: Init\r\n");
+}
+
+void ChargeController_SetJackTempC(float temp_c) {
+    if (isfinite(temp_c)) {
+        g_ctrl.jack_temp_input_c = temp_c;
+    }
 }
 
 void ChargeController_Process(uint32_t now_tick) {
