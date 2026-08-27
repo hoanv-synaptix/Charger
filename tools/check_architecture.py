@@ -21,6 +21,16 @@ Layers (see AGENTS.md section 5):
     GENERATED     Core/*, Drivers/*, Middlewares/*, USB_Device/Target/*, cmake/*
                   -- CubeMX/vendor code, must never depend upward (AGENTS.md sec 4)
 
+Private headers
+---------------
+A "priv/" subfolder (e.g. Modules/chg_lib/priv/) marks headers as internal
+to that one module. CMake puts the whole firmware on a single executable
+target (see D-05, docs/AUDIT_Findings.md), so nothing in the build stops
+another file from reaching into it -- this checker enforces it instead:
+only files living directly in the owning module directory may include a
+priv/ header (test/ host unit tests are exempt; white-box testing internals
+is their job).
+
 Baseline
 --------
 This project has existing violations predating this checker (see
@@ -111,6 +121,26 @@ def build_header_index():
     return index
 
 
+def build_priv_owner_index():
+    """Map header basename -> the module directory that owns it, for every
+    header living in a "priv/" subfolder (e.g. Modules/chg_lib/priv/*.h is
+    owned by "Modules/chg_lib"). D-05 (docs/AUDIT_Findings.md): these headers
+    are meant to be internal to their module, but CMake puts the whole
+    project on one executable target, so nothing at the build-system level
+    stops another file from reaching in. This dict lets find_violations()
+    enforce that boundary the same cheap grep-based way as everything else
+    here, without restructuring the CMake targets."""
+    owners = {}
+    for d in SCAN_DIRS:
+        root = REPO_ROOT / d
+        if not root.exists():
+            continue
+        for h in root.rglob("priv/*.h"):
+            owner_dir = h.parent.parent.relative_to(REPO_ROOT).as_posix()
+            owners.setdefault(h.name, owner_dir)
+    return owners
+
+
 def load_baseline():
     if not BASELINE_PATH.exists():
         return set()
@@ -123,7 +153,7 @@ def load_baseline():
     return entries
 
 
-def find_violations(header_index):
+def find_violations(header_index, priv_owners):
     violations = []  # (baseline_key, file, line_no, included_header, src_layer, tgt_layer)
     for d in SCAN_DIRS:
         root = REPO_ROOT / d
@@ -135,11 +165,23 @@ def find_violations(header_index):
             if src_layer == "UNKNOWN":
                 continue
             allowed = ALLOWED_TARGETS.get(src_layer, set()) | {src_layer}
+            src_dir = str(Path(rel).parent.as_posix())
             for lineno, line in enumerate(src.read_text(errors="replace").splitlines(), 1):
                 m = INCLUDE_RE.match(line)
                 if not m:
                     continue
                 header = Path(m.group(1)).name  # strip any "priv/" style subdir
+
+                # D-05: a "priv/" header may only be included by files living
+                # directly in the module directory that owns it (test/ host
+                # unit tests are exempt -- they intentionally white-box test
+                # internals and are not part of the shipped layer graph).
+                owner_dir = priv_owners.get(header)
+                if owner_dir is not None and src_dir != owner_dir and not rel.startswith("test/"):
+                    key = f"{rel}:{header}"
+                    violations.append((key, rel, lineno, header, src_layer, "PRIVATE:" + owner_dir))
+                    continue
+
                 tgt_layer = header_index.get(header)
                 if tgt_layer is None or tgt_layer == "UNKNOWN":
                     continue  # stdlib-ish or not part of our tree; not this check's job
@@ -157,7 +199,8 @@ def main():
     args = ap.parse_args()
 
     header_index = build_header_index()
-    violations = find_violations(header_index)
+    priv_owners = build_priv_owner_index()
+    violations = find_violations(header_index, priv_owners)
     baseline = load_baseline()
 
     if args.update_baseline:
@@ -176,7 +219,12 @@ def main():
     if new_violations:
         print("Architecture check FAILED - new forbidden dependency edges introduced:\n")
         for key, rel, lineno, header, src_layer, tgt_layer in new_violations:
-            print(f"  {rel}:{lineno}: [{src_layer}] includes \"{header}\" [{tgt_layer}] -- not allowed")
+            if tgt_layer.startswith("PRIVATE:"):
+                owner = tgt_layer.split(":", 1)[1]
+                print(f"  {rel}:{lineno}: includes \"{header}\" -- this header is private to "
+                      f"{owner} (lives under its priv/ dir); only files in {owner} may include it")
+            else:
+                print(f"  {rel}:{lineno}: [{src_layer}] includes \"{header}\" [{tgt_layer}] -- not allowed")
         print(f"\n{len(new_violations)} new violation(s). See AGENTS.md sections 5, 6, 23.")
         print("If this dependency is genuinely required, redesign the boundary; "
               "do not silently add it to the baseline.")

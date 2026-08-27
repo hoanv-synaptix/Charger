@@ -67,6 +67,9 @@
 #define MXR_START_CURRENT_DELAY_MS  50U
 #define MXR_START_CONFIRM_WAIT_MS  100U
 #define MXR_START_CONFIRM_READS      5U
+#define MXR_DEFAULT_RATED_CURRENT_A 20.0f /* D-03: fallback when PC hasn't configured a rated current */
+#define MXR_STOP_RETRY_INTERVAL_MS 500U   /* D-03: STOPPING re-send cadence */
+#define MXR_STOP_MAX_RETRIES         5U   /* D-03: STOPPING retries before COMM_FAIL/FAULT */
 
 /* Vendor-specific register (không dùng chung, chỉ riêng Maxwell) */
 #define MXR_REG_INPUT_VOLTAGE 0x0005
@@ -232,7 +235,7 @@ static float rated_current_or_fallback(const MXR_Internal_t *m)
 {
  float rated = m->rated_current_a;
  if (rated <= 0.0f) rated = m->view.rated_current;
- if (rated <= 0.0f) rated = 20.0f;  /* fallback if PC has not configured rated current */
+ if (rated <= 0.0f) rated = MXR_DEFAULT_RATED_CURRENT_A;
  return rated;
 }
 
@@ -513,8 +516,8 @@ static void process_module(MXR_Internal_t *m, uint32_t now)
 
  case CHG_LIB_STATE_STOPPING:
  /* Wait for stop confirmation - periodically retry */
- if ((now - m->state_enter_tick) >= 500) {  /* 500ms timeout */
-     if (m->retry_count < 5) {
+ if ((now - m->state_enter_tick) >= MXR_STOP_RETRY_INTERVAL_MS) {
+     if (m->retry_count < MXR_STOP_MAX_RETRIES) {
          send_set_u32(m, CHG_LIB_REG_ON_OFF, MXR_CMD_STOP);
          m->retry_count++;
          m->state_enter_tick = now;

@@ -284,6 +284,7 @@ static void lm_send_read(LM_Module_t *mod)
     uint32_t ext_id = lm_build_can_id(mod->view.addr, false);
     if (CHG_LIB_CanBackend_Transmit(ext_id, data, 8)) {
         mod->view.stats.tx_count++;
+        mod->view.last_tx_tick = CHG_LIB_NowTick(); /* BUGFIX B-17: was never updated here */
     }
 }
 
@@ -316,6 +317,7 @@ static void lm_set_output(uint8_t idx, float voltage_v, float current_a)
     uint32_t ext_id = lm_build_can_id(mod->view.addr, false);
     if (CHG_LIB_CanBackend_Transmit(ext_id, data, 8)) {
         mod->view.stats.tx_count++;
+        mod->view.last_tx_tick = CHG_LIB_NowTick(); /* BUGFIX B-17 */
     }
 }
 
@@ -329,6 +331,7 @@ static void lm_start_module(uint8_t idx)
     uint32_t ext_id = lm_build_can_id(mod->view.addr, false);
     if (CHG_LIB_CanBackend_Transmit(ext_id, data, 8)) {
         mod->view.stats.tx_count++;
+        mod->view.last_tx_tick = CHG_LIB_NowTick(); /* BUGFIX B-17 */
     }
 }
 
@@ -342,6 +345,7 @@ static void lm_stop_module(uint8_t idx)
     uint32_t ext_id = lm_build_can_id(mod->view.addr, false);
     if (CHG_LIB_CanBackend_Transmit(ext_id, data, 8)) {
         mod->view.stats.tx_count++;
+        mod->view.last_tx_tick = CHG_LIB_NowTick(); /* BUGFIX B-17 */
     }
 }
 
@@ -355,6 +359,7 @@ static void lm_send_ac_read(LM_Module_t *mod)
     uint32_t ext_id = LM_AC_CMD_BASE | (mod->view.addr & LM_ADDR_MASK);
     if (CHG_LIB_CanBackend_Transmit(ext_id, data, 8)) {
         mod->view.stats.tx_count++;
+        mod->view.last_tx_tick = CHG_LIB_NowTick(); /* BUGFIX B-17 */
     }
 }
 
@@ -368,6 +373,7 @@ static void lm_send_temp_read(LM_Module_t *mod)
     uint32_t ext_id = LM_TEMP_CMD_BASE | (mod->view.addr & LM_ADDR_MASK);
     if (CHG_LIB_CanBackend_Transmit(ext_id, data, 8)) {
         mod->view.stats.tx_count++;
+        mod->view.last_tx_tick = CHG_LIB_NowTick(); /* BUGFIX B-17 */
     }
 }
 
