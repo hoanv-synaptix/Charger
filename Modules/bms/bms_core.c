@@ -158,8 +158,14 @@ static void update_view_from_data(void)
 
 static BMS_AlarmFlag_t map_alarm_field(uint8_t sev, BMS_AlarmFlag_t flag)
 {
-    /* Severity 1 = warning; 2 or 3 = fault. Accept any severity >= 1 */
-    if (sev >= 1U) {
+    /* BUGFIX BUG-09: per bms_protocol.h's own documented ALM_INFO severity
+     * scale (0=none, 1=warning, 2=fault, 3=severe), a mere "warning" is not
+     * an actionable fault condition -- but this used to treat sev>=1 the
+     * same as sev==2/3, so a BMS-side warning on any of the flags in
+     * bms_critical_alarm_mask() (e.g. HIGH_CELL_VOLT, TEMP_HIGH_CHG) would
+     * trip BMS_STATE_FAULT and refuse the charge relay just like a real
+     * fault would. Require fault-or-severe (sev >= 2). */
+    if (sev >= 2U) {
         return flag;
     }
     return BMS_ALARM_NONE;
@@ -237,7 +243,12 @@ void BMS_Init(void)
     memset((void *)&g_charge_ctrl, 0, sizeof(g_charge_ctrl));
 
     g_bms_state          = BMS_STATE_OFFLINE;
-    g_last_valid_rx_tick = BSP_GetTick();
+    /* BUGFIX DES-01: this used to seed with the current tick, as if a frame
+     * had just been received. 0 is the documented "never received anything"
+     * sentinel (see e.g. CHG_LIB module views' own last_rx_tick==0 check) --
+     * seeding with "now" made BMS_View_t.last_rx_tick briefly claim data had
+     * just arrived even at boot, before the first real frame. */
+    g_last_valid_rx_tick = 0U;
     g_last_ctrl_tx_tick  = 0U;
     g_last_data_log_tick = 0U;
     g_initialized        = true;
@@ -312,13 +323,9 @@ void BMS_Process(uint32_t now_tick)
 
     /* ---- State Machine ---- */
     if (g_bms_state == BMS_STATE_OFFLINE) {
-        /* Wait for first frame */
-        if (elapsed < BMS_OFFLINE_TIMEOUT_MS) {
-            /* Still offline but receiving — could transition */
-        } else {
-            /* Still no data after timeout — stay offline */
-        }
-        /* Transition to ONLINE once we have data */
+        /* Transition to ONLINE as soon as any valid frame has been parsed;
+         * `elapsed` has no bearing on leaving OFFLINE (removed a dead
+         * if/else that branched on it without doing anything -- DES-01). */
         if (has_any_valid_bms_data()) {
             g_bms_state = BMS_STATE_ONLINE;
             g_bms_view.online = true;
