@@ -28,6 +28,7 @@
  */
 
 #include "chg_lib.h"
+#include <math.h>
 #include "chg_lib_can_backend.h"
 #include "priv/chg_lib_core_priv.h"
 #include "priv/chg_lib_protocol.h"
@@ -617,6 +618,7 @@ static bool mx_set_config(uint8_t idx, float rated_current_a)
 static bool mx_set_voltage(uint8_t idx, float voltage_v)
 {
  if (idx >= g_module_count || !g_modules[idx].view.enabled) return false;
+ if (!isfinite(voltage_v)) return false; /* BUGFIX B-09: reject NaN/Inf setpoint */
  g_modules[idx].setpoint.voltage_v = voltage_v;
  /* Keep view.voltage as measured telemetry only; do not replace it with the
   * requested setpoint. The controller uses this field for No-BMS completion. */
@@ -629,6 +631,7 @@ static bool mx_set_voltage(uint8_t idx, float voltage_v)
 static bool mx_set_current_limit(uint8_t idx, float current_a)
 {
  if (idx >= g_module_count || !g_modules[idx].view.enabled) return false;
+ if (!isfinite(current_a)) return false; /* BUGFIX B-09: reject NaN/Inf setpoint */
  if (current_a < 0.0f) current_a = 0.0f;
 
  g_modules[idx].setpoint.current_limit = current_a;

@@ -57,6 +57,7 @@
  */
 
 #include "chg_lib_driver_tonhe.h"
+#include <math.h>
 #include "chg_lib_can_backend.h"
 #include "priv/chg_lib_core_priv.h"
 #include "priv/chg_lib_protocol.h"
@@ -681,6 +682,10 @@ static void tonhe_remove_module(uint8_t idx)
 static bool tonhe_set_voltage(uint8_t idx, float voltage_v)
 {
     if (idx >= g_module_count || !g_modules[idx].view.enabled) return false;
+    if (!isfinite(voltage_v)) return false; /* BUGFIX B-09: reject NaN/Inf setpoint --
+                                              * the clamps below use </> which NaN
+                                              * always fails, so NaN would otherwise
+                                              * pass through unclamped. */
 
     /* Clamp to limits */
     if (voltage_v > TONHE_MAX_OUTPUT_VOLTAGE_V) voltage_v = TONHE_MAX_OUTPUT_VOLTAGE_V;
@@ -701,6 +706,7 @@ static bool tonhe_set_voltage(uint8_t idx, float voltage_v)
 static bool tonhe_set_current_limit(uint8_t idx, float current_a)
 {
     if (idx >= g_module_count || !g_modules[idx].view.enabled) return false;
+    if (!isfinite(current_a)) return false; /* BUGFIX B-09: reject NaN/Inf setpoint (see tonhe_set_voltage) */
     if (current_a < 0.0f) current_a = 0.0f;
     if (current_a > TONHE_MAX_OUTPUT_CURRENT_A) current_a = TONHE_MAX_OUTPUT_CURRENT_A;
 

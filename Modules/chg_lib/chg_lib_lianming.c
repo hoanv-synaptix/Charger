@@ -39,6 +39,7 @@
  */
 
 #include "chg_lib_driver_lianming.h"
+#include <math.h>
 #include "chg_lib_can_backend.h"
 #include "priv/chg_lib_core_priv.h"
 #include "priv/chg_lib_protocol.h"
@@ -80,6 +81,7 @@
 #define LM_STEP_DELAY_MS        50U
 #define LM_START_CONFIRM_TIMEOUT_MS 500U
 #define LM_MAX_RETRY            3U
+#define LM_STOP_MAX_RETRY       5U      /* BUGFIX B-07: stop-confirm retry cap before FAULT */
 #define LM_DIAG_INTERVAL       4U      /* Poll AC/temp every N cycles */
 
 /* ============== CAN Frame ID Builder ============== */
@@ -524,10 +526,21 @@ static void process_module(uint8_t idx, uint32_t now)
         break;
 
     case CHG_LIB_STATE_STOPPING:
-        /* Wait for stop confirmation - periodically poll */
-        if ((now - mod->last_poll_tick) >= 500) {  /* 500ms poll */
-            lm_read_status(idx, now);
-            mod->last_poll_tick = now;
+        /* Wait for stop confirmation - periodically retry the stop command.
+         * BUGFIX B-07: previously this only polled status and never re-sent
+         * lm_stop_module(), so a lost STOP command (dropped CAN frame) left
+         * the module running indefinitely with no escalation -- unlike
+         * Maxwell/TonHe, which retry then declare COMM_FAIL/FAULT. */
+        if ((now - mod->last_poll_tick) >= 500) {  /* 500ms poll/retry */
+            if (mod->retry_count < LM_STOP_MAX_RETRY) {
+                lm_stop_module(idx);
+                mod->retry_count++;
+                lm_read_status(idx, now);
+                mod->last_poll_tick = now;
+            } else {
+                mod->view.alarm_flags |= CHG_LIB_ALARM_COMM_FAIL;
+                set_state(mod, CHG_LIB_STATE_FAULT, now);
+            }
         }
         break;
 
@@ -628,6 +641,7 @@ static void lm_remove_module(uint8_t idx)
 static bool lm_set_voltage(uint8_t idx, float voltage_v)
 {
     if (idx >= g_module_count || !g_modules[idx].view.enabled) return false;
+    if (!isfinite(voltage_v)) return false; /* BUGFIX B-09: reject NaN/Inf setpoint */
     g_modules[idx].voltage_setpoint = voltage_v;
     /* Lianming: send voltage+current together when running */
     if (g_modules[idx].view.state == CHG_LIB_STATE_RUNNING) {
@@ -639,6 +653,7 @@ static bool lm_set_voltage(uint8_t idx, float voltage_v)
 static bool lm_set_current_limit(uint8_t idx, float current_a)
 {
     if (idx >= g_module_count || !g_modules[idx].view.enabled) return false;
+    if (!isfinite(current_a)) return false; /* BUGFIX B-09: reject NaN/Inf setpoint */
     if (current_a < 0.0f) current_a = 0.0f;
     /* Clamp to rated current if configured */
     if (g_modules[idx].rated_current_a > 0.0f && current_a > g_modules[idx].rated_current_a) {
