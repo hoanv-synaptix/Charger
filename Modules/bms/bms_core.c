@@ -51,6 +51,27 @@ static uint32_t bms_tick_elapsed(uint32_t now_tick, uint32_t last_tick)
     return (diff < 0) ? 0U : (uint32_t)diff;
 }
 
+/**
+ * @brief  Alarms serious enough to fault the BMS / refuse the charge relay.
+ * @note   Single source of truth for both BMS_Process()'s FAULT transition
+ *         and BMS_HasCriticalAlarm() -- these two previously duplicated the
+ *         mask inline and could silently drift apart.
+ *         HIGH_PACK_VOLT and TEMP_LOW_CHG added: pack-level overvoltage can
+ *         occur without any single cell crossing HIGH_CELL_VOLT (e.g. even
+ *         cell imbalance masking a real pack OV), and charging at low
+ *         temperature risks lithium plating -- both are charging-safety
+ *         critical, not just cell-level bookkeeping. */
+static BMS_AlarmFlag_t bms_critical_alarm_mask(void)
+{
+    return (BMS_AlarmFlag_t)(
+        BMS_ALARM_HIGH_CELL_VOLT  |
+        BMS_ALARM_HIGH_PACK_VOLT  |
+        BMS_ALARM_OVER_CHG_CURR   |
+        BMS_ALARM_TEMP_HIGH_CHG   |
+        BMS_ALARM_TEMP_LOW_CHG    |
+        BMS_ALARM_BMS_OFFLINE);
+}
+
 static bool has_any_valid_bms_data(void)
 {
     if (g_bms_data.batt_st1.valid ||
@@ -323,9 +344,7 @@ void BMS_Process(uint32_t now_tick)
                 g_bms_view.alarm_flags &= (BMS_AlarmFlag_t)~BMS_ALARM_STALE_DATA;
             }
             /* Only critical alarms (not STALE_DATA) transition to FAULT */
-            BMS_AlarmFlag_t critical_mask = (
-                BMS_ALARM_HIGH_CELL_VOLT | BMS_ALARM_OVER_CHG_CURR |
-                BMS_ALARM_TEMP_HIGH_CHG  | BMS_ALARM_BMS_OFFLINE);
+            BMS_AlarmFlag_t critical_mask = bms_critical_alarm_mask();
             if (g_bms_view.alarm_flags & critical_mask) {
                 g_bms_state = BMS_STATE_FAULT;
                 LOG("BMS: FAULT (critical alarm 0x%08lX)\r\n",
@@ -440,12 +459,7 @@ bool BMS_IsOnline(void)
 bool BMS_HasCriticalAlarm(void)
 {
     /* STALE is a connectivity warning, not a critical offline condition. */
-    BMS_AlarmFlag_t crit = (
-        BMS_ALARM_HIGH_CELL_VOLT  |
-        BMS_ALARM_TEMP_HIGH_CHG   |
-        BMS_ALARM_OVER_CHG_CURR   |
-        BMS_ALARM_BMS_OFFLINE
-    );
+    BMS_AlarmFlag_t crit = bms_critical_alarm_mask();
     return ((g_bms_view.alarm_flags & crit) != 0U);
 }
 
