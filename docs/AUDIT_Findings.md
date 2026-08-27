@@ -139,16 +139,16 @@ Một lỗi gốc kéo sập chuỗi phân hệ:
 
 ### 4.2 Issues
 
-- [ ] **BUG-01 — CAN2 filter reject Std frames** — `StdFiltersNbr=0` + `REJECT`. `BSP/bsp_can.c:16-29`, `Core/Src/fdcan.c:56,93` · **Critical — Safety** · CELL_VOLT/TEMP/ALM_INFO mất hoàn toàn
-- [ ] **BUG-02 — Tick overflow sai** — `elapsed=0` khi `now<last` thay vì `now-last` unsigned. `bms_core.c:271-276` · **High**
+- [x] **BUG-01 — CAN2 filter reject Std frames** — `StdFiltersNbr=0` + `REJECT`. `BSP/bsp_can.c:16-29`, `Core/Src/fdcan.c:56,93` · **Critical — Safety** · CELL_VOLT/TEMP/ALM_INFO mất hoàn toàn — _Re-verified 2026-08-27: **ĐÃ FIX** (pre-existing) — `Core/Src/fdcan.c` FDCAN2 `StdFiltersNbr=1` + `BSP/bsp_can.c` cấu hình filter Standard-ID riêng chấp nhận vào RXFIFO0; `check_ioc.py` đã guard giá trị này._
+- [x] **BUG-02 — Tick overflow sai** — `elapsed=0` khi `now<last` thay vì `now-last` unsigned. `bms_core.c:271-276` · **High** — _Re-verified 2026-08-27: **ĐÃ FIX** commit `ea6dd4a` (2026-08-27) — thêm helper `bms_tick_elapsed()` dùng signed-diff idiom, xử lý đúng cả race ISR/main lẫn tick wraparound thật._
 - [ ] **BUG-03 — OFFLINE không xóa `g_bms_view`** — `memset(data)` giữ view stale. `bms_core.c:304,332` · **High**
-- [ ] **BUG-04 — STALE latch không clear** — OR mỗi chu kỳ. `bms_core.c:311-312,336-337` · **Medium**
-- [ ] **BUG-05 — Recovery bị STALE chặn** — `alarm_flags==NONE` bao gồm STALE. `bms_core.c:343` · **Medium**
-- [ ] **BUG-06 — ISR/main race không bảo vệ** — `g_bms_data/view/last_tick` không `volatile`/`__disable_irq`. `bms_core.c:24-31,202-358` · **High**
-- [ ] **BUG-07 — LOG blocking trong ISR** — `BMS_FeedFrame` log 1s từ `BSP_CAN RxCallback` (ISR). `bms_core.c:228-255` `debug_log.c:25` 50ms · **High**
+- [x] **BUG-04 — STALE latch không clear** — OR mỗi chu kỳ. `bms_core.c:311-312,336-337` · **Medium** — _Re-verified 2026-08-27: **ĐÃ FIX** commit `ea6dd4a` (2026-08-27) — nhánh ONLINE giờ có else-clear giống nhánh FAULT._
+- [ ] **BUG-05 — Recovery bị STALE chặn** — `alarm_flags==NONE` bao gồm STALE. `bms_core.c:343` · **Medium** — _Re-verified 2026-08-27: **XEM XÉT LẠI, có thể không phải bug** — yêu cầu `!is_stale` trước khi FAULT→ONLINE nghĩa là không tự phục hồi khi chất lượng data đang kém, kể cả khi không còn alarm thật. Có thể là lựa chọn an toàn cố ý (không công nhận "đã ổn" khi data chưa đáng tin), không phải lỗi. Chưa sửa — cần xác nhận ý định thiết kế trước khi động vào._
+- [ ] **BUG-06 — ISR/main race không bảo vệ** — `g_bms_data/view/last_tick` không `volatile`/`__disable_irq`. `bms_core.c:24-31,202-358` · **High** — _Re-verified 2026-08-27: **VẪN CÒN THẬT (thu hẹp hơn audit mô tả)** — `g_bms_data/view` đã là `volatile` và các điểm snapshot (LOG, `BMS_GetView`) đã dùng `BSP_EnterCritical/ExitCritical`. Nhưng `BMS_Process()` vẫn ghi trực tiếp `g_bms_view.online`/`.alarm_flags` (kể cả read-modify-write `|=`) ngoài critical section, trong khi ISR (`BMS_FeedFrame`→`update_alarm_flags()`) ghi cùng field. Cửa sổ race hẹp (vài µs) nhưng có thể làm mất 1 bit alarm vừa set bởi ISR. Giống B-13 đã fix ở chg_lib — cần bọc toàn bộ đoạn cập nhật state trong `BMS_Process` bằng critical section. Chưa sửa trong phiên này._
+- [x] **BUG-07 — LOG blocking trong ISR** — `BMS_FeedFrame` log 1s từ `BSP_CAN RxCallback` (ISR). `bms_core.c:228-255` `debug_log.c:25` 50ms · **High** — _Re-verified 2026-08-27: **ĐÃ FIX** (pre-existing) — `BMS_FeedFrame` không LOG; log snapshot đã chuyển sang `BMS_Process` qua cờ `g_isr_new_data` + throttle 1s._
 - [ ] **BUG-08 — Critical mask thiếu** — chỉ 3/13 alarm. `bms_core.c:315-317,382-386` · **Medium**
 - [ ] **BUG-09 — Severity mapping quá nhạy** — `sev>=1` → flag. `bms_core.c:118-124` · **Medium**
-- [ ] **BUG-11 — `ShouldCloseChargeRelay()` stub** — luôn `return true`, bỏ qua `90%` check. `bms_core.c:399-421` · **Medium**
+- [x] **BUG-11 — `ShouldCloseChargeRelay()` stub** — luôn `return true`, bỏ qua `90%` check. `bms_core.c:399-421` · **Medium** — _Re-verified 2026-08-27: **ĐÃ FIX** (pre-existing) — không còn stub `return true`; check online + critical alarm + `charge_relay_closed` từ BMS. Ngưỡng SOC dừng sạc đã có ở `App/Charge/charge_controller.c` (5-band SOC staging), đúng phân lớp policy vs driver._
 - [ ] **DES-01 — Tracker Init sai giả thiết** — `g_last_valid_rx_tick = HAL_GetTick()` ngay init. `bms_core.c:194` · **Medium**
 - [ ] **DES-02 — `update_view` phụ thuộc `valid` latch** — giữ mãi dù frame ngừng. `bms_core.c:57-113` · **Medium**
 - [ ] **DES-03 — Thiếu per-frame timeout** — global watchdog → `CELL_TEMP` mất 10s vẫn coi online. `bms_core.c:27,217` · **Medium**
