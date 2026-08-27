@@ -1,6 +1,6 @@
 #include "chg_lib.h"
 #include "debug_log.h"
-#include "main.h"
+#include "bsp_sys.h"
 #include <string.h>
 
 static const CHG_LIB_DriverOps_t *s_driver_table[CHG_LIB_MAX_DRV];
@@ -183,9 +183,9 @@ void CHG_LIB_EmergencyStop(void)
 void CHG_LIB_Process(uint32_t now_tick)
 {
     const CHG_LIB_DriverOps_t *driver;
-    __disable_irq();
+    BSP_EnterCritical();
     driver = get_active();
-    __enable_irq();
+    BSP_ExitCritical();
     if (driver != 0 && driver->process != 0) driver->process(now_tick);
 }
 
@@ -193,9 +193,9 @@ void CHG_LIB_FeedCanFrame(uint32_t ext_id, const uint8_t *data, uint8_t dlc)
 {
     const CHG_LIB_DriverOps_t *driver;
     /* ISR context — no LOG */
-    __disable_irq();
+    BSP_EnterCritical();
     driver = get_active();
-    __enable_irq();
+    BSP_ExitCritical();
     if (driver != 0 && driver->feed_frame != 0) driver->feed_frame(ext_id, data, dlc);
 }
 
@@ -216,8 +216,8 @@ uint8_t CHG_LIB_GetModuleCount(void)
 bool CHG_LIB_GetModuleView(uint8_t idx, CHG_LIB_ModuleView_t *view)
 {
     const CHG_LIB_DriverOps_t *driver;
-    __disable_irq();
+    BSP_EnterCritical();
     driver = get_active();
-    __enable_irq();
+    BSP_ExitCritical();
     return (driver != 0 && driver->get_module_view != 0) ? driver->get_module_view(idx, view) : false;
 }

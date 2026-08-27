@@ -14,8 +14,7 @@
 #include "bms_can.h"
 #include "bms_protocol.h"
 #include "bsp_can.h"
-#include "main.h"
-#include "main.h"
+#include "bsp_sys.h"
 #include "debug_log.h"
 #include <string.h>
 
@@ -194,7 +193,7 @@ void BMS_Init(void)
     memset((void *)&g_charge_ctrl, 0, sizeof(g_charge_ctrl));
 
     g_bms_state          = BMS_STATE_OFFLINE;
-    g_last_valid_rx_tick = HAL_GetTick();
+    g_last_valid_rx_tick = BSP_GetTick();
     g_last_ctrl_tx_tick  = 0U;
     g_last_data_log_tick = 0U;
     g_initialized        = true;
@@ -217,7 +216,7 @@ void BMS_FeedFrame(uint32_t ext_id, uint32_t std_id,
     }
 
     /* Mark as online on first valid frame — ISR-safe, no LOG */
-    g_last_valid_rx_tick = HAL_GetTick();
+    g_last_valid_rx_tick = BSP_GetTick();
     g_isr_rx_count++;
     g_isr_new_data = true;
 
@@ -234,9 +233,9 @@ void BMS_Process(uint32_t now_tick)
 
     /* Critical section: snapshot last_rx_tick atomically (ISR may update it) */
     uint32_t last_rx_snapshot;
-    __disable_irq();
+    BSP_EnterCritical();
     last_rx_snapshot = g_last_valid_rx_tick;
-    __enable_irq();
+    BSP_ExitCritical();
 
     /* Handle uint32_t underflow when now_tick < g_last_valid_rx_tick
      * This can happen when:
@@ -252,9 +251,9 @@ void BMS_Process(uint32_t now_tick)
     }
 
     uint32_t last_rx_frames[BMS_FRAME_MAX];
-    __disable_irq();
+    BSP_EnterCritical();
     memcpy(last_rx_frames, (const void*)g_bms_data.last_rx_tick, sizeof(last_rx_frames));
-    __enable_irq();
+    BSP_ExitCritical();
 
     bool is_stale = false;
     for (int i = 0; i < BMS_FRAME_MAX; i++) {
@@ -352,19 +351,19 @@ void BMS_Process(uint32_t now_tick)
     /* ---- Throttled snapshot LOG (1s) — moved out of ISR ---- */
     if (g_isr_new_data) {
         uint32_t last_log;
-        __disable_irq();
+        BSP_EnterCritical();
         last_log = g_last_data_log_tick;
-        __enable_irq();
+        BSP_ExitCritical();
         if ((now_tick - last_log) >= 1000U) {
-            __disable_irq();
+            BSP_EnterCritical();
             g_last_data_log_tick = now_tick;
             g_isr_new_data = false;
-            __enable_irq();
+            BSP_ExitCritical();
             /* Snapshot atomically for logging */
             BMS_View_t snap;
-            __disable_irq();
+            BSP_EnterCritical();
             snap = *(BMS_View_t *)&g_bms_view;
-            __enable_irq();
+            BSP_ExitCritical();
             int batt_v_x10 = (int)(snap.batt_voltage * 10.0f);
             int batt_i_x10 = (int)(snap.batt_current * 10.0f);
             int temp_max_x10 = (int)(snap.max_cell_temp * 10.0f);
@@ -395,9 +394,9 @@ void BMS_Process(uint32_t now_tick)
     }
 
     g_bms_view.state       = g_bms_state;
-    __disable_irq();
+    BSP_EnterCritical();
     g_bms_view.last_rx_tick = g_last_valid_rx_tick;
-    __enable_irq();
+    BSP_ExitCritical();
 }
 
 void BMS_SendCtrlInfo(const BMS_ChargeCtrl_t *ctrl)
@@ -436,9 +435,9 @@ void BMS_GetView(BMS_View_t *view)
     if (view == NULL) {
         return;
     }
-    __disable_irq();
+    BSP_EnterCritical();
     *view = *(BMS_View_t *)&g_bms_view;
-    __enable_irq();
+    BSP_ExitCritical();
 }
 
 bool BMS_ShouldCloseChargeRelay(void)
@@ -452,9 +451,9 @@ bool BMS_ShouldCloseChargeRelay(void)
     }
 
     BMS_View_t snap;
-    __disable_irq();
+    BSP_EnterCritical();
     snap = *(BMS_View_t *)&g_bms_view;
-    __enable_irq();
+    BSP_ExitCritical();
 
     /* Charge relay in BMS must be closed */
     if (!snap.charge_relay_closed) {

@@ -31,7 +31,7 @@
 #include "chg_lib_can_backend.h"
 #include "priv/chg_lib_core_priv.h"
 #include "priv/chg_lib_protocol.h"
-#include "main.h"
+#include "bsp_sys.h"
 #include <string.h>
 
 /* ============== Maxwell-specific CAN Constants ============== */
@@ -588,12 +588,12 @@ static bool mx_set_config(uint8_t idx, float rated_current_a)
  static void mx_remove_module(uint8_t idx)
 {
  if (idx >= g_module_count) return;
- __disable_irq();
+ BSP_EnterCritical();
  MXR_Internal_t *m = &g_modules[idx];
  if (m->view.state == CHG_LIB_STATE_RUNNING || m->view.state == CHG_LIB_STATE_STARTING) {
-  __enable_irq();
+  BSP_ExitCritical();
   send_set_u32(m, CHG_LIB_REG_ON_OFF, MXR_CMD_STOP);
-  __disable_irq();
+  BSP_EnterCritical();
  }
  /* Compact array: shift tail left */
  for (uint8_t i = idx; i + 1 < g_module_count; i++) {
@@ -604,7 +604,7 @@ static bool mx_set_config(uint8_t idx, float rated_current_a)
  if (g_rr_index >= g_module_count && g_module_count > 0) {
      g_rr_index = g_module_count - 1;
  }
- __enable_irq();
+ BSP_ExitCritical();
 }
 
 static bool mx_set_voltage(uint8_t idx, float voltage_v)
@@ -692,22 +692,22 @@ static void mx_process(uint32_t now)
 {
  if (g_module_count == 0) return;
  /* Round-robin: protect index and view access */
- __disable_irq();
+ BSP_EnterCritical();
  uint8_t idx = g_rr_index;
- __enable_irq();
+ BSP_ExitCritical();
  if (idx >= g_module_count) idx = 0;
  MXR_Internal_t *m = &g_modules[idx];
  /* Copy enabled flag atomically */
  bool enabled;
- __disable_irq();
+ BSP_EnterCritical();
  enabled = m->view.enabled;
- __enable_irq();
+ BSP_ExitCritical();
  if (enabled) {
  process_module(m, now);
  }
- __disable_irq();
+ BSP_EnterCritical();
  if (g_module_count > 0) g_rr_index = (g_rr_index + 1) % g_module_count;
- __enable_irq();
+ BSP_ExitCritical();
 }
 
 static void mx_feed_frame(uint32_t ext_id, const uint8_t *data, uint8_t dlc)
@@ -747,10 +747,10 @@ static uint8_t mx_get_module_count(void)
 static bool mx_get_module_view(uint8_t idx, CHG_LIB_ModuleView_t *view)
 {
  if (view == 0) return false;
- __disable_irq();
- if (idx >= g_module_count) { __enable_irq(); return false; }
+ BSP_EnterCritical();
+ if (idx >= g_module_count) { BSP_ExitCritical(); return false; }
  CHG_LIB_ModuleView_t tmp = g_modules[idx].view;
- __enable_irq();
+ BSP_ExitCritical();
  *view = tmp;
  return true;
 }

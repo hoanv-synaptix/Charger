@@ -13,7 +13,7 @@
 #include "charge_controller.h"
 #include "debug_log.h"
 #include "bsp_can.h"
-#include "main.h"
+#include "bsp_sys.h"
 #include <string.h>
 
 /* ============== Private State ============== */
@@ -35,7 +35,7 @@ void DebugProtocol_Enter(void)
 {
     g_debug_active = true;
     g_stream_sequence = 0;
-    g_last_stream_tick = HAL_GetTick();
+    g_last_stream_tick = BSP_GetTick();
     /* No LOG here — runs in USB ISR context */
 }
 
@@ -170,7 +170,7 @@ uint16_t DebugProtocol_BuildSystemInfo(uint8_t *data, uint16_t max_len)
     info->fw_major = FW_VERSION_MAJOR;
     info->fw_minor = FW_VERSION_MINOR;
     info->fw_patch = FW_VERSION_PATCH;
-    info->uptime_ticks = HAL_GetTick();
+    info->uptime_ticks = BSP_GetTick();
 
     info->driver_id = CHG_LIB_GetActiveDriverId();
     info->modules_total = CHG_LIB_GetModuleCount();
@@ -307,7 +307,7 @@ void DebugProtocol_SendStream(void)
         return;
     }
 
-    uint32_t now = HAL_GetTick();
+    uint32_t now = BSP_GetTick();
     if ((now - g_last_stream_tick) < DEBUG_STREAM_INTERVAL_MS) {
         return;
     }

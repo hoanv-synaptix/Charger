@@ -13,7 +13,7 @@
 
 #include "bms_protocol.h"
 #include <string.h>
-#include "stm32g0xx_hal.h"
+#include "bsp_sys.h"
 
 /* ============== Private: helpers ============== */
 
@@ -199,7 +199,7 @@ bool BMS_ParseFrame(uint32_t ext_id, uint32_t std_id,
             if (std_id == 0 && (ext_id & h->id_mask) == h->id) {
                 if (dlc >= h->min_dlc) {
                     h->func(data, bms, ext_id);
-                    bms->last_rx_tick[h->type] = HAL_GetTick();
+                    bms->last_rx_tick[h->type] = BSP_GetTick();
                     return true;
                 }
             }
@@ -207,7 +207,7 @@ bool BMS_ParseFrame(uint32_t ext_id, uint32_t std_id,
             if (std_id != 0 && (std_id & h->id_mask) == h->id) {
                 if (dlc >= h->min_dlc) {
                     h->func(data, bms, std_id);
-                    bms->last_rx_tick[h->type] = HAL_GetTick();
+                    bms->last_rx_tick[h->type] = BSP_GetTick();
                     return true;
                 }
             }

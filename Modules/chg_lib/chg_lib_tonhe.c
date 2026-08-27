@@ -60,7 +60,7 @@
 #include "chg_lib_can_backend.h"
 #include "priv/chg_lib_core_priv.h"
 #include "priv/chg_lib_protocol.h"
-#include "main.h"
+#include "bsp_sys.h"
 #include <string.h>
 
 /* ============== Private Types ============== */
@@ -659,7 +659,7 @@ static bool tonhe_set_config(uint8_t idx, float rated_current_a)
 static void tonhe_remove_module(uint8_t idx)
 {
     if (idx >= g_module_count) return;
-    __disable_irq();
+    BSP_EnterCritical();
     for (uint8_t i = idx; i + 1 < g_module_count; i++) {
         g_modules[i] = g_modules[i + 1];
     }
@@ -668,7 +668,7 @@ static void tonhe_remove_module(uint8_t idx)
     if (g_rr_index >= g_module_count && g_module_count > 0) {
         g_rr_index = g_module_count - 1;
     }
-    __enable_irq();
+    BSP_ExitCritical();
 }
 
 static bool tonhe_set_voltage(uint8_t idx, float voltage_v)
@@ -780,21 +780,21 @@ static void tonhe_process(uint32_t now)
     }
 
     if (g_module_count == 0) return;
-    __disable_irq();
+    BSP_EnterCritical();
     uint8_t idx = g_rr_index;
-    __enable_irq();
+    BSP_ExitCritical();
     if (idx >= g_module_count) idx = 0;
     TONHE_Internal_t *mod = &g_modules[idx];
     bool enabled;
-    __disable_irq();
+    BSP_EnterCritical();
     enabled = mod->view.enabled;
-    __enable_irq();
+    BSP_ExitCritical();
     if (enabled) {
         process_module(mod, now);
     }
-    __disable_irq();
+    BSP_EnterCritical();
     if (g_module_count > 0) g_rr_index = (g_rr_index + 1) % g_module_count;
-    __enable_irq();
+    BSP_ExitCritical();
 }
 
 static void tonhe_feed_frame(uint32_t ext_id, const uint8_t *data, uint8_t dlc)
@@ -874,10 +874,10 @@ static uint8_t tonhe_get_module_count(void)
 static bool tonhe_get_module_view(uint8_t idx, CHG_LIB_ModuleView_t *view)
 {
     if (view == NULL) return false;
-    __disable_irq();
-    if (idx >= g_module_count) { __enable_irq(); return false; }
+    BSP_EnterCritical();
+    if (idx >= g_module_count) { BSP_ExitCritical(); return false; }
     CHG_LIB_ModuleView_t tmp = g_modules[idx].view;
-    __enable_irq();
+    BSP_ExitCritical();
     *view = tmp;
     return true;
 }

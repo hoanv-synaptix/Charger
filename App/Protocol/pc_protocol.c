@@ -14,7 +14,6 @@
 #include "pc_debug_protocol.h"
 #include <string.h>
 #include <math.h>
-#include "main.h"
 #include "bsp_sys.h"
 
 /* ============== Private ============== */
@@ -87,12 +86,12 @@ static bool enqueue_frame(uint8_t cmd, const uint8_t *payload, uint8_t len)
     PcTxFrame_t *frame;
     uint16_t i = 0U;
     bool ret = false;
-    __disable_irq();
+    BSP_EnterCritical();
     if (g_tx_count >= PC_TX_QUEUE_DEPTH) {
         /* Queue full: drop oldest frame, but only if not currently in-flight
          * USB transfer (dropping in-flight would corrupt the USB pointer). */
         if (g_tx_in_flight) {
-            __enable_irq();
+            BSP_ExitCritical();
             return false; /* Cannot enqueue — TX busy and queue full */
         }
         g_tx_head = (uint8_t)((g_tx_head + 1U) % PC_TX_QUEUE_DEPTH);
@@ -118,7 +117,7 @@ static bool enqueue_frame(uint8_t cmd, const uint8_t *payload, uint8_t len)
     g_tx_tail = (uint8_t)((g_tx_tail + 1U) % PC_TX_QUEUE_DEPTH);
     g_tx_count++;
     ret = true;
-    __enable_irq();
+    BSP_ExitCritical();
     /* No LOG here — may be called from USB ISR context */
     return ret;
 }
@@ -171,7 +170,7 @@ void PC_Protocol_ProcessTx(void)
         return;
     }
 
-    __disable_irq();
+    BSP_EnterCritical();
     if (g_tx_in_flight || hcdc->TxState != 0U) {
         /* Timeout: proportional to frame size. USB FS sends 64B/pkt,
          * ~1ms/pkt. 50ms base + 1ms per 8 bytes covers large frames
@@ -186,58 +185,58 @@ void PC_Protocol_ProcessTx(void)
                 g_tx_head = (uint8_t)((g_tx_head + 1U) % PC_TX_QUEUE_DEPTH);
                 g_tx_count--;
             }
-            __enable_irq();
+            BSP_ExitCritical();
             /* Removed verbose TX TIMEOUT log — adds 50ms latency */
             return;
         } else {
-            __enable_irq();
+            BSP_ExitCritical();
             return;
         }
     }
     if (g_tx_count == 0U) {
-        __enable_irq();
+        BSP_ExitCritical();
         return;
     }
     head_snapshot = g_tx_head;
     g_tx_in_flight = 1U;
     last_tx_start = BSP_GetTick();
-    __enable_irq();
+    BSP_ExitCritical();
 
     result = CDC_Transmit_FS(g_tx_queue[head_snapshot].data, g_tx_queue[head_snapshot].len);
     if (result == USBD_OK) {
-        __disable_irq();
+        BSP_EnterCritical();
         g_tx_sent_count++;
-        __enable_irq();
+        BSP_ExitCritical();
         /* Removed verbose TX OK log — adds 50ms latency to 20ms main loop */
     } else {
-        __disable_irq();
+        BSP_EnterCritical();
         g_tx_in_flight = 0U;
         if (result == USBD_BUSY) {
             g_tx_busy_count++;
         }
-        __enable_irq();
+        BSP_ExitCritical();
         LOG("[PC TX FAIL] res=%u cmd=0x%02X\r\n", result, g_tx_queue[head_snapshot].data[2]);
     }
 }
 
 void PC_Protocol_NotifyTxComplete(void)
 {
-    __disable_irq();
+    BSP_EnterCritical();
     if (!g_tx_in_flight || g_tx_count == 0U) {
-        __enable_irq();
+        BSP_ExitCritical();
         return;
     }
 
     g_tx_head = (uint8_t)((g_tx_head + 1U) % PC_TX_QUEUE_DEPTH);
     g_tx_count--;
     g_tx_in_flight = 0U;
-    __enable_irq();
+    BSP_ExitCritical();
 }
 
 void PC_Protocol_ResetTx(void)
 {
     USBD_CDC_HandleTypeDef *hcdc = get_cdc_handle();
-    __disable_irq();
+    BSP_EnterCritical();
     if (hcdc != NULL) {
         hcdc->TxState = 0U;
     }
@@ -245,7 +244,7 @@ void PC_Protocol_ResetTx(void)
     g_tx_tail = 0U;
     g_tx_count = 0U;
     g_tx_in_flight = 0U;
-    __enable_irq();
+    BSP_ExitCritical();
 }
 
 static void send_ack(uint8_t cmd)  { send_frame(PC_RSP_ACK, &cmd, 1); }

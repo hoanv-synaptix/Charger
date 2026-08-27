@@ -42,7 +42,7 @@
 #include "chg_lib_can_backend.h"
 #include "priv/chg_lib_core_priv.h"
 #include "priv/chg_lib_protocol.h"
-#include "main.h"
+#include "bsp_sys.h"
 #include <string.h>
 
 /* ============== Lianming-specific CAN Constants ============== */
@@ -612,7 +612,7 @@ static void lm_remove_module(uint8_t idx)
     if (idx >= g_module_count) {
         return;
     }
-    __disable_irq();
+    BSP_EnterCritical();
     g_modules[idx].should_run = false;
     for (uint8_t i = idx; i + 1 < g_module_count; i++) {
         g_modules[i] = g_modules[i + 1];
@@ -622,7 +622,7 @@ static void lm_remove_module(uint8_t idx)
     if (g_rr_index >= g_module_count && g_module_count > 0) {
         g_rr_index = g_module_count - 1;
     }
-    __enable_irq();
+    BSP_ExitCritical();
 }
 
 static bool lm_set_voltage(uint8_t idx, float voltage_v)
@@ -715,14 +715,14 @@ static void lm_emergency_stop(void)
 static void lm_process(uint32_t now)
 {
     if (g_module_count == 0U) return;
-    __disable_irq();
+    BSP_EnterCritical();
     uint8_t idx = g_rr_index;
-    __enable_irq();
+    BSP_ExitCritical();
     if (idx >= g_module_count) idx = 0;
     process_module(idx, now);
-    __disable_irq();
+    BSP_EnterCritical();
     if (g_module_count > 0) g_rr_index = (uint8_t)((g_rr_index + 1U) % g_module_count);
-    __enable_irq();
+    BSP_ExitCritical();
 }
 
 static void lm_process_rx(uint32_t ext_id, const uint8_t *data, uint8_t dlc, uint32_t now)
@@ -808,10 +808,10 @@ static uint8_t lm_get_module_count(void)
 static bool lm_get_module_view(uint8_t idx, CHG_LIB_ModuleView_t *view)
 {
     if (view == 0) return false;
-    __disable_irq();
-    if (idx >= g_module_count) { __enable_irq(); return false; }
+    BSP_EnterCritical();
+    if (idx >= g_module_count) { BSP_ExitCritical(); return false; }
     CHG_LIB_ModuleView_t tmp = g_modules[idx].view;
-    __enable_irq();
+    BSP_ExitCritical();
     *view = tmp;
     return true;
 }

@@ -8,6 +8,16 @@ uint32_t mock_tick = 0;
 uint32_t HAL_GetTick(void) { return mock_tick; }
 uint32_t CHG_LIB_CanBackend_NowTick(void) { return mock_tick; }
 
+/* Mock BSP (bsp_sys.h) -- bms_protocol.c calls BSP_GetTick() instead of
+ * HAL_GetTick() directly (AGENTS.md sec 5-6: Modules must not include the
+ * HAL directly, only Platform headers). No entry point in this test uses
+ * BSP_EnterCritical/BSP_ExitCritical or BSP_Delay; stub them anyway so the
+ * link succeeds if that ever changes. */
+uint32_t BSP_GetTick(void) { return mock_tick; }
+void BSP_Delay(uint32_t delay_ms) { (void)delay_ms; }
+void BSP_EnterCritical(void) {}
+void BSP_ExitCritical(void) {}
+
 /* Includes to test */
 #include "bms_protocol.h"
 #include "priv/chg_lib_core_priv.h"
