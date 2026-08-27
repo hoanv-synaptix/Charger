@@ -8,10 +8,19 @@
 #include "bsp_can.h"
 #include "fdcan.h"
 #include "debug_log.h"
-#include "bms_core.h"
-#include "chg_lib.h"
 
 volatile uint32_t g_c1_tx = 0, g_c1_rx = 0, g_c2_tx = 0, g_c2_rx = 0;
+
+static BSP_CAN_ChargerRxHandler_t g_charger_rx_handler = 0;
+static BSP_CAN_BmsRxHandler_t     g_bms_rx_handler = 0;
+
+void BSP_CAN_SetChargerRxHandler(BSP_CAN_ChargerRxHandler_t handler) {
+    g_charger_rx_handler = handler;
+}
+
+void BSP_CAN_SetBmsRxHandler(BSP_CAN_BmsRxHandler_t handler) {
+    g_bms_rx_handler = handler;
+}
 
 static void config_charger_bus_filters(FDCAN_HandleTypeDef *hfdcan)
 {
@@ -117,14 +126,16 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
 
             if (hfdcan->Instance == FDCAN1) {
                 g_c1_rx++;
-                if (RxHeader.IdType == FDCAN_EXTENDED_ID) {
-                    CHG_LIB_FeedCanFrame(RxHeader.Identifier, RxData, actual_dlc);
+                if (RxHeader.IdType == FDCAN_EXTENDED_ID && g_charger_rx_handler != 0) {
+                    g_charger_rx_handler(RxHeader.Identifier, RxData, actual_dlc);
                 }
             } else if (hfdcan->Instance == FDCAN2) {
                 g_c2_rx++;
-                uint32_t ext_id = (RxHeader.IdType == FDCAN_EXTENDED_ID) ? RxHeader.Identifier : 0;
-                uint32_t std_id = (RxHeader.IdType == FDCAN_STANDARD_ID) ? RxHeader.Identifier : 0;
-                BMS_FeedFrame(ext_id, std_id, RxData, actual_dlc);
+                if (g_bms_rx_handler != 0) {
+                    uint32_t ext_id = (RxHeader.IdType == FDCAN_EXTENDED_ID) ? RxHeader.Identifier : 0;
+                    uint32_t std_id = (RxHeader.IdType == FDCAN_STANDARD_ID) ? RxHeader.Identifier : 0;
+                    g_bms_rx_handler(ext_id, std_id, RxData, actual_dlc);
+                }
             }
         }
     }

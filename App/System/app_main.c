@@ -101,6 +101,14 @@ void App_Init(void)
     CHG_LIB_Init();
     CHG_LIB_CanBackend_Init();
 
+    /* Wire the FDCAN RX ISR to the business modules. BSP only captures raw
+     * frames off the wire and must not #include bms_core.h/chg_lib.h itself
+     * (AGENTS.md sec 5-6) -- the composition root does the wiring instead.
+     * Same ISR context and call timing as before; only the include graph
+     * changed. */
+    BSP_CAN_SetChargerRxHandler(CHG_LIB_FeedCanFrame);
+    BSP_CAN_SetBmsRxHandler(BMS_FeedFrame);
+
     /* Initialize debug protocol */
     DebugProtocol_Init();
 
