@@ -72,25 +72,22 @@ static BMS_AlarmFlag_t bms_critical_alarm_mask(void)
         BMS_ALARM_BMS_OFFLINE);
 }
 
+/**
+ * @brief  True once any registered BMS frame type has ever been parsed.
+ * @note   MNT-01 (docs/AUDIT_Findings.md): this used to be a hand-maintained
+ *         OR-chain of every BMS_Data_t sub-struct's `.valid` field, one more
+ *         place to remember when wiring up a new frame type. BMS_ParseFrame()
+ *         already stamps last_rx_tick[type] for every registered handler
+ *         (see g_handlers[] in bms_protocol.c) regardless of frame type, so
+ *         this can just read that instead -- adding a new frame to the
+ *         dispatch table now makes it count here for free. */
 static bool has_any_valid_bms_data(void)
 {
-    if (g_bms_data.batt_st1.valid ||
-        g_bms_data.cell_volt.valid ||
-        g_bms_data.cell_temp.valid ||
-        g_bms_data.alm_info.valid ||
-        g_bms_data.batt_st2.valid ||
-        g_bms_data.chg_request.valid ||
-        g_bms_data.bms_sw_sta.valid ||
-        g_bms_data.cell_temp_full.valid) {
-        return true;
-    }
-
-    for (uint8_t i = 0U; i < BMS_MAX_CELL_VOLT_FRAMES; i++) {
-        if (g_bms_data.cell_volt_full[i].valid) {
+    for (int i = 0; i < BMS_FRAME_MAX; i++) {
+        if (g_bms_data.last_rx_tick[i] != 0U) {
             return true;
         }
     }
-
     return false;
 }
 
