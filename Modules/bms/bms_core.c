@@ -167,29 +167,33 @@ static BMS_AlarmFlag_t map_alarm_field(uint8_t sev, BMS_AlarmFlag_t flag)
 
 static void update_alarm_flags(void)
 {
+    /* BUGFIX BUG-06: BMS_ALARM_BMS_OFFLINE and BMS_ALARM_STALE_DATA are owned
+     * by BMS_Process() (main loop), not by this ISR-context ALM_INFO parse.
+     * This used to be a full overwrite of g_bms_view.alarm_flags, so every
+     * incoming ALM_INFO frame (every ~100ms per protocol) silently clobbered
+     * whichever of those two bits BMS_Process had set -- not a rare timing
+     * race, a guaranteed clobber on every frame. Preserve them explicitly. */
     BMS_AlarmFlag_t flags = BMS_ALARM_NONE;
     const volatile BMS_AlmInfo_t *a = &g_bms_data.alm_info;
+    const BMS_AlarmFlag_t preserve_mask = (BMS_AlarmFlag_t)(BMS_ALARM_BMS_OFFLINE | BMS_ALARM_STALE_DATA);
 
-    if (!a->valid) {
-        g_bms_view.alarm_flags = flags;
-        return;
+    if (a->valid) {
+        flags |= map_alarm_field(a->low_pack_volt,      BMS_ALARM_LOW_PACK_VOLT);
+        flags |= map_alarm_field(a->low_cell_volt,      BMS_ALARM_LOW_CELL_VOLT);
+        flags |= map_alarm_field(a->high_pack_volt,     BMS_ALARM_HIGH_PACK_VOLT);
+        flags |= map_alarm_field(a->high_cell_volt,     BMS_ALARM_HIGH_CELL_VOLT);
+        flags |= map_alarm_field(a->temp_cell_high_chg,  BMS_ALARM_TEMP_HIGH_CHG);
+        flags |= map_alarm_field(a->temp_cell_high_dchg, BMS_ALARM_TEMP_HIGH_DCHG);
+        flags |= map_alarm_field(a->temp_cell_low_chg,  BMS_ALARM_TEMP_LOW_CHG);
+        flags |= map_alarm_field(a->temp_cell_low_dchg, BMS_ALARM_TEMP_LOW_DCHG);
+        flags |= map_alarm_field(a->temp_relay_high,    BMS_ALARM_TEMP_RELAY_HIGH);
+        flags |= map_alarm_field(a->over_chg_curr,      BMS_ALARM_OVER_CHG_CURR);
+        flags |= map_alarm_field(a->over_dchg_curr,     BMS_ALARM_OVER_DCHG_CURR);
+        flags |= map_alarm_field(a->cell_volt_diff,    BMS_ALARM_CELL_VOLT_DIFF);
+        flags |= map_alarm_field(a->low_soc,            BMS_ALARM_LOW_SOC);
     }
 
-    flags |= map_alarm_field(a->low_pack_volt,      BMS_ALARM_LOW_PACK_VOLT);
-    flags |= map_alarm_field(a->low_cell_volt,      BMS_ALARM_LOW_CELL_VOLT);
-    flags |= map_alarm_field(a->high_pack_volt,     BMS_ALARM_HIGH_PACK_VOLT);
-    flags |= map_alarm_field(a->high_cell_volt,     BMS_ALARM_HIGH_CELL_VOLT);
-    flags |= map_alarm_field(a->temp_cell_high_chg,  BMS_ALARM_TEMP_HIGH_CHG);
-    flags |= map_alarm_field(a->temp_cell_high_dchg, BMS_ALARM_TEMP_HIGH_DCHG);
-    flags |= map_alarm_field(a->temp_cell_low_chg,  BMS_ALARM_TEMP_LOW_CHG);
-    flags |= map_alarm_field(a->temp_cell_low_dchg, BMS_ALARM_TEMP_LOW_DCHG);
-    flags |= map_alarm_field(a->temp_relay_high,    BMS_ALARM_TEMP_RELAY_HIGH);
-    flags |= map_alarm_field(a->over_chg_curr,      BMS_ALARM_OVER_CHG_CURR);
-    flags |= map_alarm_field(a->over_dchg_curr,     BMS_ALARM_OVER_DCHG_CURR);
-    flags |= map_alarm_field(a->cell_volt_diff,    BMS_ALARM_CELL_VOLT_DIFF);
-    flags |= map_alarm_field(a->low_soc,            BMS_ALARM_LOW_SOC);
-
-    g_bms_view.alarm_flags = flags;
+    g_bms_view.alarm_flags = (BMS_AlarmFlag_t)(flags | (g_bms_view.alarm_flags & preserve_mask));
 }
 
 /* ============== Private: CAN TX wrapper (forward decl) ============== */
@@ -324,10 +328,14 @@ void BMS_Process(uint32_t now_tick)
     else if (g_bms_state == BMS_STATE_ONLINE) {
         if (elapsed >= BMS_OFFLINE_TIMEOUT_MS) {
             g_bms_state = BMS_STATE_OFFLINE;
+            /* Clear all parsed data AND the cached view so a stale voltage/
+             * SOC/temperature reading is never mistaken for live telemetry
+             * while OFFLINE (BUGFIX BUG-03: previously only g_bms_data was
+             * cleared -- g_bms_view kept the last-known values). */
+            memset((void *)&g_bms_data, 0, sizeof(g_bms_data));
+            memset((void *)&g_bms_view, 0, sizeof(g_bms_view));
             g_bms_view.online = false;
             g_bms_view.alarm_flags = BMS_ALARM_BMS_OFFLINE;
-            /* Clear all parsed data so stale values are not used */
-            memset((void *)&g_bms_data, 0, sizeof(g_bms_data));
             LOG("BMS: OFFLINE (timeout after %lu ms from tick %lu, now %lu)\r\n",
                 (unsigned long)elapsed, (unsigned long)last_rx_snapshot, (unsigned long)now_tick);
         } else {
@@ -338,11 +346,17 @@ void BMS_Process(uint32_t now_tick)
              * (which already has the matching else-clear). Latched forever
              * within a single ONLINE session otherwise. */
             g_bms_view.online = true;
+            /* BUGFIX BUG-06: |=/&= is a read-modify-write on a field the ISR
+             * (update_alarm_flags) also writes; without this, the ISR could
+             * fire between the read and the write and have its update
+             * clobbered by this stale snapshot-based store. */
+            BSP_EnterCritical();
             if (is_stale) {
                 g_bms_view.alarm_flags |= BMS_ALARM_STALE_DATA;
             } else {
                 g_bms_view.alarm_flags &= (BMS_AlarmFlag_t)~BMS_ALARM_STALE_DATA;
             }
+            BSP_ExitCritical();
             /* Only critical alarms (not STALE_DATA) transition to FAULT */
             BMS_AlarmFlag_t critical_mask = bms_critical_alarm_mask();
             if (g_bms_view.alarm_flags & critical_mask) {
@@ -357,17 +371,22 @@ void BMS_Process(uint32_t now_tick)
             /* A faulted BMS can still lose communication.  Connectivity
              * timeout must always win over the previous alarm state. */
             g_bms_state = BMS_STATE_OFFLINE;
+            /* BUGFIX BUG-03: see the matching comment in the ONLINE branch. */
+            memset((void *)&g_bms_data, 0, sizeof(g_bms_data));
+            memset((void *)&g_bms_view, 0, sizeof(g_bms_view));
             g_bms_view.online = false;
             g_bms_view.alarm_flags = BMS_ALARM_BMS_OFFLINE;
-            memset((void *)&g_bms_data, 0, sizeof(g_bms_data));
             LOG("BMS: OFFLINE (timeout while faulted)\r\n");
         } else {
             g_bms_view.online = true;
+            /* BUGFIX BUG-06: see the matching comment in the ONLINE branch. */
+            BSP_EnterCritical();
             if (is_stale) {
                 g_bms_view.alarm_flags |= BMS_ALARM_STALE_DATA;
             } else {
                 g_bms_view.alarm_flags &= (BMS_AlarmFlag_t)~BMS_ALARM_STALE_DATA;
             }
+            BSP_ExitCritical();
         }
 
         /* Fault recovery: auto-recover when alarms clear and data resumes */
