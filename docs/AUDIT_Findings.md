@@ -13,7 +13,7 @@
 
 > **Cách dùng**: mỗi issue có checkbox `- [ ]`. Đánh `x` khi fix xong + ghi commit hash. Sprint được gán sẵn; không tự đổi thứ tự khi chưa xong P0.
 
-> **Re-verification 2026-08-27**: Tài liệu này được viết trước một đợt "Sprint 1 fixes" không rõ ràng trong lịch sử — nhiều bug Critical/Major bên dưới đã được fix trước khi đợt dọn dẹp kiến trúc (PR0-PR3) này bắt đầu. Đã đối chiếu từng dòng trong mục 3 (chg_lib) với source hiện tại; các dòng đã fix được đánh `[x]` kèm ghi chú. B-04/B-05/B-06 được fix trong phiên làm việc này (commit `1b37101`). Các mục còn `[ ]` khác (B-03, B-07 đến B-13, B-16, B-17, D-01/D-02/D-03/D-05, S-04, và toàn bộ mục 4-7) **chưa được re-verify** — coi là hiện trạng thật cho đến khi kiểm tra lại.
+> **Re-verification 2026-08-27**: Tài liệu này được viết trước một đợt "Sprint 1 fixes" không rõ ràng trong lịch sử — nhiều bug Critical/Major bên dưới đã được fix trước khi đợt dọn dẹp kiến trúc (PR0-PR3) này bắt đầu. Đã đối chiếu từng dòng trong mục 3 (chg_lib) với source hiện tại; các dòng đã fix được đánh `[x]` kèm ghi chú. B-04/B-05/B-06 được fix commit `1b37101`; B-07/B-09/B-13 được fix commit `d1b427c` (đối chiếu thêm với docs protocol PDF của Maxwell/Lianming/TonHe khi cần). Các mục còn `[ ]` khác (B-08, B-10 đến B-12, B-16, B-17, D-03, D-05, S-04, và toàn bộ mục 4-7) **chưa được re-verify** — coi là hiện trạng thật cho đến khi kiểm tra lại.
 
 ---
 
@@ -94,17 +94,17 @@ Một lỗi gốc kéo sập chuỗi phân hệ:
 
 - [x] **B-01 — TonHe OFFLINE/RECOVERING chết** — `process_module:OFFLINE/RECOVERING` không tự chuyển sau 3s, không cần 5 RX. `chg_lib_tonhe.c:573-579` · **Critical** · Module mất CAN 10s → treo vĩnh viễn. — _Re-verified 2026-08-27: **ĐÃ FIX** (pre-existing trước audit này, xem `chg_lib_tonhe.c` OFFLINE->RECOVERING + `rx_count - recovery_start_rx_count >= 5`)._
 - [x] **B-02 — Maxwell RECOVERING không bao giờ đủ 5 RX** — `retry>=3→OFFLINE` vs cần `rx - recovery_start >=5`. `chg_lib_maxwell.c:527-538` · **Critical** — _Re-verified 2026-08-27: **ĐÃ FIX** (pre-existing, xem `chg_lib_maxwell.c` RECOVERING branch dùng `rx_count - recovery_start_rx_count >= 5`)._
-- [ ] **B-03 — Lianming RECOVERING tương tự** — `chg_lib_lianming.c:541-552` · **Critical**
+- [x] **B-03 — Lianming RECOVERING tương tự** — `chg_lib_lianming.c:541-552` · **Critical** — _Re-verified 2026-08-27: **ĐÃ FIX** (pre-existing, RECOVERING branch dùng `rx_count - recovery_start_rx_count >= 5` giống Maxwell/TonHe)._
 - [x] **B-04 — Maxwell alarm chỉ FAULT khi RUNNING** — `if(alarm && state==RUNNING)` bỏ WARNING/STARTING. `chg_lib_maxwell.c:436-439` · **Major** — _Re-verified 2026-08-27: **ĐÃ FIX** commit `1b37101` (2026-08-27) — bỏ điều kiện `state==RUNNING`, giờ unconditional trừ khi đã FAULT._
 - [x] **B-05 — TonHe alarm không tự FAULT** — chỉ FAULT khi `status==0x11`, dù `SHORT_CIRCUIT/OVER_TEMP`. `chg_lib_tonhe.c:312-345` · **Major** — _Re-verified 2026-08-27: **ĐÃ FIX** commit `1b37101` (2026-08-27) — check `alarm_flags` trước status byte, giống Lianming._
 - [x] **B-06 — Maxwell STOPPING ACK quá rộng** — mọi `REG_SET_*/ON_OFF` ACK đều `IDLE`. `chg_lib_maxwell.c:401-409` · **Major** — _Re-verified 2026-08-27: **ĐÃ FIX** commit `1b37101` (2026-08-27) — chỉ ACK của `REG_ON_OFF` mới xác nhận STOPPING->IDLE._
-- [ ] **B-07 — Lianming STOPPING không timeout→FAULT** — chỉ poll 500ms. `chg_lib_lianming.c:527-533` · **Major**
+- [x] **B-07 — Lianming STOPPING không timeout→FAULT** — chỉ poll 500ms. `chg_lib_lianming.c:527-533` · **Major** — _Re-verified 2026-08-27: **ĐÃ FIX** commit `d1b427c` (2026-08-27) — retry lệnh STOP tối đa `LM_STOP_MAX_RETRY`=5 lần trước khi báo COMM_FAIL/FAULT, giống Maxwell._
 - [ ] **B-08 — COMM_FAIL latch vĩnh viễn** — `alarm_flags = parse | (flags & COMM_FAIL)` giữ bit. `chg_lib_maxwell.c:383,542` · **Major**
-- [ ] **B-09 — NaN/Inf không lọc** — `rated_current_or_fallback` không check NaN, gán float trực tiếp. `chg_lib_maxwell.c:229-242,373-400` `lianming.c:301` `tonhe.c:214` · **Major**
+- [x] **B-09 — NaN/Inf không lọc** — `rated_current_or_fallback` không check NaN, gán float trực tiếp. `chg_lib_maxwell.c:229-242,373-400` `lianming.c:301` `tonhe.c:214` · **Major** — _Re-verified 2026-08-27: **ĐÃ FIX** commit `d1b427c` (2026-08-27) — cả 3 driver reject setpoint non-finite qua `isfinite()` trong set_voltage/set_current_limit (clamp bằng `</>` không bắt được NaN)._
 - [ ] **B-10 — Round-robin starvation** — `CHG_LIB_Process` 1 module/lần → START 50ms thành 160ms với 8 module. `chg_lib_maxwell.c:685` `lianming.c:711` `tonhe.c:755` · **Major**
 - [ ] **B-11 — Boot online sai** — `last_rx_tick==0` → `since_rx = now` (<10s) nên chưa OFFLINE nhưng logic online sai. `chg_lib_maxwell.c:296-306,272` · **Major**
 - [ ] **B-12 — TonHe timing 5s thay vì 1s** — `g_last_timing_tick` 5000 vs SRS 1s. `chg_lib_tonhe.c:757` · **Major**
-- [ ] **B-13 — Race ISR↔main** — `FeedCanFrame` ghi `view.*` trong khi `process_module` đọc/ghi không `__disable_irq`. `chg_lib_core.c:180-187` `can_backend.c:11,60` · **Major**
+- [x] **B-13 — Race ISR↔main** — `FeedCanFrame` ghi `view.*` trong khi `process_module` đọc/ghi không `__disable_irq`. `chg_lib_core.c:180-187` `can_backend.c:11,60` · **Major** — _Re-verified 2026-08-27: **ĐÃ FIX** commit `d1b427c` (2026-08-27) — `CHG_LIB_Process`/`CHG_LIB_FeedCanFrame` giờ giữ critical section quanh toàn bộ lệnh gọi driver, không chỉ đọc con trỏ `get_active()`._
 - [x] **B-14 — SelectDriver deinit sai** — gọi `old_driver->init()` thay vì `deinit`. `chg_lib_core.c:39-41,65-68` · **Major** — _Re-verified 2026-08-27: **ĐÃ FIX** (pre-existing, xem `chg_lib_core.c:CHG_LIB_SelectDriver` gọi `old_driver->deinit()` với fallback `init()`)._
 - [x] **B-15 — RemoveModule lỗ hổng** — không giảm `g_module_count`. `chg_lib_maxwell.c:591` `lianming.c:614` `tonhe.c:647` · **Major** — _Re-verified 2026-08-27: **ĐÃ FIX** (pre-existing, `mx_remove_module`/tương đương compact array + giảm `g_module_count`)._
 - [ ] **B-16 — Summary không nhất quán** — Maxwell đếm `IDLE` là online; TonHe chỉ RUNNING/STARTING/WARNING. `chg_lib_maxwell.c:713-737` `lianming.c:784-805` `tonhe.c:828-858` · **Major**
@@ -112,8 +112,8 @@ Một lỗi gốc kéo sập chuỗi phân hệ:
 
 ### 3.3 Issues — DESIGN / MAINTAINABILITY / SAFETY
 
-- [ ] **D-01 — Duplication 70% FSM** — 3 driver tự implement `set_state/check_offline/summary`, helper `chg_lib_fsm.c` chết. `chg_lib_fsm.c:12-32` · **Major**
-- [ ] **D-02 — Summary fallback `extra_power_in==0`** — Maxwell 0 vs TonHe `V*I` → tổng công suất 2 kiểu. `chg_lib_fsm.c:52-54` · **Major**
+- [x] **D-01 — Duplication 70% FSM** — 3 driver tự implement `set_state/check_offline/summary`, helper `chg_lib_fsm.c` chết. `chg_lib_fsm.c:12-32` · **Major** — _Re-verified 2026-08-27: **PHẦN LỚN ĐÃ FIX** (pre-existing) — `CHG_LIB_FSM_SetState`/`CHG_LIB_Summary_Accumulate` trong `chg_lib_fsm.c` được cả 3 driver dùng chung; vẫn còn state-machine timing logic riêng mỗi driver (do khác protocol thật sự, không phải duplication thừa)._
+- [x] **D-02 — Summary fallback `extra_power_in==0`** — Maxwell 0 vs TonHe `V*I` → tổng công suất 2 kiểu. `chg_lib_fsm.c:52-54` · **Major** — _Re-verified 2026-08-27: **KHÔNG PHẢI BUG** — Re-verified: Maxwell/Lianming truyền `0.0f` và dùng `v->input_power` (giá trị đo thật từ thanh ghi) làm fallback; TonHe không có thanh ghi input-power nên tự tính `V*I` làm ước lượng. Vì hệ thống chỉ chạy 1 driver tại 1 thời điểm (Strategy pattern), không có tình huống trộn 2 kiểu input_power trong cùng 1 summary. Chỉ là khác biệt ý nghĩa số liệu giữa driver, không phải lỗi runtime — để nguyên, không cần sửa (tránh over-engineering)._
 - [ ] **D-03 — Magic number rải rác** — `20A`, `100kW`, `3/5 retry`, `50/100/500ms`. `chg_lib_maxwell.c:61-67` · **Minor**
 - [x] **D-04 — Union type-punning float UB** — `priv/chg_lib_protocol.h:71-92` · **Minor** — _Re-verified 2026-08-27: **ĐÃ FIX** (pre-existing, không còn `union` trong `priv/chg_lib_protocol.h`)._
 - [ ] **D-05 — CMake PRIVATE include** — driver include `priv/*` bằng relative. `CMakeLists.txt:10` · **Minor**
