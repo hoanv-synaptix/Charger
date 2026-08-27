@@ -58,10 +58,14 @@ void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(GPIOA, MCU_PA4_POWER_EN_Pin|MCU_PA8_RELAY_3_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, MCU_PB0_SPI1_CS_Pin|MCU_PB1_UART_RTS_Pin, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(GPIOB, MCU_PB0_SPI1_CS_Pin, GPIO_PIN_SET);
 
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, MCU_PB14_RELAY_1_Pin|MCU_PB15_RELAY_2_Pin|MCU_PB5_LTE_PWR_EN_Pin|MCU_PB9_SPI2_CS_Pin, GPIO_PIN_RESET);
+  /* I-06 fix: MCU_PB1_UART_RTS_Pin drives the RS485 DE line. Defaulting it
+   * HIGH (TX enable) here -- before BSP_RS485_Init() explicitly sets it LOW
+   * -- lets the transceiver briefly drive the RS485/DWIN bus during boot
+   * (bus contention / glitch). Default it to RX (LOW) instead so the pin
+   * never drives the bus until firmware is actually ready to transmit. */
+  HAL_GPIO_WritePin(GPIOB, MCU_PB14_RELAY_1_Pin|MCU_PB15_RELAY_2_Pin|MCU_PB5_LTE_PWR_EN_Pin|MCU_PB9_SPI2_CS_Pin|MCU_PB1_UART_RTS_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(MCU_PD3_LTE_PWRKEY_GPIO_Port, MCU_PD3_LTE_PWRKEY_Pin, GPIO_PIN_RESET);

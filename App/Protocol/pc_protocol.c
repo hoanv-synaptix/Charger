@@ -508,7 +508,12 @@ void PC_Protocol_FeedByte(uint8_t byte)
         if (byte == PC_SOF1) rx_state = ST_SOF2;
         break;
     case ST_SOF2:
-        rx_state = (byte == PC_SOF2) ? ST_CMD : ST_SOF1;
+        /* B-02 fix: a repeated PC_SOF1 byte (e.g. AA AA 55) must be treated
+         * as the start of a new frame, not just a resync miss -- otherwise
+         * a stray/duplicated SOF1 byte on the wire forces the receiver to
+         * wait for a third SOF1 before it can lock on again. */
+        if (byte == PC_SOF2) rx_state = ST_CMD;
+        else rx_state = (byte == PC_SOF1) ? ST_SOF2 : ST_SOF1;
         break;
     case ST_CMD:
         rx_cmd = byte; rx_state = ST_LEN;

@@ -108,6 +108,15 @@ bool ChargeCycleStorage_Load(ChargeCycleConfig_t *config) {
 
 bool ChargeCycleStorage_Save(const ChargeCycleConfig_t *config) {
     ChargeCycleConfigRecord_t record;
+    /* BUG-02 fix: ChargeCycleConfigRecord_t is CONFIG_RECORD_SIZE (219B)
+     * packed bytes, but flash writes must be ALIGNED_RECORD_SIZE (224B,
+     * rounded up to the G0 double-word boundary). Writing directly from
+     * &record for ALIGNED_RECORD_SIZE bytes reads 5 bytes past the end of
+     * the local `record` variable (stack OOB read, UB) and burns whatever
+     * garbage happened to be there into flash instead of well-defined
+     * padding. Stage the write in a correctly-sized, blank-initialized
+     * buffer instead. */
+    uint8_t write_buf[ALIGNED_RECORD_SIZE];
     int32_t write_offset;
 
     record.magic = CONFIG_MAGIC;
@@ -115,6 +124,9 @@ bool ChargeCycleStorage_Save(const ChargeCycleConfig_t *config) {
     record.length = sizeof(ChargeCycleConfig_t);
     record.crc32 = calc_crc32((const uint8_t *)config, sizeof(ChargeCycleConfig_t));
     record.payload = *config;
+
+    memset(write_buf, FLASH_BLANK_BYTE, sizeof(write_buf));
+    memcpy(write_buf, &record, CONFIG_RECORD_SIZE);
 
     write_offset = find_blank_offset();
 
@@ -127,7 +139,7 @@ bool ChargeCycleStorage_Save(const ChargeCycleConfig_t *config) {
         write_offset = 0;
     }
 
-    if (!BSP_Flash_WriteBlock(BSP_CONFIG_FLASH_PAGE_ADDR + write_offset, (const uint8_t *)&record, ALIGNED_RECORD_SIZE)) {
+    if (!BSP_Flash_WriteBlock(BSP_CONFIG_FLASH_PAGE_ADDR + write_offset, write_buf, ALIGNED_RECORD_SIZE)) {
         LOG("ChargeCycleStorage: Write failed!\r\n");
         return false;
     }
