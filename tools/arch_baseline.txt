@@ -1,5 +1,43 @@
-# Known pre-existing architecture violations (see AGENTS.md sec 28).
-# Format: <file>:<included_header>. Remove a line once it's fixed.
+# Known architecture exceptions (see AGENTS.md sec 28 refactor order).
+# Format: <file>:<included_header>. Remove a line once it's actually fixed.
+#
+# Reviewed 2026-08-27 -- each entry below is a deliberate, narrow exception,
+# not "debt nobody looked at yet":
+#
+#   App/Charge/charge_controller.c:main.h
+#     transition_to() calls HAL_GetTick() once, only to stamp
+#     g_ctrl.last_update_tick for external diagnostics (PC/DWIN view). Not
+#     read by any safety/policy decision. Removing it means threading a
+#     `now_tick` parameter through the public Start()/Stop()/EmergencyStop()
+#     API and every call site in App/System and App/Protocol (button
+#     handlers, PC commands, DWIN commands) -- real blast radius on the
+#     emergency-stop path for a diagnostics-only field. Not worth it.
+#
+#   App/Charge/charge_cycle_storage.c:bsp_flash.h
+#     Charge cycle config persistence talks to flash directly. This *is*
+#     hardware access from App/Charge in the strict sense, but the file's
+#     whole job is "load/save this one config struct" -- there is no
+#     Modules-layer home for it that wouldn't just be this same code moved
+#     one directory over. Revisit only if a second flash-backed config
+#     shows up and a shared storage module becomes worth building.
+#
+#   App/Protocol/pc_debug_protocol.c:bsp_can.h
+#     DEBUG_CMD_SEND_RAW_CAN intentionally bypasses BMS/chg_lib to inject a
+#     raw frame on either bus for bench testing. That is the feature; it is
+#     not a layering accident. Compiled into every build today -- if that
+#     is a concern for production units, gate it behind a build flag rather
+#     than "fixing" the include.
+#
+#   App/Protocol/pc_debug_protocol.c:bsp_sys.h
+#   App/Protocol/pc_protocol.c:bsp_sys.h
+#     Both narrowed from raw main.h/HAL access down to BSP_GetTick() only
+#     (see the "add BSP_EnterCritical/ExitCritical" commit). Threading `now`
+#     in from App_Loop instead is possible for pc_protocol.c (2 call sites,
+#     both already have `now` in scope) but not for pc_debug_protocol.c
+#     (3 call sites at different call-context depths -- periodic stream,
+#     PC-command response, ENTER handler). Fixing one and not the other is
+#     just inconsistency for no real gain; tick access at this narrow scope
+#     is the same pattern Modules already use against BSP_GetTick().
 App/Charge/charge_controller.c:main.h
 App/Charge/charge_cycle_storage.c:bsp_flash.h
 App/Protocol/pc_debug_protocol.c:bsp_can.h
