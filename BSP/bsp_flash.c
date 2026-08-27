@@ -4,7 +4,7 @@
 
 bool BSP_Flash_ErasePage(uint32_t address) {
     uint32_t PageError = 0;
-    FLASH_EraseInitTypeDef EraseInitStruct;
+    FLASH_EraseInitTypeDef EraseInitStruct = {0};
     
     if ((address % 8U) != 0U) return false;
     if (address < FLASH_BASE || address >= 0x08020000U) return false;
@@ -15,6 +15,9 @@ bool BSP_Flash_ErasePage(uint32_t address) {
     EraseInitStruct.TypeErase = FLASH_TYPEERASE_PAGES;
     EraseInitStruct.Page = page;
     EraseInitStruct.NbPages = 1;
+#if defined(FLASH_DBANK_SUPPORT)
+    EraseInitStruct.Banks = FLASH_BANK_1;
+#endif
 
     __disable_irq();
     HAL_FLASH_Unlock();
@@ -50,13 +53,15 @@ bool BSP_Flash_WriteBlock(uint32_t address, const uint8_t *data, uint32_t len) {
     uint32_t end_addr = address + len;
     uint32_t current_addr = address;
     const uint8_t *ptr = data;
-    
     while (current_addr < end_addr) {
         uint64_t double_word = 0xFFFFFFFFFFFFFFFFULL;
         uint32_t bytes_to_copy = (end_addr - current_addr) >= 8 ? 8 : (end_addr - current_addr);
         memcpy(&double_word, ptr, bytes_to_copy);
         
         if (HAL_FLASH_Program(FLASH_TYPEPROGRAM_DOUBLEWORD, current_addr, double_word) != HAL_OK) {
+            uint32_t err = HAL_FLASH_GetError();
+            extern void LOG(const char *fmt, ...);
+            LOG("BSP_Flash: Program failed at 0x%08X, err=0x%08X\r\n", (unsigned)current_addr, (unsigned)err);
             HAL_FLASH_Lock();
             __enable_irq();
             return false;

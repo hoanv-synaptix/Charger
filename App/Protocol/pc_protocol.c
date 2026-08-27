@@ -7,6 +7,7 @@
 #include "chg_lib.h"
 #include "bms_core.h"
 #include "charge_cycle_config.h"
+#include "charge_cycle_storage.h"
 #include "charge_controller.h"
 #include "usbd_cdc_if.h"
 #include "debug_log.h"
@@ -14,6 +15,7 @@
 #include <string.h>
 #include <math.h>
 #include "main.h"
+#include "bsp_sys.h"
 
 /* ============== Private ============== */
 
@@ -21,7 +23,7 @@ static uint8_t g_charging = 0;
 static float last_set_voltage = 0.0f;
 static float last_set_current = 1.0f;
 
-#define PC_TX_QUEUE_DEPTH 8U
+#define PC_TX_QUEUE_DEPTH 16U
 #define PC_TX_FRAME_SIZE  (PC_MAX_PAYLOAD + 5U)
 
 typedef struct {
@@ -87,25 +89,37 @@ static bool enqueue_frame(uint8_t cmd, const uint8_t *payload, uint8_t len)
     bool ret = false;
     __disable_irq();
     if (g_tx_count >= PC_TX_QUEUE_DEPTH) {
-        /* Queue full: silently drop — no LOG in ISR */
-        __enable_irq();
-        return false;
+        /* Queue full: drop oldest frame, but only if not currently in-flight
+         * USB transfer (dropping in-flight would corrupt the USB pointer). */
+        if (g_tx_in_flight) {
+            __enable_irq();
+            return false; /* Cannot enqueue — TX busy and queue full */
+        }
+        g_tx_head = (uint8_t)((g_tx_head + 1U) % PC_TX_QUEUE_DEPTH);
+        g_tx_count--;
     }
 
+    /* Write to the current tail index, then increment tail */
     frame = &g_tx_queue[g_tx_tail];
+
     frame->data[i++] = PC_SOF1;
     frame->data[i++] = PC_SOF2;
     frame->data[i++] = cmd;
     frame->data[i++] = len;
-    for (uint8_t j = 0U; j < len; j++) {
-        frame->data[i++] = payload[j];
+
+    if (len > 0U && payload != NULL) {
+        memcpy(&frame->data[i], payload, len);
+        i += len;
     }
+
     frame->data[i++] = crc8(&frame->data[2], (uint16_t)(len + 2U));
     frame->len = i;
+    
     g_tx_tail = (uint8_t)((g_tx_tail + 1U) % PC_TX_QUEUE_DEPTH);
     g_tx_count++;
     ret = true;
     __enable_irq();
+    /* No LOG here — may be called from USB ISR context */
     return ret;
 }
 
@@ -114,31 +128,95 @@ static void send_frame(uint8_t cmd, const uint8_t *payload, uint8_t len)
     (void)enqueue_frame(cmd, payload, len);
 }
 
+static USBD_CDC_HandleTypeDef *get_cdc_handle(void)
+{
+    extern USBD_HandleTypeDef hUsbDeviceFS;
+    if (hUsbDeviceFS.pClassDataCmsit[0] != NULL) {
+        return (USBD_CDC_HandleTypeDef*)hUsbDeviceFS.pClassDataCmsit[0];
+    }
+    if (hUsbDeviceFS.pClassData != NULL) {
+        return (USBD_CDC_HandleTypeDef*)hUsbDeviceFS.pClassData;
+    }
+    return NULL;
+}
+
 void PC_Protocol_ProcessTx(void)
 {
     uint8_t result;
     uint8_t head_snapshot;
+    static uint32_t last_tx_start = 0;
+    static uint32_t last_poll_tick = 0;
+    extern USBD_HandleTypeDef hUsbDeviceFS;
+    USBD_CDC_HandleTypeDef *hcdc = get_cdc_handle();
+
+    uint32_t now_tick = BSP_GetTick();
+    if (now_tick - last_poll_tick >= 1000) {
+        last_poll_tick = now_tick;
+        /* Periodic TX status — removed to avoid 50ms UART block in 20ms loop */
+    }
+    
+    if (g_tx_count > 0) {
+        if (hcdc == NULL) {
+            static uint32_t last_err_tick = 0;
+            if (now_tick - last_err_tick > 1000) {
+                last_err_tick = now_tick;
+                /* Only log error state, not every poll — avoids 50ms UART block */
+            }
+            return;
+        }
+        /* Removed verbose TX TRY log — adds 50ms latency to 20ms main loop */
+    }
+
+    if (hcdc == NULL) {
+        return;
+    }
+
     __disable_irq();
-    if (g_tx_in_flight || g_tx_count == 0U) {
+    if (g_tx_in_flight || hcdc->TxState != 0U) {
+        /* Timeout: proportional to frame size. USB FS sends 64B/pkt,
+         * ~1ms/pkt. 50ms base + 1ms per 8 bytes covers large frames
+         * even with host buffering delays. */
+        uint32_t frame_len = g_tx_queue[g_tx_head].len;
+        uint32_t timeout_ms = 50U + (frame_len / 8U);
+        if (BSP_GetTick() - last_tx_start > timeout_ms) {
+            /* Timeout: Host did not pull data. Reset TX state to unblock */
+            hcdc->TxState = 0U;
+            g_tx_in_flight = 0U;
+            if (g_tx_count > 0) {
+                g_tx_head = (uint8_t)((g_tx_head + 1U) % PC_TX_QUEUE_DEPTH);
+                g_tx_count--;
+            }
+            __enable_irq();
+            /* Removed verbose TX TIMEOUT log — adds 50ms latency */
+            return;
+        } else {
+            __enable_irq();
+            return;
+        }
+    }
+    if (g_tx_count == 0U) {
         __enable_irq();
         return;
     }
     head_snapshot = g_tx_head;
+    g_tx_in_flight = 1U;
+    last_tx_start = BSP_GetTick();
     __enable_irq();
 
     result = CDC_Transmit_FS(g_tx_queue[head_snapshot].data, g_tx_queue[head_snapshot].len);
     if (result == USBD_OK) {
         __disable_irq();
-        g_tx_in_flight = 1U;
         g_tx_sent_count++;
         __enable_irq();
-        /* Optional LOG removed for Tx path to reduce ISR noise; kept out of ISR anyway */
-    } else if (result == USBD_BUSY) {
-        __disable_irq();
-        g_tx_busy_count++;
-        __enable_irq();
+        /* Removed verbose TX OK log — adds 50ms latency to 20ms main loop */
     } else {
-        /* Transmit error: no LOG spam */
+        __disable_irq();
+        g_tx_in_flight = 0U;
+        if (result == USBD_BUSY) {
+            g_tx_busy_count++;
+        }
+        __enable_irq();
+        LOG("[PC TX FAIL] res=%u cmd=0x%02X\r\n", result, g_tx_queue[head_snapshot].data[2]);
     }
 }
 
@@ -158,7 +236,11 @@ void PC_Protocol_NotifyTxComplete(void)
 
 void PC_Protocol_ResetTx(void)
 {
+    USBD_CDC_HandleTypeDef *hcdc = get_cdc_handle();
     __disable_irq();
+    if (hcdc != NULL) {
+        hcdc->TxState = 0U;
+    }
     g_tx_head = 0U;
     g_tx_tail = 0U;
     g_tx_count = 0U;
@@ -176,12 +258,6 @@ static float payload_float(const uint8_t *p) {
     union { float f; uint8_t b[4]; } u;
     u.b[0]=p[0]; u.b[1]=p[1]; u.b[2]=p[2]; u.b[3]=p[3];
     return u.f;
-}
-
-static int32_t float_to_scaled_i32(float value, float scale)
-{
-    (void)value; (void)scale;
-    return 0;
 }
 
 static void pack_u8(uint8_t value, uint8_t *out)
@@ -364,6 +440,15 @@ static void process_frame(uint8_t cmd, const uint8_t *payload, uint8_t len)
             return;
         }
         CHG_LIB_Init();
+        /* Persist driver choice to flash so it survives reboot.
+         * driver_id 1=MAXWELL,2=LIANMING,3=TONHE → module_type +1 */
+        {
+            ChargeCycleConfig_t cfg;
+            ChargeCycleConfig_Get(&cfg);
+            cfg.module_type = (uint8_t)payload[0] + 1U;
+            ChargeCycleConfig_Set(&cfg);
+            ChargeCycleStorage_Save(&cfg);
+        }
         ok = true;
         break;
 

@@ -17,11 +17,19 @@
   */
 void MX_IWDG_Init(void)
 {
-  /* Enable LSI Clock required for IWDG */
+  /* 1. Bật LSI bằng thanh ghi (đề phòng Option Bytes tắt) */
   SET_BIT(RCC->CSR, RCC_CSR_LSION);
+
+  /* 2. Đợi LSI ready với timeout (để không bị treo mãi mãi nếu LSI hỏng) */
+  uint32_t start = HAL_GetTick();
   while ((RCC->CSR & RCC_CSR_LSIRDY) == 0U) {
-      /* Wait for LSI to be ready */
+      if ((HAL_GetTick() - start) > 100) {
+          /* Timeout! Bỏ qua khởi tạo IWDG */
+          return;
+      }
   }
+
+  /* 3. LSI đã chạy, bắt đầu config IWDG */
 
   /* USER CODE BEGIN IWDG_Init 0 */
 

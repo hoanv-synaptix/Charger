@@ -70,9 +70,9 @@ void App_Init(void)
     LOG_Banner();
     LOG("App_Init: Khoi dong he thong...\r\n");
 
-    /* Enable Peripheral Power (RS485/CAN/HMI) - assert early */
+    /* Enable Peripheral Power (RS485/CAN/HMI) - assert early with 50ms stabilization delay */
     HAL_GPIO_WritePin(GPIOA, MCU_PA4_POWER_EN_Pin, GPIO_PIN_SET);
-    HAL_Delay(10);
+    HAL_Delay(50);
 
     led_run_off();
     led_fault_off();
@@ -93,7 +93,7 @@ void App_Init(void)
     BMS_Init();
     LOG("App_Init: BMS driver khoi dong xong.\r\n");
 
-    /* Register charger drivers (CAN1, 125Kbps) - PC app se chon driver */
+    /* Register charger drivers (CAN1, 125Kbps) */
     LOG("App_Init: Khoi tao charger core\r\n");
     CHG_LIB_RegisterDriver(CHG_LIB_DRV_MAXWELL, CHG_LIB_MaxwellDriverOps());
     CHG_LIB_RegisterDriver(CHG_LIB_DRV_LIANMING, CHG_LIB_LianmingDriverOps());
@@ -106,8 +106,20 @@ void App_Init(void)
 
     ChargeCycleConfig_Init();
 
-    /* Load config from flash */
+    /* Load config from flash — this populates module_type */
     ChargeCycleStorage_Init();
+
+    /* Select driver based on saved module_type from flash.
+     * module_type: 2=MAXWELL,3=LIANMING,4=TONHE → driver_id = module_type-1 */
+    {
+        ChargeCycleConfig_t cfg;
+        ChargeCycleConfig_Get(&cfg);
+        if (cfg.module_type >= CHARGE_MODULE_TYPE_MAXWELL &&
+            cfg.module_type <= CHARGE_MODULE_TYPE_TONHE) {
+            CHG_LIB_SelectDriver((CHG_LIB_DriverId_t)(cfg.module_type - 1U));
+            LOG("App_Init: Driver restored from flash: type=%u\r\n", (unsigned)cfg.module_type);
+        }
+    }
 
     /* Initialize charge controller */
     ChargeController_Init();
@@ -126,8 +138,17 @@ void App_Loop(void)
 {
     uint32_t now = BSP_GetTick();
 
+    static uint32_t last_main_log = 0;
+    if (now - last_main_log >= 2000) {
+        last_main_log = now;
+        LOG("[MAIN_LOOP] running tick=%lu\r\n", now);
+    }
+
     /* Drain queued USB CDC TX */
     PC_Protocol_ProcessTx();
+
+    /* Stream module data to debug app (internal rate-limit) */
+    DebugProtocol_SendStream();
 
     /* Watchdog bus-off cho CAN1/CAN2 */
     BSP_CAN_Process();

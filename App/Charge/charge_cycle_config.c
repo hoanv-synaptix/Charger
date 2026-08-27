@@ -1,4 +1,5 @@
 #include "charge_cycle_config.h"
+#include "chg_lib.h"
 
 #include <string.h>
 #include <math.h>
@@ -67,7 +68,7 @@ bool ChargeCycleConfig_Set(const ChargeCycleConfig_t *config)
         return false;
     }
 
-    if (config->version != CHARGE_CYCLE_CONFIG_VERSION) {
+    if (config->version != CHARGE_CYCLE_CONFIG_VERSION && config->version != 1U && config->version != 2U) {
         return false;
     }
 
@@ -153,6 +154,32 @@ bool ChargeCycleConfig_Set(const ChargeCycleConfig_t *config)
     }
 
     g_charge_cycle_config = *config;
+
+    CHG_LIB_DriverId_t drv_id = CHG_LIB_DRV_NONE;
+    switch (config->module_type) {
+        case CHARGE_MODULE_TYPE_MAXWELL:
+            drv_id = CHG_LIB_DRV_MAXWELL;
+            break;
+        case CHARGE_MODULE_TYPE_LIANMING:
+            drv_id = CHG_LIB_DRV_LIANMING;
+            break;
+        case CHARGE_MODULE_TYPE_TONHE:
+        case CHARGE_MODULE_TYPE_EVR_10KW_100A_100V:
+            drv_id = CHG_LIB_DRV_TONHE;
+            break;
+        default:
+            drv_id = CHG_LIB_DRV_NONE;
+            break;
+    }
+
+    if (drv_id != CHG_LIB_DRV_NONE) {
+        CHG_LIB_SelectDriver(drv_id);
+        CHG_LIB_Init();
+        for (uint8_t i = 0; i < config->source_module_count; i++) {
+            CHG_LIB_AddModule((uint8_t)(i + 1), 0);
+        }
+    }
+
     return true;
 }
 

@@ -98,8 +98,27 @@ void NMI_Handler(void)
 void HardFault_Handler(void)
 {
   /* USER CODE BEGIN HardFault_IRQn 0 */
-  __disable_irq();
   Safety_Shutdown();
+  /* Khởi tạo lại UART1 thủ công để in lỗi nếu cần */
+  __HAL_RCC_USART1_CLK_ENABLE();
+  __HAL_RCC_GPIOA_CLK_ENABLE();
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
+  GPIO_InitStruct.Pin = GPIO_PIN_9;
+  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  GPIO_InitStruct.Alternate = GPIO_AF1_USART1;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+  
+  USART1->CR1 = USART_CR1_TE | USART_CR1_UE;
+  USART1->BRR = (64000000 / 115200);
+  
+  const char *msg = "\r\n[CRASH] HardFault_Handler() CALLED!\r\n";
+  for(int i=0; msg[i] != '\0'; i++) {
+      while((USART1->ISR & USART_ISR_TXE_TXFNF) == 0) {}
+      USART1->TDR = msg[i];
+  }
+  
+  __disable_irq();
   /* USER CODE END HardFault_IRQn 0 */
   while (1)
   {

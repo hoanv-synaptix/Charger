@@ -5,9 +5,9 @@ D:/Projects/Charger_CTRL/Charger/Modules/bms/bms_core.c:129:13:update_alarm_flag
 D:/Projects/Charger_CTRL/Charger/Modules/bms/bms_core.c:161:13:transmit_ctrl_info	40	static
 D:/Projects/Charger_CTRL/Charger/Modules/bms/bms_core.c:190:6:BMS_Init	8	static
 D:/Projects/Charger_CTRL/Charger/Modules/bms/bms_core.c:205:6:BMS_FeedFrame	48	static
-D:/Projects/Charger_CTRL/Charger/Modules/bms/bms_core.c:229:6:BMS_Process	360	static,ignoring_inline_asm
-D:/Projects/Charger_CTRL/Charger/Modules/bms/bms_core.c:387:6:BMS_SendCtrlInfo	16	static
-D:/Projects/Charger_CTRL/Charger/Modules/bms/bms_core.c:399:6:BMS_IsOnline	8	static
-D:/Projects/Charger_CTRL/Charger/Modules/bms/bms_core.c:406:6:BMS_HasCriticalAlarm	16	static
-D:/Projects/Charger_CTRL/Charger/Modules/bms/bms_core.c:418:6:BMS_GetView	16	static,ignoring_inline_asm
-D:/Projects/Charger_CTRL/Charger/Modules/bms/bms_core.c:428:6:BMS_ShouldCloseChargeRelay	112	static,ignoring_inline_asm
+D:/Projects/Charger_CTRL/Charger/Modules/bms/bms_core.c:229:6:BMS_Process	408	static,ignoring_inline_asm
+D:/Projects/Charger_CTRL/Charger/Modules/bms/bms_core.c:403:6:BMS_SendCtrlInfo	16	static
+D:/Projects/Charger_CTRL/Charger/Modules/bms/bms_core.c:415:6:BMS_IsOnline	8	static
+D:/Projects/Charger_CTRL/Charger/Modules/bms/bms_core.c:422:6:BMS_HasCriticalAlarm	16	static
+D:/Projects/Charger_CTRL/Charger/Modules/bms/bms_core.c:434:6:BMS_GetView	16	static,ignoring_inline_asm
+D:/Projects/Charger_CTRL/Charger/Modules/bms/bms_core.c:444:6:BMS_ShouldCloseChargeRelay	112	static,ignoring_inline_asm

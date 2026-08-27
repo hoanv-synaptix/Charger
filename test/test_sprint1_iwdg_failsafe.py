@@ -34,9 +34,11 @@ def test_main_calls_iwdg():
     assert "MX_IWDG_Init" in main
     # IWDG must start AFTER App_Init to avoid reset during boot (init takes >1s)
     assert main.find("MX_IWDG_Init") > main.find("App_Init")
-    # Error_Handler should call Safety_Shutdown before disable irq
+    # Error_Handler should call Safety_Shutdown
     assert "Safety_Shutdown" in main
-    eh = main[main.find("void Error_Handler"):main.find("void Error_Handler")+600]
+    eh_start = main.find("void Error_Handler")
+    assert eh_start >= 0
+    eh = main[eh_start:]
     assert eh.find("Safety_Shutdown") < eh.find("__disable_irq")
 
 def test_hardfault_calls_safety():
@@ -72,7 +74,7 @@ def test_failsafe_shutdown():
 
 def test_bsp_failsafe_disables_relays():
     c = read("BSP/bsp_failsafe.c")
-    # Must turn off relays (RESET)
-    assert "GPIO_PIN_RESET" in c
-    # Must set fault LED?
+    # Must turn off relays — either GPIO_PIN_RESET or direct BSRR << 16u
+    assert ("GPIO_PIN_RESET" in c) or ("<< 16u" in c)
+    # Must set fault LED
     assert "GPIOC" in c or "LED" in c

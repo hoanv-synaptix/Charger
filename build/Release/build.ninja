@@ -406,7 +406,7 @@ build Charger.elf: C_EXECUTABLE_LINKER__Charger_Release cmake/stm32cubemx/CMakeF
   LINK_FLAGS = -mcpu=cortex-m0plus  -T "D:/Projects/Charger_CTRL/Charger/STM32G0B1xx_FLASH.ld" --specs=nano.specs -Wl,-Map=Charger.map -Wl,--gc-sections -Wl,--print-memory-usage
   LINK_LIBRARIES = -lm
   OBJECT_DIR = CMakeFiles\Charger.dir
-  POST_BUILD = cd .
+  POST_BUILD = C:\WINDOWS\system32\cmd.exe /C "cd /D D:\Projects\Charger_CTRL\Charger\build\Release && arm-none-eabi-objcopy -O ihex D:/Projects/Charger_CTRL/Charger/build/Release/Charger.elf Charger.hex && arm-none-eabi-objcopy -O binary D:/Projects/Charger_CTRL/Charger/build/Release/Charger.elf Charger.bin"
   PRE_LINK = cd .
   TARGET_FILE = Charger.elf
   TARGET_PDB = Charger.elf.dbg

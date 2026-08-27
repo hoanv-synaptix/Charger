@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file    bsp_can.c
  * @brief   CAN BSP implementation using STM32G0 FDCAN API
  * @note    FDCAN1: 125Kbps - charger modules
@@ -109,9 +109,11 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
     if ((RxFifo0ITs & FDCAN_IT_RX_FIFO0_NEW_MESSAGE) != 0) {
         FDCAN_RxHeaderTypeDef RxHeader;
         uint8_t RxData[8];
-        if (HAL_FDCAN_GetRxMessage(hfdcan, FDCAN_RX_FIFO0, &RxHeader, RxData) == HAL_OK) {
-            uint8_t actual_dlc = (RxHeader.DataLength >> 16) & 0x0F;
-            if (actual_dlc > 8) actual_dlc = 8;
+        /* Drain all pending frames — interrupt flag is cleared by software,
+         * so we must read until FIFO is empty to avoid lost messages. */
+        while (HAL_FDCAN_GetRxMessage(hfdcan, FDCAN_RX_FIFO0, &RxHeader, RxData) == HAL_OK) {
+            uint8_t actual_dlc = (uint8_t)(RxHeader.DataLength & 0x0FU);
+            if (actual_dlc > 8U) actual_dlc = 8U;
 
             if (hfdcan->Instance == FDCAN1) {
                 g_c1_rx++;

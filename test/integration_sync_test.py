@@ -105,19 +105,26 @@ def crc8(data: bytes) -> int:
 def app_sync_test(port):
     print("\n[APP Sync] Sending target SETPOINT down to MCU...")
     
-    # Send CMD_SET_CHARGE_CFG (0x20)
-    # Payload: 400.0V, 20.0A target
-    payload = struct.pack('<ff', 400.0, 20.0)
-    frame = bytearray([0xAA, 0x55, 0x20, len(payload)])
-    frame.extend(payload)
-    frame.append(crc8(frame))
-    port.write(frame)
+    # Send PC_CMD_SET_VOLTAGE (0x01)
+    payload_v = struct.pack('<f', 400.0)
+    frame_v = bytearray([0xAA, 0x55, 0x01, len(payload_v)])
+    frame_v.extend(payload_v)
+    frame_v.append(crc8(frame_v[2:]))
+    port.write(frame_v)
+    time.sleep(0.1)
+
+    # Send PC_CMD_SET_CURRENT (0x02)
+    payload_i = struct.pack('<f', 20.0)
+    frame_i = bytearray([0xAA, 0x55, 0x02, len(payload_i)])
+    frame_i.extend(payload_i)
+    frame_i.append(crc8(frame_i[2:]))
+    port.write(frame_i)
     time.sleep(0.1)
     
-    # Read MCU State (CMD_READ_ALL 0x13) to see if MCU propagated it
+    # Read MCU State (CMD_READ_REG or wait for STATUS 0x81)
     print("[APP Sync] Querying MCU State to verify propagation...")
-    frame = bytearray([0xAA, 0x55, 0x13, 0x01, 0xFF])
-    frame.append(crc8(frame))
+    frame = bytearray([0xAA, 0x55, 0x13, 0x01, 0x00])
+    frame.append(crc8(frame[2:]))
     port.write(frame)
     
     # Wait for MCU response
@@ -134,10 +141,22 @@ def app_sync_test(port):
                         cmd, length = cmd_len[0], cmd_len[1]
                         payload = port.read(length) if length > 0 else b""
                         crc_byte = port.read(1)
-                        if cmd == 0x93: # RSP_ALL
+                        if cmd == 0x93 or cmd == 0x81: # STATUS
                             print(f"[APP Sync] Success! MCU processed the flow. State length: {len(payload)}")
                             return True
-                        continue
+                        elif cmd == 0x83: # NACK
+                            print(f"[APP Sync] Received NACK! Reason: {payload[0] if length > 0 else 'unknown'}")
+                            return False
+                        elif cmd == 0x96: # ERROR
+                            print(f"[APP Sync] Received ERROR (0x96)! Reason: {payload[0] if length > 0 else 'unknown'}")
+                            return False
+                        elif cmd == 0x82: # ACK
+                            print(f"[APP Sync] Received ACK!")
+                            # Keep waiting for status
+                            continue
+                        else:
+                            print(f"[APP Sync] Received other CMD: {hex(cmd)}")
+                            continue
                 else:
                     # Print raw char if it's not our header
                     try: print(b.decode('ascii') + b2.decode('ascii'), end='', flush=True)
@@ -145,6 +164,9 @@ def app_sync_test(port):
             else:
                 try: print(b.decode('ascii'), end='', flush=True)
                 except: pass
+    
+    print("\n[APP Sync] Failed to get response from MCU.")
+    return False
 
 
 if __name__ == '__main__':
@@ -161,13 +183,18 @@ if __name__ == '__main__':
         can2_bus = can.interface.Bus(interface='virtual', channel='vcan1')
         print("Using VIRTUAL CAN buses for demonstration.")
 
-    # Find ST serial port
-    ports = serial.tools.list_ports.comports()
-    st_port = next((p.device for p in ports if "STLink" in p.description or "Serial" in p.description), None)
+    # Find MCU serial port
+    ports = list(serial.tools.list_ports.comports())
+    st_port = None
+    # 1. Prefer "USB Serial Device" or "STLink"
+    for p in ports:
+        if "USB Serial Device" in p.description or "STMicroelectronics" in p.description or "STLink" in p.description:
+            st_port = p.device
+            break
     
-    if not st_port:
-        print("WARNING: No STM32 COM port found. PC App sync will fail.")
-        sys.exit(0)
+    if st_port is None:
+        print("[ERROR] MCU USB CDC Port not found!")
+        sys.exit(1)
 
     # Start Simulators
     bms_sim = BMSSimulator(can2_bus)
@@ -176,8 +203,11 @@ if __name__ == '__main__':
     bms_sim.start()
     mod_sim.start()
     
+    print(f"[APP Sync] Using Serial Port: {st_port}")
     try:
         with serial.Serial(st_port, SERIAL_BAUD) as ser:
+            ser.dtr = True
+            ser.rts = True
             ser.reset_input_buffer()
             # Run the E2E flow
             app_sync_test(ser)

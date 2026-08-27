@@ -13,6 +13,7 @@
 #include "charge_controller.h"
 #include "app_main.h"
 #include "debug_log.h"
+#include "bsp_can.h"
 #include "main.h"
 #include <string.h>
 
@@ -36,19 +37,13 @@ void DebugProtocol_Enter(void)
     g_debug_active = true;
     g_stream_sequence = 0;
     g_last_stream_tick = HAL_GetTick();
-    LOG("[DEBUG] Enter debug mode (no auto stream)\r\n");
-    LOG("[DEBUG] Active driver: %s (%u), modules=%u\r\n",
-        CHG_LIB_GetActiveDriverName(),
-        (unsigned)CHG_LIB_GetActiveDriverId(),
-        (unsigned)CHG_LIB_GetModuleCount());
-
-    /* Do NOT send stream automatically - wait for PC to request */
+    /* No LOG here — runs in USB ISR context */
 }
 
 void DebugProtocol_Exit(void)
 {
     g_debug_active = false;
-    LOG("[DEBUG] Exit debug mode\r\n");
+    /* No LOG here — runs in USB ISR context */
 }
 
 bool DebugProtocol_IsActive(void)
@@ -173,10 +168,10 @@ uint16_t DebugProtocol_BuildSystemInfo(uint8_t *data, uint16_t max_len)
 
     memset(info, 0, sizeof(DebugSystemInfo_t));
 
-    /* TODO: Get real firmware version */
-    info->fw_major = 2;
-    info->fw_minor = 0;
-    info->fw_patch = 0;
+    info->fw_major = FW_VERSION_MAJOR;
+    info->fw_minor = FW_VERSION_MINOR;
+    info->fw_patch = FW_VERSION_PATCH;
+    info->uptime_ticks = HAL_GetTick();
 
     info->driver_id = App_GetCurrentDriver();
     info->modules_total = CHG_LIB_GetModuleCount();
@@ -302,6 +297,7 @@ uint16_t DebugProtocol_BuildChargeConfig(uint8_t *data, uint16_t max_len)
     }
 
     ChargeCycleConfig_Get(&config);
+    config.version = CHARGE_CYCLE_CONFIG_VERSION;
     memcpy(data, &config, sizeof(config));
     return sizeof(config);
 }
@@ -402,13 +398,11 @@ bool DebugProtocol_HandleCommand(uint8_t cmd, const uint8_t *payload, uint16_t l
     }
 
     case DEBUG_CMD_GET_CHARGE_CFG: {
-        LOG("PCDebug: GET_CHARGE_CFG received\r\n");
+        /* No LOG here — runs in USB ISR context */
         uint16_t data_len = DebugProtocol_BuildChargeConfig(reply, sizeof(reply));
         if (data_len > 0) {
-            LOG("PCDebug: Sending CHARGE_CFG response, len=%u\r\n", (unsigned)data_len);
             PC_Protocol_SendFrame(DEBUG_RSP_CHARGE_CFG, reply, data_len);
         } else {
-            LOG("PCDebug: BuildChargeConfig failed, sending ERROR\r\n");
             reply[0] = 0x03; /* NOT_SUPPORTED / BUFFER */
             PC_Protocol_SendFrame(DEBUG_RSP_ERROR, reply, 1);
         }
@@ -446,6 +440,50 @@ bool DebugProtocol_HandleCommand(uint8_t cmd, const uint8_t *payload, uint16_t l
         } else {
             PC_Protocol_SendFrame(PC_RSP_ACK, &cmd, 1);
         }
+        return true;
+    }
+
+    case DEBUG_CMD_WRITE_REG: {
+        /* payload: [module_idx(1)][reg_h(1)][reg_l(1)][data(4)] = 7 bytes */
+        if (len < 7) {
+            reply[0] = 0x01; /* BAD_PARAM */
+            PC_Protocol_SendFrame(DEBUG_RSP_ERROR, reply, 1);
+            return true;
+        }
+        uint8_t idx = payload[0];
+        uint16_t reg = ((uint16_t)payload[1] << 8) | payload[2];
+        float val;
+        memcpy(&val, &payload[3], 4);
+        bool ok = false;
+        switch (reg) {
+        case 0x0021: ok = CHG_LIB_SetVoltage(idx, val); break;
+        case 0x0012: ok = CHG_LIB_SetCurrentLimit(idx, val); break;
+        case 0x0030:
+            if (val > 0.0f) ok = CHG_LIB_Start(idx);
+            else            ok = CHG_LIB_Stop(idx);
+            break;
+        default: break;
+        }
+        reply[0] = ok ? 0x00 : 0x01;
+        PC_Protocol_SendFrame(DEBUG_RSP_RAW_CAN_TX, reply, 1);
+        return true;
+    }
+
+    case DEBUG_CMD_SEND_RAW_CAN: {
+        /* payload: [bus(1)][id(4)][dlc(1)][data(8)] = 14 bytes */
+        if (len < 14) {
+            reply[0] = 0x01; /* BAD_PARAM */
+            PC_Protocol_SendFrame(DEBUG_RSP_ERROR, reply, 1);
+            return true;
+        }
+        BSP_CAN_Frame_t frame;
+        uint8_t bus = payload[0];
+        memcpy(&frame.ext_id, &payload[1], 4);
+        frame.dlc = payload[5];
+        memcpy(frame.data, &payload[6], 8);
+        bool ok = BSP_CAN_Transmit(bus, &frame);
+        reply[0] = ok ? 0x00 : 0x01;
+        PC_Protocol_SendFrame(DEBUG_RSP_RAW_CAN_TX, reply, 1);
         return true;
     }
 

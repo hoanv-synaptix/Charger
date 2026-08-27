@@ -4,7 +4,7 @@ echo   Flashing STM32G0 Charger Project
 echo ===================================
 
 set PROGRAMMER="C:\ST\STM32CubeCLT_1.16.0\STM32CubeProgrammer\bin\STM32_Programmer_CLI.exe"
-set FIRMWARE="build\Debug\Charger.elf"
+set FIRMWARE="build\Release\Charger.hex"
 
 if not exist %FIRMWARE% (
     echo [ERROR] Firmware not found! Please run build.bat first.
