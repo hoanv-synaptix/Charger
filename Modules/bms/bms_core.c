@@ -32,6 +32,25 @@ static volatile bool            g_initialized;
 static volatile uint32_t        g_isr_rx_count;
 static volatile bool            g_isr_new_data;
 
+/**
+ * @brief  Elapsed time since a tick timestamp, tolerant of both the ISR/main
+ *         snapshot race (last_tick briefly ahead of now by a few ms) and true
+ *         32-bit tick overflow (~49.7 days of uptime).
+ * @note   BUGFIX BUG-02: the previous `now >= last ? now-last : 0` used a
+ *         plain unsigned comparison, which cannot tell "last is a few ms
+ *         ahead due to a race" apart from "the tick counter wrapped and last
+ *         is actually far in the past" -- both look like now < last. It
+ *         silently returned 0 (not stale) for a real wraparound-while-stale
+ *         case too. Casting the unsigned wraparound difference to signed
+ *         handles both correctly: a genuine ahead-of-now snapshot yields a
+ *         small negative diff (clamped to 0), while a real overflow still
+ *         yields the true positive elapsed time via modular arithmetic. */
+static uint32_t bms_tick_elapsed(uint32_t now_tick, uint32_t last_tick)
+{
+    int32_t diff = (int32_t)(now_tick - last_tick);
+    return (diff < 0) ? 0U : (uint32_t)diff;
+}
+
 static bool has_any_valid_bms_data(void)
 {
     if (g_bms_data.batt_st1.valid ||
@@ -237,18 +256,12 @@ void BMS_Process(uint32_t now_tick)
     last_rx_snapshot = g_last_valid_rx_tick;
     BSP_ExitCritical();
 
-    /* Handle uint32_t underflow when now_tick < g_last_valid_rx_tick
-     * This can happen when:
-     * 1. Actual tick overflow (every ~49 days for 1ms tick)
-     * 2. ISR updates g_last_valid_rx_tick AFTER BMS_Process is called in the same tick
-     *    (e.g., BMS_Process runs at tick N, then CAN ISR updates tick to N+X where X>0)
-     * In case #2, we should treat elapsed as 0 (recent data received) */
-    uint32_t elapsed;
-    if (now_tick >= last_rx_snapshot) {
-        elapsed = now_tick - last_rx_snapshot;
-    } else {
-        elapsed = 0U;
-    }
+    /* elapsed since last valid RX -- see bms_tick_elapsed() for why this
+     * isn't a plain `now >= last ? now-last : 0` (BUG-02). This can go
+     * negative-then-clamped either because the ISR updated last_rx_snapshot
+     * a few ms after `now_tick` was captured by the caller, or because the
+     * tick counter wrapped (~49.7 days uptime). */
+    uint32_t elapsed = bms_tick_elapsed(now_tick, last_rx_snapshot);
 
     uint32_t last_rx_frames[BMS_FRAME_MAX];
     BSP_EnterCritical();
@@ -260,7 +273,7 @@ void BMS_Process(uint32_t now_tick)
         if (i == BMS_FRAME_BMS_SW_STA || i == BMS_FRAME_CELL_VOLT_FULL || i == BMS_FRAME_CELL_TEMP_FULL) {
             continue; /* Ignore optional/slow frames for stale check */
         }
-        uint32_t f_elapsed = (now_tick >= last_rx_frames[i]) ? (now_tick - last_rx_frames[i]) : 0;
+        uint32_t f_elapsed = bms_tick_elapsed(now_tick, last_rx_frames[i]); /* BUGFIX BUG-02 */
         if (f_elapsed >= BMS_STALE_THRESHOLD_MS) {
             is_stale = true;
             break;
@@ -298,10 +311,16 @@ void BMS_Process(uint32_t now_tick)
                 (unsigned long)elapsed, (unsigned long)last_rx_snapshot, (unsigned long)now_tick);
         } else {
             /* Connectivity is based on any valid BMS frame.  STALE is a
-             * data-quality warning, not an offline condition. */
+             * data-quality warning, not an offline condition.
+             * BUGFIX BUG-04: this only ever set STALE_DATA and never cleared
+             * it once data quality recovered, unlike the FAULT branch below
+             * (which already has the matching else-clear). Latched forever
+             * within a single ONLINE session otherwise. */
             g_bms_view.online = true;
             if (is_stale) {
                 g_bms_view.alarm_flags |= BMS_ALARM_STALE_DATA;
+            } else {
+                g_bms_view.alarm_flags &= (BMS_AlarmFlag_t)~BMS_ALARM_STALE_DATA;
             }
             /* Only critical alarms (not STALE_DATA) transition to FAULT */
             BMS_AlarmFlag_t critical_mask = (
