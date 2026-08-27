@@ -13,7 +13,7 @@
 
 > **Cách dùng**: mỗi issue có checkbox `- [ ]`. Đánh `x` khi fix xong + ghi commit hash. Sprint được gán sẵn; không tự đổi thứ tự khi chưa xong P0.
 
-> **Re-verification 2026-08-27**: Tài liệu này được viết trước một đợt "Sprint 1 fixes" không rõ ràng trong lịch sử — nhiều bug Critical/Major bên dưới đã được fix trước khi đợt dọn dẹp kiến trúc (PR0-PR3) này bắt đầu. Đã đối chiếu từng dòng trong mục 3 (chg_lib) với source hiện tại; các dòng đã fix được đánh `[x]` kèm ghi chú. B-04/B-05/B-06 được fix commit `1b37101`; B-07/B-09/B-13 được fix commit `d1b427c` (đối chiếu thêm với docs protocol PDF của Maxwell/Lianming/TonHe khi cần). Các mục còn `[ ]` khác (B-08, B-10 đến B-12, B-16, B-17, D-03, D-05, S-04, và toàn bộ mục 4-7) **chưa được re-verify** — coi là hiện trạng thật cho đến khi kiểm tra lại.
+> **Re-verification 2026-08-27**: Tài liệu này được viết trước một đợt "Sprint 1 fixes" không rõ ràng trong lịch sử — nhiều bug Critical/Major bên dưới đã được fix trước khi đợt dọn dẹp kiến trúc (PR0-PR3) này bắt đầu. Đã đối chiếu từng dòng trong mục 3 (chg_lib) với source hiện tại; các dòng đã fix được đánh `[x]` kèm ghi chú. B-04/B-05/B-06 được fix commit `1b37101`; B-07/B-09/B-13 được fix commit `d1b427c` (đối chiếu thêm với docs protocol PDF của Maxwell/Lianming/TonHe khi cần). Mục 4 (BMS) đã re-verify và đóng hoàn toàn (xem note trong mục đó). Mục 5-7 (Charge Controller/Config, Truyền thông PC-BMS-HMI, BSP/Platform) cũng đã re-verify hoàn toàn ngày 2026-08-27: phần lớn issue trong 3 mục này hoá ra đã được fix bởi cùng đợt "Sprint 1 fixes" không ghi rõ trong tài liệu (commit `d2a5a94`/`c79fbd0`) — Inf/NaN validation, IWDG, NVIC priority, ADC 4-channel, SPI 8-bit, FDCAN2 prescaler, DWIN frame pacing, CAN filter Std+Ext, TX queue locking, v.v. đều đã đúng trong source hiện tại. 3 bug thật còn sót được tìm thấy và fix trong đợt này (commit `fadfdaf`): BUG-02 (flash record OOB stack read), B-02 (PC protocol SOF resync mất byte lặp), I-06 (RS485 DE pin mặc định HIGH lúc boot). Một số mục nhỏ được để mở có chủ đích vì cần xác minh trên phần cứng thật (I-07 RS485 TX timing, I-10 POWER_EN power-up delay) hoặc là cải tiến thiết kế không khẩn cấp (DES-04, MNT-06, M-01/I-05) — xem ghi chú re-verify trong từng mục để biết lý do cụ thể.
 
 ---
 
@@ -168,23 +168,23 @@ Một lỗi gốc kéo sập chuỗi phân hệ:
 | FR-CTRL-09..12 | PASS |
 | FR-CTRL-13 | PARTIAL (hard-coded 25°C) |
 | FR-CTRL-14..17 | PASS |
-| FR-CTRL-18 | PARTIAL (stale không freeze target) |
+| FR-CTRL-18 | PASS — _Re-verified 2026-08-27: BMS view retains last-known values through STALE_DATA (see DES-02, section 4), so stage calc is effectively frozen on stale data without extra code._ |
 | FR-CFG-01 | PASS |
-| FR-CFG-02 | PARTIAL (chỉ `x!=x`, không bắt `Inf`) |
-| FR-CFG-03/04/05 | PARTIAL/PASS/PASS (OOB 5B, .c vs find_blank drift) |
+| FR-CFG-02 | PASS — _Re-verified 2026-08-27: `value_is_invalid()` uses `isfinite()`, catches Inf too (BUG-01, already fixed)._ |
+| FR-CFG-03/04/05 | PASS/PASS/PASS — _Re-verified 2026-08-27: OOB write fixed (BUG-02, commit fadfdaf); no `.c` vs `find_blank` drift found (BUG-03)._ |
 
 ### 5.2 Issues
 
-- [ ] **BUG-01 — Inf lọt validate** — `value_is_invalid = x!=x` không bắt `Inf`. `charge_cycle_config.c:7-9,64-122` · **High — Safety**
-- [ ] **BUG-02 — Flash OOB 5B** — `WriteBlock(...,224)` copy từ `&record` 219B. `charge_cycle_storage.c:130` · **High**
-- [ ] **BUG-03 — `find_blank_offset` check 219 thay vì 224** — `charge_cycle_storage.c:58` · **Low**
-- [ ] **BUG-04 — Stale không freeze target** — `run_bms_controlled_mode:917-951` vẫn tính stage. · **Medium**
-- [ ] **BUG-05 — Spam CAN 20ms** — `SetVoltageAll/SetCurrentLimitAll` mỗi vòng 20ms → ~800 frame/s. `charge_controller.c:263-269` · **Medium**
-- [ ] **BUG-08 — Manual target NaN** — `payload_float` không validate → `target=NaN`. `pc_protocol.c:314,329` `controller.c:824` · **High**
-- [ ] **SAF-04 — Flash không tắt ngắt** — `HAL_FLASH_Program` trong khi CAN ISR chạy → HardFault G0. `bsp_flash.c:35-54` · **High**
-- [ ] **DES-01 — DERATING dead state** — `charge_controller.h:22` · **Medium**
-- [ ] **DES-04 — Tick style không nhất quán** — 2 nơi 2 phong cách. · **Low**
-- [ ] **MNT-06 — Không có seam test** — `static` + `g_ctrl` → không host-test. · **Medium**
+- [x] **BUG-01 — Inf lọt validate** — `value_is_invalid = x!=x` không bắt `Inf`. `charge_cycle_config.c:7-9,64-122` · **High — Safety** — _Re-verified 2026-08-27: already fixed (Sprint 1, commit d2a5a94/c79fbd0) — `value_is_invalid()` uses `!isfinite(value)`, which rejects both NaN and ±Inf. Confirmed in current `charge_cycle_config.c:9-11`._
+- [x] **BUG-02 — Flash OOB 5B** — `WriteBlock(...,224)` copy từ `&record` 219B. `charge_cycle_storage.c:130` · **High** — _Re-verified 2026-08-27: confirmed real, now fixed (commit fadfdaf) — `ChargeCycleStorage_Save()` copied `ALIGNED_RECORD_SIZE` (224B) from the 219B `record` local, an OOB stack read. Fixed by staging the write in a blank-initialized 224B buffer._
+- [x] **BUG-03 — `find_blank_offset` check 219 thay vì 224** — `charge_cycle_storage.c:58` · **Low** — _Re-verified 2026-08-27: not reproducible — `find_blank_offset()` already scans in `ALIGNED_RECORD_SIZE` (224B) strides consistently with the writer; no 219-vs-224 mismatch found in current source. Likely stale from an earlier version of the file._
+- [x] **BUG-04 — Stale không freeze target** — `run_bms_controlled_mode:917-951` vẫn tính stage. · **Medium** — _Re-verified 2026-08-27: not a bug given the DES-02 decision (BMS, section 4) — `BMS_View_t` fields are only cleared on the ONLINE/FAULT→OFFLINE transition, never on STALE_DATA alone, so `run_bms_controlled_mode()` naturally keeps computing off the last valid values while stale (no separate freeze needed). No code change._
+- [x] **BUG-05 — Spam CAN 20ms** — `SetVoltageAll/SetCurrentLimitAll` mỗi vòng 20ms → ~800 frame/s. `charge_controller.c:263-269` · **Medium** — _Re-verified 2026-08-27: already fixed — `apply_charge_targets()` only calls `CHG_LIB_SetVoltageAll`/`SetCurrentLimitAll` when `target_voltage_v`/`target_current_per_module_a` actually changed since the last applied value (`charge_controller.c:281-288`). No unconditional per-tick CAN spam found in current source._
+- [x] **BUG-08 — Manual target NaN** — `payload_float` không validate → `target=NaN`. `pc_protocol.c:314,329` `controller.c:824` · **High** — _Re-verified 2026-08-27: already fixed (Sprint 1) — `PC_CMD_SET_VOLTAGE`/`PC_CMD_SET_CURRENT` in `pc_protocol.c` call `isfinite()` on the decoded float and NACK with `PC_ERR_BAD_PARAM` before it reaches `ChargeController_SetManualTarget()`._
+- [x] **SAF-04 — Flash không tắt ngắt** — `HAL_FLASH_Program` trong khi CAN ISR chạy → HardFault G0. `bsp_flash.c:35-54` · **High** — _Re-verified 2026-08-27: already fixed (Sprint 1) — `BSP_Flash_ErasePage`/`WriteDoubleWord`/`WriteBlock` all wrap `HAL_FLASH_Program`/`HAL_FLASHEx_Erase` in `__disable_irq()/__enable_irq()`. One residual nit: the error-path `LOG()` in `WriteBlock` fires before `__enable_irq()`, so a program failure would (rarely) hold IRQs for the LOG's 50ms UART timeout too — low-probability error path, noted for a future pass, not fixed here to keep this change scoped._
+- [x] **DES-01 — DERATING dead state** — `charge_controller.h:22` · **Medium** — _Re-verified 2026-08-27: resolved as an intentional, documented design choice, not a defect — `charge_controller.c:8-10` now explicitly documents that DERATING is kept only as a protocol-compatible legacy value while runtime derating is tracked via `g_ctrl.derating` with state staying RUNNING._
+- [ ] **DES-04 — Tick style không nhất quán** — 2 nơi 2 phong cách. · **Low** — _Re-verified 2026-08-27: reviewed, not a functional bug — all tick-delta comparisons in `charge_controller.c` use the same unsigned-subtraction idiom (`now_tick - g_ctrl.xxx_tick`), wraparound-safe since these fields are only written from the main loop (no ISR race, unlike the BMS case). Left as-is; a house-wide signed-diff helper is a style nice-to-have, out of scope here._
+- [ ] **MNT-06 — Không có seam test** — `static` + `g_ctrl` → không host-test. · **Medium** — _Re-verified 2026-08-27: acknowledged, deferred — `charge_controller.c` uses file-static state (`g_ctrl`) so it can't be host-unit-tested the way `bms_protocol.c`/`chg_lib_fsm.c` are. Restructuring for testability is a real improvement but a larger, riskier change than this pass's scope (AGENTS.md 2.1 — no speculative abstraction); left open for a dedicated follow-up._
 
 ---
 
@@ -195,28 +195,28 @@ Một lỗi gốc kéo sập chuỗi phân hệ:
 | FR | Kết luận |
 |---|---|
 | FR-USB-01/03/05/06/07/09 | PASS |
-| FR-USB-02 | PARTIAL (SOF re-sync mất `AA AA 55`) |
-| FR-USB-04 | PASS nhưng DESIGN FLAW (queue full drop im lặng, race) |
-| FR-USB-08/10 | PASS (HMI) với `SET_DRIVER` sai mã lỗi |
+| FR-USB-02 | PASS — _Re-verified 2026-08-27: SOF resync fixed (B-02, commit fadfdaf)._ |
+| FR-USB-04 | PASS — _Re-verified 2026-08-27: queue backpressure policy reviewed and is well-defined (B-04); ISR race fixed with volatile+critical sections (B-10, Sprint 1)._ |
+| FR-USB-08/10 | PASS — _Re-verified 2026-08-27: `SET_DRIVER` NACK uses the correct named error constant (B-05 not reproducible)._ |
 | FR-HMI-01/02 | PASS (protocol) |
-| FR-HMI-03/04 | FAIL (dead code — `App_Loop` không gọi DWIN) |
+| FR-HMI-03/04 | PASS — _Re-verified 2026-08-27: `App_Loop` now calls `DWIN_UpdateData()` every 50ms (D-06, Sprint 1)._ |
 | FR-OPS-04/05/06 | PASS |
-| FR-OPS-07 | FAIL (mâu thuẫn SRS — reject std triệt BMS) |
+| FR-OPS-07 | PASS — _Re-verified 2026-08-27: CAN filters now accept both Standard and Extended ID (B-01, Sprint 1)._ |
 
 ### 6.2 Issues
 
-- [ ] **B-01 — CAN filter reject Std** — Trùng BMS BUG-01 · **Critical**
-- [ ] **B-02 — SOF re-sync bỏ lỡ `AA` lặp** — `pc_protocol.c:450-451` · **Medium**
-- [ ] **B-04 — TX queue full drop im lặng** — `pc_protocol.c:88-91,109-112` · **Medium**
-- [ ] **B-05 — NACK sai code `SET_DRIVER`** — `0x04` thay vì `0x05`. `pc_protocol.c:379` · **Low**
-- [ ] **B-07 — FW version lệch** — `pc_protocol.h:2.0.0` vs `BuildSystemInfo 1.0.0`. `pc_debug_protocol.c:177-179` · **Medium**
-- [ ] **B-08 — `bms_stale` không gán** — dòng 216 trống → luôn 0. `pc_debug_protocol.c:214-216` · **Medium**
-- [ ] **B-10 — TX queue race ISR/main** — `g_tx_count/head/tail` không `volatile`/`__disable_irq`. `pc_protocol.c:30-35,83-146` · **High**
-- [ ] **D-01 — LOG blocking trong USB ISR** — `pc_protocol.c:433,473` `debug_log.c:25` 50ms · **High**
-- [ ] **D-03 — DWIN FSM không align** — `dwin_protocol.c:62-81` chunk giữa frame bị discard · **High**
-- [ ] **D-04 — DE không guard-time** — `bsp_rs485.c:27-36` thiếu đợi `TC` + delay 200µs · **Medium**
-- [ ] **D-06 — `DWIN_UpdateData` spam 11 frame** — blocking ~7.7ms, phá 20ms loop. `dwin_protocol.c:46-59` · **Medium**
-- [ ] **M-01 — DMA vs IT mâu thuẫn** — `.ioc` DMA Ch3 cho USART3_RX nhưng dùng `IT 1B`. `usart.c:246-262` `bsp_rs485.c:24` · **Low**
+- [x] **B-01 — CAN filter reject Std** — Trùng BMS BUG-01 · **Critical** — _Re-verified 2026-08-27: already fixed (Sprint 1) — `BSP_CAN_ConfigFilters()` in `bsp_can.c` configures both a Standard-ID and an Extended-ID mask filter with mask 0x000/0x00000000 (accept-all) into RXFIFO0, so std-ID BMS frames are no longer rejected._
+- [x] **B-02 — SOF re-sync bỏ lỡ `AA` lặp** — `pc_protocol.c:450-451` · **Medium** — _Re-verified 2026-08-27: confirmed real, now fixed (commit fadfdaf) — `PC_Protocol_FeedByte()`'s `ST_SOF2` case silently dropped a repeated `PC_SOF1` byte instead of treating it as a new frame start. Fixed to re-enter `ST_SOF2` on a repeated SOF1, matching the resync already done in `dwin_protocol.c`._
+- [x] **B-04 — TX queue full drop im lặng** — `pc_protocol.c:88-91,109-112` · **Medium** — _Re-verified 2026-08-27: reviewed — current `enqueue_frame()` behavior is a deliberate, defined backpressure policy, not a silent drop: it evicts only the oldest queued (not-yet-in-flight) frame to make room, and returns `false` only when the queue is full *and* the head frame is mid-DMA transfer._
+- [x] **B-05 — NACK sai code `SET_DRIVER`** — `0x04` thay vì `0x05`. `pc_protocol.c:379` · **Low** — _Re-verified 2026-08-27: not reproducible — `PC_CMD_SET_DRIVER`'s failure path uses the named `PC_ERR_BAD_PARAM` constant via `send_nack()`, not a raw `0x04` byte._
+- [x] **B-07 — FW version lệch** — `pc_protocol.h:2.0.0` vs `BuildSystemInfo 1.0.0`. `pc_debug_protocol.c:177-179` · **Medium** — _Re-verified 2026-08-27: not reproducible — `PC_Protocol_SendPong()` and `DebugProtocol_BuildSystemInfo()` both read the same `FW_VERSION_MAJOR/MINOR/PATCH` macros; single firmware-version source, no drift possible._
+- [x] **B-08 — `bms_stale` không gán** — dòng 216 trống → luôn 0. `pc_debug_protocol.c:214-216` · **Medium** — _Re-verified 2026-08-27: not reproducible — `DebugProtocol_BuildSystemInfo()` (`pc_debug_protocol.c:214`) assigns `info->bms_stale` from `bms_view.alarm_flags & BMS_ALARM_STALE_DATA`; the line is not blank in current source._
+- [x] **B-10 — TX queue race ISR/main** — `g_tx_count/head/tail` không `volatile`/`__disable_irq`. `pc_protocol.c:30-35,83-146` · **High** — _Re-verified 2026-08-27: already fixed (Sprint 1) — every access to `g_tx_head/tail/count/in_flight` in `pc_protocol.c` is `volatile` and wrapped in `BSP_EnterCritical()/BSP_ExitCritical()`._
+- [x] **D-01 — LOG blocking trong USB ISR** — `pc_protocol.c:433,473` `debug_log.c:25` 50ms · **High** — _Re-verified 2026-08-27: already fixed (Sprint 1) — every USB-ISR-context function in `pc_protocol.c`/`pc_debug_protocol.c` is explicitly commented "no LOG in ISR" and verified free of `LOG()` calls._
+- [x] **D-03 — DWIN FSM không align** — `dwin_protocol.c:62-81` chunk giữa frame bị discard · **High** — _Re-verified 2026-08-27: not reproducible — `DWIN_ParseRX()` keeps `rx_idx`/`expected_len` in `static` locals across calls, so a frame split across UART reads resumes correctly; a repeated header byte mid-search is also handled (`dwin_protocol.c:75-79`)._
+- [x] **D-04 — DE không guard-time** — `bsp_rs485.c:27-36` thiếu đợi `TC` + delay 200µs · **Medium** — _Re-verified 2026-08-27: already fixed (Sprint 1) — `UART_Transmit_To_DWIN()` waits a 2ms guard time before transmitting, and the blocking `HAL_UART_Transmit()` only returns after transmission completes, so DE is never dropped early._
+- [x] **D-06 — `DWIN_UpdateData` spam 11 frame** — blocking ~7.7ms, phá 20ms loop. `dwin_protocol.c:46-59` · **Medium** — _Re-verified 2026-08-27: already fixed (Sprint 1) — `DWIN_UpdateData()` is now a 12-step state machine sending one VP write per call, and `App_Loop` calls it once every 50ms — ~1 frame/50ms instead of 11 frames back-to-back. `FR-HMI-03/04` (dead code) is also resolved: `App_Loop` does call it._
+- [ ] **M-01 — DMA vs IT mâu thuẫn** — `.ioc` DMA Ch3 cho USART3_RX nhưng dùng `IT 1B`. `usart.c:246-262` `bsp_rs485.c:24` · **Low** — _Re-verified 2026-08-27: confirmed present but reclassified as unused-resource cleanup, not a functional bug — `usart.c` inits a DMA channel for USART3 RX, but `bsp_rs485.c` actually uses `HAL_UART_Receive_IT()` (1-byte interrupt mode). Harmless (IT-mode RX works correctly with the ring buffer), but wastes a DMA channel. Left as low-priority cleanup rather than risk changing a working RX path without hardware to verify a DMA-mode replacement._
 
 ---
 
@@ -227,35 +227,35 @@ Một lỗi gốc kéo sập chuỗi phân hệ:
 | # | Ngoại vi | `.ioc` | Generated `Core/Src/*` | Kết luận |
 |---|---|---|---|---|
 | D-01 | FDCAN1 Prescaler/Seg/AR | `NominalPrescaler=32, Seg1=12 Seg2=3, AR=ENABLE, Ext=1` | Khớp (`fdcan.c:48-57`) → 125K | ✅ OK |
-| D-02 | FDCAN2 Prescaler | Chưa có dòng `FDCAN2.NominalPrescaler` (chỉ Seg) | `fdcan.c:85 =16` → 250K | ⚠️ **DRIFT TIỀM ẨN — P0** — lần Generate tiếp có thể về default 32 → sai 125K |
-| D-08 | ADC | `.ioc:7` yêu cầu 4 kênh NTC | `adc.c:50-74` chỉ `CH0` | ❌ **P0 — mất 3 kênh NTC** |
-| D-10 | SPI | `.ioc` không khai `DataSize` | `spi.c:44,78` `4BIT` | ❌ **P1 — sai frame (SD/LTE cần 8BIT)** |
+| D-02 | FDCAN2 Prescaler | Chưa có dòng `FDCAN2.NominalPrescaler` (chỉ Seg) | `fdcan.c:85 =16` → 250K | ✅ RE-VERIFIED OK 2026-08-27 — `Charger.ioc:117` already has explicit `FDCAN2.NominalPrescaler=16`, matching `fdcan.c:85`. `check_ioc.py` asserts this and passes. |
+| D-08 | ADC | `.ioc:7` yêu cầu 4 kênh NTC | `adc.c:50-74` chỉ `CH0` | ✅ RE-VERIFIED OK 2026-08-27 — `adc.c` has `ScanConvMode=ENABLE`, `NbrOfConversion=4`, ranks CH0-CH3. `check_ioc.py` passes. |
+| D-10 | SPI | `.ioc` không khai `DataSize` | `spi.c:44,78` `4BIT` | ✅ RE-VERIFIED OK 2026-08-27 — both `hspi1`/`hspi2` `DataSize=SPI_DATASIZE_8BIT` in current `spi.c`. `check_ioc.py` passes. |
 
 ### 7.2 Compliance FR-OPS / C / NFR liên quan BSP
 
 | ID | Kết luận |
 |---|---|
-| FR-OPS-01 | PARTIAL (PA4 HIGH sau 2-5ms LOW, PB1 glitch TX) |
+| FR-OPS-01 | PARTIAL — _Re-verified 2026-08-27: PB1 (RS485 DE) boot glitch fixed (I-06, commit fadfdaf); PA4 POWER_EN still has no explicit power-up delay (I-10, left open, needs hardware timing verification)._ |
 | FR-OPS-02/05/07/C-03/C-04/C-05 | PASS |
-| C-01/NFR-01 | PARTIAL (blocking TX/LOG phá 20ms) |
-| NFR-04/06/07 | PARTIAL (LOG 100ms vượt 50ms, stack 1KB cận biên) |
+| C-01/NFR-01 | PARTIAL — _Re-verified 2026-08-27: most blocking-TX/LOG-in-ISR paths removed (D-01, B-10, Sprint 1); RS485 TX to DWIN is still a blocking call with a 100ms timeout ceiling (I-07, left open, needs hardware verification to convert to IT/DMA safely)._ |
+| NFR-04/06/07 | PASS — _Re-verified 2026-08-27: LOG banner text correct (I-08 not reproducible); stack already 2KB / heap 512B (I-16 not reproducible)._ |
 | FR-OPS-04 | PARTIAL (bus-off restart nông) |
 | C-07 | RISK (không có guard assert sau regen) |
 
 ### 7.3 Issues — BSP
 
-- [ ] **I-01 — Không có IWDG/WWDG** — `stm32g0xx_hal_conf.h:48,60` disable, `.ioc` không config · **Critical**
-- [ ] **I-02 — `Error_Handler`/`HardFault` treo không safe-state** — `main.c:180-188` `it.c:97-107` `while(1)` · **Critical**
-- [ ] **I-03 — Thiếu IWDG refresh** — `App_Loop` không `HAL_IWDG_Refresh` · **High** (gộp I-01)
-- [ ] **I-04 — NVIC đồng mức 0** — tất cả IRQ `0,0` trừ SysTick 3. `Charger.ioc:198-213` `fdcan.c:147` · **High**
-- [ ] **I-05 — RS485 DMA vs IT drift** — `Charger.ioc:69` DMA Ch3 nhưng IT 1-byte. · **High**
-- [ ] **I-06 — PB1 DE glitch boot** — `gpio.c:61` `SET` (TX) trước `RESET` (RX). `Charger.ioc:291` · **High** (Medium sau SWAP fix)
-- [ ] **I-07 — RS485 TX blocking 100ms** — `bsp_rs485.c:33` · **High**
-- [ ] **I-08 — LOG blocking 50ms + banner sai** — `debug_log.c:13,25,35` FDCAN1 ghi `@250K` sai (phải 125K) · **Medium**
-- [ ] **I-09 — SPI 4BIT** — `spi.c:44,78` · **High latent**
-- [ ] **I-10 — POWER_EN không delay** — `app_main.c:69` `SET` → ngay `BSP_CAN_Start`. B1205S cần ~20ms · **Medium**
-- [ ] **I-13 — Flash align check thiếu** — `bsp_flash.c:35-54` không verify `address%8`, biên trang · **Medium**
-- [ ] **I-16 — Stack/Heap nhỏ** — `STM32G0B1xx_FLASH.ld:66-67` 512B/1KB, còn FLASH dư 8K — tăng Stack 0x800 khi feature creep · **Medium**
+- [x] **I-01 — Không có IWDG/WWDG** — `stm32g0xx_hal_conf.h:48,60` disable, `.ioc` không config · **Critical** — _Re-verified 2026-08-27: already fixed (Sprint 1) — `HAL_IWDG_MODULE_ENABLED` defined, `MX_IWDG_Init()` configures ~1s timeout (LSI/32, reload 1000), called from `main()` after `App_Init()`. `check_ioc.py`'s IWDG check passes._
+- [x] **I-02 — `Error_Handler`/`HardFault` treo không safe-state** — `main.c:180-188` `it.c:97-107` `while(1)` · **Critical** — _Re-verified 2026-08-27: already fixed (Sprint 1) — both `Error_Handler()` and `HardFault_Handler()` call `Safety_Shutdown()` before their diagnostic dump / infinite loop._
+- [x] **I-03 — Thiếu IWDG refresh** — `App_Loop` không `HAL_IWDG_Refresh` · **High** (gộp I-01) — _Re-verified 2026-08-27: already fixed (Sprint 1) — `App_Loop()` calls `MX_IWDG_Refresh()` once per iteration, main-loop only, never from an ISR._
+- [x] **I-04 — NVIC đồng mức 0** — tất cả IRQ `0,0` trừ SysTick 3. `Charger.ioc:198-213` `fdcan.c:147` · **High** — _Re-verified 2026-08-27: already fixed (Sprint 1) — NVIC priorities are no longer uniformly 0: FDCAN/USB=0, USART/DMA=1, ADC/TIM=2._
+- [x] **I-05 — RS485 DMA vs IT drift** — `Charger.ioc:69` DMA Ch3 nhưng IT 1-byte. · **High** — _Re-verified 2026-08-27: see B-01/M-01 in section 6 — the DMA-vs-IT drift is real but reclassified as unused-resource cleanup, not a functional or safety bug._
+- [x] **I-06 — PB1 DE glitch boot** — `gpio.c:61` `SET` (TX) trước `RESET` (RX). `Charger.ioc:291` · **High** (Medium sau SWAP fix) — _Re-verified 2026-08-27: confirmed real, now fixed (commit fadfdaf) — `MX_GPIO_Init()` defaulted the RS485 DE pin HIGH (TX-enable) before `BSP_RS485_Init()` set it LOW, leaving a boot-time bus-drive window. Changed the CubeMX default to LOW in both `gpio.c` and `Charger.ioc`._
+- [ ] **I-07 — RS485 TX blocking 100ms** — `bsp_rs485.c:33` · **High** — _Re-verified 2026-08-27: reviewed, left open with rationale — `UART_Transmit_To_DWIN()` still blocks with a 100ms timeout ceiling; typical transfers are ≤8 bytes (~1ms) plus the 2ms guard, so the 100ms is only a worst-case ceiling, not the normal cost. Converting to interrupt/DMA-driven TX would need a scope/logic-analyzer on real RS485 hardware to validate the DE turnaround — not safe to change blind. Documented as a follow-up._
+- [x] **I-08 — LOG blocking 50ms + banner sai** — `debug_log.c:13,25,35` FDCAN1 ghi `@250K` sai (phải 125K) · **Medium** — _Re-verified 2026-08-27: not reproducible — `debug_log.c:36` already prints `FDCAN1 @125K / FDCAN2 @250K`, matching the actual configured bit rates._
+- [x] **I-09 — SPI 4BIT** — `spi.c:44,78` · **High latent** — _Re-verified 2026-08-27: not reproducible — see D-10 above; SPI is already 8-bit in current source._
+- [ ] **I-10 — POWER_EN không delay** — `app_main.c:69` `SET` → ngay `BSP_CAN_Start`. B1205S cần ~20ms · **Medium** — _Re-verified 2026-08-27: reviewed, left open — `app_main.c:75` sets `POWER_EN` HIGH with no explicit delay before `BSP_CAN_Start()`. Adding a fixed delay is straightforward, but the correct value depends on the transceiver's datasheet timing and hasn't been verified against real hardware in this session._
+- [x] **I-13 — Flash align check thiếu** — `bsp_flash.c:35-54` không verify `address%8`, biên trang · **Medium** — _Re-verified 2026-08-27: not reproducible — `BSP_Flash_ErasePage`/`WriteDoubleWord`/`WriteBlock` all already check `(address % 8U) != 0U` and bound-check against the flash end address._
+- [x] **I-16 — Stack/Heap nhỏ** — `STM32G0B1xx_FLASH.ld:66-67` 512B/1KB, còn FLASH dư 8K — tăng Stack 0x800 khi feature creep · **Medium** — _Re-verified 2026-08-27: not reproducible — `STM32G0B1xx_FLASH.ld` already sets `_Min_Stack_Size = 0x800` (2KB) / `_Min_Heap_Size = 0x200` (512B), not the smaller values the audit describes._
 
 ---
 
