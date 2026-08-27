@@ -317,8 +317,15 @@ static void parse_status(const uint8_t *data, uint8_t src_addr, uint32_t now)
     mod->view.last_rx_tick = now;
     mod->view.stats.rx_count++;
 
-    /* Update state based on status */
-    if (status == TONHE_STATUS_FAULT_OFF) {
+    /* Update state based on status.
+     * BUGFIX B-05: alarm_flags (real fault/PFC bits, computed above) must be
+     * checked first -- previously state transitions were driven only by the
+     * module's self-reported status byte, so a module with active fault bits
+     * whose status byte hadn't yet flipped to FAULT_OFF was never stopped.
+     * Matches Lianming's unconditional alarm-flags-first pattern. */
+    if (mod->view.alarm_flags != CHG_LIB_ALARM_NONE) {
+        set_state(mod, CHG_LIB_STATE_FAULT, now);
+    } else if (status == TONHE_STATUS_FAULT_OFF) {
         // LOG("TONHE: Module %u FAULT (status=%02X)\r\n", mod->view.addr, status);
         set_state(mod, CHG_LIB_STATE_FAULT, now);
     } else if (status == TONHE_STATUS_NORMAL_OFF) {

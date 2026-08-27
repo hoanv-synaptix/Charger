@@ -401,7 +401,12 @@ static void apply_response(MXR_Internal_t *m, const uint8_t *data, uint32_t now)
  case CHG_LIB_REG_SET_VOLTAGE:
  case CHG_LIB_REG_SET_CURR_LIMIT:
  case CHG_LIB_REG_SET_OVP:
+     break; /* Valid write ACK, not the stop command -- must not affect STOPPING state (B-06) */
  case CHG_LIB_REG_ON_OFF:
+     /* BUGFIX B-06: this is the actual STOP register; only its own ACK may
+      * confirm STOPPING->IDLE. Previously any of the 5 write ACKs above
+      * (e.g. a late/stale SET_VOLTAGE ACK from a prior START attempt) could
+      * spuriously confirm a stop that never happened. */
      if (m->view.state == CHG_LIB_STATE_STOPPING) {
          set_state(m, CHG_LIB_STATE_IDLE, now);
      }
@@ -431,8 +436,10 @@ static void apply_response(MXR_Internal_t *m, const uint8_t *data, uint32_t now)
  }
 
 
- /* Critical alarm -> stop ngay */
- if (m->view.alarm_flags != CHG_LIB_ALARM_NONE && m->view.state == CHG_LIB_STATE_RUNNING) {
+ /* Critical alarm -> stop ngay (BUGFIX: previously gated on state==RUNNING,
+  * so a critical alarm reported while STARTING/WARNING/STOPPING was silently
+  * ignored -- matches Lianming's unconditional pattern, see AUDIT B-04). */
+ if (m->view.alarm_flags != CHG_LIB_ALARM_NONE && m->view.state != CHG_LIB_STATE_FAULT) {
  set_state(m, CHG_LIB_STATE_FAULT, now);
  send_set_u32(m, CHG_LIB_REG_ON_OFF, MXR_CMD_STOP);
  }
