@@ -1,6 +1,0 @@
-D:/Projects/Charger_CTRL/Charger/Modules/hmi/dwin_protocol.c:8:6:DWIN_Init	0	static
-D:/Projects/Charger_CTRL/Charger/Modules/hmi/dwin_protocol.c:13:6:DWIN_SendInt	16	static
-D:/Projects/Charger_CTRL/Charger/Modules/hmi/dwin_protocol.c:28:6:DWIN_SendString	80	static
-D:/Projects/Charger_CTRL/Charger/Modules/hmi/dwin_protocol.c:46:6:DWIN_UpdateData	8	static
-D:/Projects/Charger_CTRL/Charger/Modules/hmi/dwin_protocol.c:103:28:DWIN_OnCommandReceived	0	static
-D:/Projects/Charger_CTRL/Charger/Modules/hmi/dwin_protocol.c:68:6:DWIN_ParseRX	32	static

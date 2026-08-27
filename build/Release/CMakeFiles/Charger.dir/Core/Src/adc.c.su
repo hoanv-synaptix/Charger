@@ -1,3 +1,0 @@
-D:/Projects/Charger_CTRL/Charger/Core/Src/adc.c:31:6:MX_ADC1_Init	32	static
-D:/Projects/Charger_CTRL/Charger/Core/Src/adc.c:106:6:HAL_ADC_MspInit	48	static
-D:/Projects/Charger_CTRL/Charger/Core/Src/adc.c:157:6:HAL_ADC_MspDeInit	8	static

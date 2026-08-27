@@ -1,3 +1,0 @@
-D:/Projects/Charger_CTRL/Charger/BSP/Src/bsp_gpio.c:4:6:BSP_LED_On	16	static
-D:/Projects/Charger_CTRL/Charger/BSP/Src/bsp_gpio.c:14:6:BSP_LED_Off	16	static
-D:/Projects/Charger_CTRL/Charger/BSP/Src/bsp_gpio.c:22:6:BSP_BTN_IsPressed	16	static

@@ -1,8 +1,0 @@
-D:/Projects/Charger_CTRL/Charger/Drivers/STM32G0xx_HAL_Driver/Src/stm32g0xx_hal_adc_ex.c:102:19:HAL_ADCEx_Calibration_Start	40	static
-D:/Projects/Charger_CTRL/Charger/Drivers/STM32G0xx_HAL_Driver/Src/stm32g0xx_hal_adc_ex.c:252:10:HAL_ADCEx_Calibration_GetValue	0	static
-D:/Projects/Charger_CTRL/Charger/Drivers/STM32G0xx_HAL_Driver/Src/stm32g0xx_hal_adc_ex.c:268:19:HAL_ADCEx_Calibration_SetValue	16	static
-D:/Projects/Charger_CTRL/Charger/Drivers/STM32G0xx_HAL_Driver/Src/stm32g0xx_hal_adc_ex.c:311:13:HAL_ADCEx_LevelOutOfWindow2Callback	0	static
-D:/Projects/Charger_CTRL/Charger/Drivers/STM32G0xx_HAL_Driver/Src/stm32g0xx_hal_adc_ex.c:326:13:HAL_ADCEx_LevelOutOfWindow3Callback	0	static
-D:/Projects/Charger_CTRL/Charger/Drivers/STM32G0xx_HAL_Driver/Src/stm32g0xx_hal_adc_ex.c:342:13:HAL_ADCEx_EndOfSamplingCallback	0	static
-D:/Projects/Charger_CTRL/Charger/Drivers/STM32G0xx_HAL_Driver/Src/stm32g0xx_hal_adc_ex.c:357:13:HAL_ADCEx_ChannelConfigReadyCallback	0	static
-D:/Projects/Charger_CTRL/Charger/Drivers/STM32G0xx_HAL_Driver/Src/stm32g0xx_hal_adc_ex.c:380:19:HAL_ADCEx_DisableVoltageRegulator	0	static

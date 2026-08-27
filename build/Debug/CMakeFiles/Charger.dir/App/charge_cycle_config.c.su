@@ -1,7 +1,0 @@
-D:/Projects/Charger_CTRL/Charger/App/charge_cycle_config.c:7:13:value_is_invalid	24	static
-D:/Projects/Charger_CTRL/Charger/App/charge_cycle_config.c:12:13:validate_non_negative	16	static
-D:/Projects/Charger_CTRL/Charger/App/charge_cycle_config.c:17:13:validate_range	24	static
-D:/Projects/Charger_CTRL/Charger/App/charge_cycle_config.c:22:6:ChargeCycleConfig_GetDefaults	32	static
-D:/Projects/Charger_CTRL/Charger/App/charge_cycle_config.c:49:6:ChargeCycleConfig_Init	8	static
-D:/Projects/Charger_CTRL/Charger/App/charge_cycle_config.c:54:6:ChargeCycleConfig_Get	16	static
-D:/Projects/Charger_CTRL/Charger/App/charge_cycle_config.c:63:6:ChargeCycleConfig_Set	16	static

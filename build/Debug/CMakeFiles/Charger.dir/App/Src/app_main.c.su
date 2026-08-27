@@ -1,9 +1,0 @@
-D:/Projects/Charger_CTRL/Charger/App/Src/app_main.c:45:13:led_run_on	8	static
-D:/Projects/Charger_CTRL/Charger/App/Src/app_main.c:46:13:led_run_off	8	static
-D:/Projects/Charger_CTRL/Charger/App/Src/app_main.c:47:13:led_fault_on	8	static
-D:/Projects/Charger_CTRL/Charger/App/Src/app_main.c:48:13:led_fault_off	8	static
-D:/Projects/Charger_CTRL/Charger/App/Src/app_main.c:53:16:read_btn_start	8	static
-D:/Projects/Charger_CTRL/Charger/App/Src/app_main.c:56:16:read_btn_stop	8	static
-D:/Projects/Charger_CTRL/Charger/App/Src/app_main.c:59:6:App_Init	8	static
-D:/Projects/Charger_CTRL/Charger/App/Src/app_main.c:126:6:App_Loop	40	static
-D:/Projects/Charger_CTRL/Charger/App/Src/app_main.c:201:20:App_GetCurrentDriver	8	static

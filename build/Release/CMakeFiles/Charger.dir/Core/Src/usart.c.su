@@ -1,5 +1,0 @@
-D:/Projects/Charger_CTRL/Charger/Core/Src/usart.c:36:6:MX_USART1_UART_Init	8	static
-D:/Projects/Charger_CTRL/Charger/Core/Src/usart.c:80:6:MX_USART3_UART_Init	8	static
-D:/Projects/Charger_CTRL/Charger/Core/Src/usart.c:125:6:MX_USART5_UART_Init	8	static
-D:/Projects/Charger_CTRL/Charger/Core/Src/usart.c:156:6:HAL_UART_MspInit	136	static
-D:/Projects/Charger_CTRL/Charger/Core/Src/usart.c:319:6:HAL_UART_MspDeInit	8	static

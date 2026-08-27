@@ -1,3 +1,0 @@
-D:/Projects/Charger_CTRL/Charger/BSP/bsp_flash.c:5:6:BSP_Flash_ErasePage	40	static,ignoring_inline_asm
-D:/Projects/Charger_CTRL/Charger/BSP/bsp_flash.c:33:6:BSP_Flash_WriteDoubleWord	16	static,ignoring_inline_asm
-D:/Projects/Charger_CTRL/Charger/BSP/bsp_flash.c:47:6:BSP_Flash_WriteBlock	32	static,ignoring_inline_asm

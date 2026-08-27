@@ -1,5 +1,0 @@
-D:/Projects/Charger_CTRL/Charger/BSP/bsp_rs485.c:20:6:BSP_RS485_Init	8	static
-D:/Projects/Charger_CTRL/Charger/BSP/bsp_rs485.c:27:6:UART_Transmit_To_DWIN	16	static
-D:/Projects/Charger_CTRL/Charger/BSP/bsp_rs485.c:43:6:HAL_UART_RxCpltCallback	24	static
-D:/Projects/Charger_CTRL/Charger/BSP/bsp_rs485.c:57:6:HAL_UART_ErrorCallback	16	static
-D:/Projects/Charger_CTRL/Charger/BSP/bsp_rs485.c:66:10:BSP_RS485_Read	24	static

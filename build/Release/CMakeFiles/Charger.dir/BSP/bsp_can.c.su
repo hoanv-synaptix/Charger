@@ -1,5 +1,0 @@
-D:/Projects/Charger_CTRL/Charger/BSP/bsp_can.c:62:6:BSP_CAN_Start	48	static
-D:/Projects/Charger_CTRL/Charger/BSP/bsp_can.c:69:6:BSP_CAN_Transmit	56	static
-D:/Projects/Charger_CTRL/Charger/BSP/bsp_can.c:107:6:HAL_FDCAN_RxFifo0Callback	64	static
-D:/Projects/Charger_CTRL/Charger/BSP/bsp_can.c:133:6:BSP_CAN_GetStats	8	static
-D:/Projects/Charger_CTRL/Charger/BSP/bsp_can.c:143:6:BSP_CAN_Process	64	static

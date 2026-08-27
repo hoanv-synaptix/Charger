@@ -1,7 +1,0 @@
-D:/Projects/Charger_CTRL/Charger/BSP/bsp_can.c:16:13:config_charger_bus_filters	48	static
-D:/Projects/Charger_CTRL/Charger/BSP/bsp_can.c:34:13:config_bms_bus_filters	56	static
-D:/Projects/Charger_CTRL/Charger/BSP/bsp_can.c:62:6:BSP_CAN_Start	8	static
-D:/Projects/Charger_CTRL/Charger/BSP/bsp_can.c:69:6:BSP_CAN_Transmit	56	static
-D:/Projects/Charger_CTRL/Charger/BSP/bsp_can.c:107:6:HAL_FDCAN_RxFifo0Callback	88	static
-D:/Projects/Charger_CTRL/Charger/BSP/bsp_can.c:131:6:BSP_CAN_GetStats	24	static
-D:/Projects/Charger_CTRL/Charger/BSP/bsp_can.c:141:6:BSP_CAN_Process	56	static

@@ -1,3 +1,0 @@
-D:/Projects/Charger_CTRL/Charger/Core/Src/usb_drd_fs.c:31:6:MX_USB_DRD_FS_PCD_Init	8	static
-D:/Projects/Charger_CTRL/Charger/Core/Src/usb_drd_fs.c:63:6:HAL_PCD_MspInit	112	static
-D:/Projects/Charger_CTRL/Charger/Core/Src/usb_drd_fs.c:106:6:HAL_PCD_MspDeInit	16	static

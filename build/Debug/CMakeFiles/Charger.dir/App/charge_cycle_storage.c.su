@@ -1,9 +1,0 @@
-D:/Projects/Charger_CTRL/Charger/App/charge_cycle_storage.c:26:17:calc_crc32	32	static
-D:/Projects/Charger_CTRL/Charger/App/charge_cycle_storage.c:38:13:validate_record	24	static
-D:/Projects/Charger_CTRL/Charger/App/charge_cycle_storage.c:47:13:is_flash_blank	24	static
-D:/Projects/Charger_CTRL/Charger/App/charge_cycle_storage.c:54:16:find_blank_offset	16	static
-D:/Projects/Charger_CTRL/Charger/App/charge_cycle_storage.c:65:13:read_record_at	24	static
-D:/Projects/Charger_CTRL/Charger/App/charge_cycle_storage.c:70:13:load_latest_config	256	static
-D:/Projects/Charger_CTRL/Charger/App/charge_cycle_storage.c:92:6:ChargeCycleStorage_Init	232	static
-D:/Projects/Charger_CTRL/Charger/App/charge_cycle_storage.c:104:6:ChargeCycleStorage_Load	24	static
-D:/Projects/Charger_CTRL/Charger/App/charge_cycle_storage.c:109:6:ChargeCycleStorage_Save	472	static

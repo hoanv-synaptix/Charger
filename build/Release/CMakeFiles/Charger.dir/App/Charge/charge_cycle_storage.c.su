@@ -1,6 +1,0 @@
-D:/Projects/Charger_CTRL/Charger/App/Charge/charge_cycle_storage.c:26:17:calc_crc32.constprop	20	static
-D:/Projects/Charger_CTRL/Charger/App/Charge/charge_cycle_storage.c:38:13:validate_record	8	static
-D:/Projects/Charger_CTRL/Charger/App/Charge/charge_cycle_storage.c:70:13:load_latest_config	256	static
-D:/Projects/Charger_CTRL/Charger/App/Charge/charge_cycle_storage.c:92:6:ChargeCycleStorage_Init	224	static
-D:/Projects/Charger_CTRL/Charger/App/Charge/charge_cycle_storage.c:104:6:ChargeCycleStorage_Load	16	static
-D:/Projects/Charger_CTRL/Charger/App/Charge/charge_cycle_storage.c:109:6:ChargeCycleStorage_Save	448	static
