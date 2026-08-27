@@ -22,6 +22,9 @@ jobs:
       - name: Check CubeMX (.ioc) Drift
         run: python check_ioc.py
 
+      - name: Check architecture / dependency direction (AGENTS.md)
+        run: python tools/check_architecture.py
+
       # Optional: Cppcheck for C static analysis
       - name: Install Cppcheck
         run: sudo apt-get install -y cppcheck

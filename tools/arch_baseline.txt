@@ -1,0 +1,17 @@
+# Known pre-existing architecture violations (see AGENTS.md sec 28).
+# Format: <file>:<included_header>. Remove a line once it's fixed.
+App/Charge/charge_controller.c:bsp_adc.h
+App/Charge/charge_controller.c:main.h
+App/Charge/charge_cycle_storage.c:bsp_flash.h
+App/Protocol/pc_debug_protocol.c:bsp_can.h
+App/Protocol/pc_debug_protocol.c:main.h
+App/Protocol/pc_protocol.c:bsp_sys.h
+App/Protocol/pc_protocol.c:main.h
+BSP/bsp_can.c:bms_core.h
+BSP/bsp_can.c:chg_lib.h
+Modules/bms/bms_core.c:main.h
+Modules/bms/bms_protocol.c:stm32g0xx_hal.h
+Modules/chg_lib/chg_lib_core.c:main.h
+Modules/chg_lib/chg_lib_lianming.c:main.h
+Modules/chg_lib/chg_lib_maxwell.c:main.h
+Modules/chg_lib/chg_lib_tonhe.c:main.h
