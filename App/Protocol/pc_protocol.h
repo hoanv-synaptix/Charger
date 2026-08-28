@@ -103,6 +103,20 @@ void PC_Protocol_ResetTx(void);
 /** Kiểm tra trạng thái charging (do PC đặt) */
 bool PC_Protocol_IsCharging(void);
 
+/** Number of frames currently queued for TX (0..PC_TX_QUEUE_DEPTH). Test/
+ *  debug support -- lets a host test (or a future debug command) inspect
+ *  what the protocol layer actually enqueued, without needing a real USB
+ *  transfer. */
+uint8_t PC_Protocol_GetTxQueueDepth(void);
+
+/** Peek at a queued TX frame without consuming it. index 0 = oldest frame
+ *  (the next one PC_Protocol_ProcessTx() would send). Writes the frame's
+ *  cmd byte and payload into the caller's buffers (payload must be at
+ *  least PC_MAX_PAYLOAD bytes) and returns true, or returns false if
+ *  index is beyond the current queue depth. Test/debug support -- read-only,
+ *  does not affect PC_Protocol_ProcessTx()'s send order. */
+bool PC_Protocol_PeekTxFrame(uint8_t index, uint8_t *cmd, uint8_t *payload, uint8_t *payload_len);
+
 /** Firmware version */
 #define FW_VERSION_MAJOR    2
 #define FW_VERSION_MINOR    0

@@ -433,7 +433,6 @@ static void process_frame(uint8_t cmd, const uint8_t *payload, uint8_t len)
             send_nack(cmd, PC_ERR_BAD_PARAM);
             return;
         }
-        CHG_LIB_Init();
         /* Persist driver choice to flash so it survives reboot.
          * driver_id 1=MAXWELL,2=LIANMING,3=TONHE → module_type +1 */
         {
@@ -443,6 +442,28 @@ static void process_frame(uint8_t cmd, const uint8_t *payload, uint8_t len)
             ChargeCycleConfig_Set(&cfg);
             ChargeCycleStorage_Save(&cfg);
         }
+        /* BUGFIX: ChargeCycleConfig_Set() above is called here only to
+         * persist module_type -- but it also auto-registers
+         * cfg.source_module_count modules at default addr=1..N (see its
+         * own comment in charge_cycle_config.c), which is correct when the
+         * config is the sole source of module topology (boot-time load,
+         * DEBUG_CMD_SET_CHARGE_CFG) but wrong here: the PC app's real flow
+         * is SET_DRIVER followed by its OWN explicit PC_CMD_SET_MODULE_ADDR
+         * call(s) for the actual module address(es) (debug_app/main.py's
+         * _sync_driver()/_sync_module_addr()). Without clearing that side
+         * effect, a leftover source_module_count from a prior session
+         * silently registers a phantom module at addr=1; if the user's
+         * real module address happens to collide, the following real
+         * SET_MODULE_ADDR is silently rejected (CHG_LIB_AddModule()
+         * returns -1 on an addr collision) instead of registering the
+         * real module -- otherwise it just leaves a stray phantom module
+         * alongside the real one. CHG_LIB_Init() here (moved from before
+         * the config-persist block to after it) clears that side effect so
+         * SET_MODULE_ADDR is the sole source of truth for module topology
+         * after a driver change, matching the app's actual usage. Found
+         * and confirmed via test/host_protocol_sim/test_pc_protocol_e2e.c's
+         * test_set_driver_and_module_addr_over_wire. */
+        CHG_LIB_Init();
         ok = true;
         break;
 
@@ -610,6 +631,27 @@ void PC_Protocol_SendFrame(uint8_t cmd, const uint8_t *payload, uint16_t len)
 bool PC_Protocol_IsCharging(void)
 {
     return ChargeController_IsRunning();
+}
+
+uint8_t PC_Protocol_GetTxQueueDepth(void)
+{
+    return g_tx_count;
+}
+
+bool PC_Protocol_PeekTxFrame(uint8_t index, uint8_t *cmd, uint8_t *payload, uint8_t *payload_len)
+{
+    if (index >= g_tx_count) {
+        return false;
+    }
+    uint8_t slot = (uint8_t)((g_tx_head + index) % PC_TX_QUEUE_DEPTH);
+    PcTxFrame_t *frame = &g_tx_queue[slot];
+    uint8_t len = frame->data[3]; /* [SOF1][SOF2][CMD][LEN][PAYLOAD...][CRC] */
+    if (cmd != NULL) *cmd = frame->data[2];
+    if (payload_len != NULL) *payload_len = len;
+    if (payload != NULL && len > 0U) {
+        memcpy(payload, &frame->data[4], len);
+    }
+    return true;
 }
 
 
