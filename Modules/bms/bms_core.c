@@ -321,6 +321,22 @@ void BMS_Process(uint32_t now_tick)
         if (has_any_valid_bms_data()) {
             g_bms_state = BMS_STATE_ONLINE;
             g_bms_view.online = true;
+            /* BUGFIX: BMS_ALARM_BMS_OFFLINE is set when entering OFFLINE
+             * (below) and explicitly preserved by the ISR's
+             * update_alarm_flags() (see BUG-06's preserve_mask) -- nothing
+             * used to clear it on the way back to ONLINE, so once a BMS
+             * dropped out even briefly it stayed permanently flagged
+             * "offline" (State shows FAULT, alarm list shows "BMS
+             * offline") even long after real connectivity recovered and
+             * `online` was already back to true. Same bug class as the
+             * already-fixed BUG-04 STALE_DATA latch, just for this bit --
+             * missed because it isn't touched anywhere else. Same
+             * BSP_EnterCritical()/ExitCritical() guard as the STALE_DATA
+             * clear a few lines down, since alarm_flags is a
+             * read-modify-write the ISR also writes. */
+            BSP_EnterCritical();
+            g_bms_view.alarm_flags &= (BMS_AlarmFlag_t)~BMS_ALARM_BMS_OFFLINE;
+            BSP_ExitCritical();
             LOG("BMS: ONLINE (was OFFLINE, now has data)\r\n");
         }
     }

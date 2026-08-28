@@ -611,6 +611,40 @@ static bool test_bms_offline(void)
     return true;
 }
 
+/* Regression test: BMS_ALARM_BMS_OFFLINE used to latch forever once set --
+ * nothing cleared it on the OFFLINE->ONLINE recovery path, so a BMS view
+ * could show online=true while still carrying a stale "offline" alarm bit
+ * (found via real-hardware HIL testing, not host-sim -- the host sims never
+ * exercised an offline-then-recover sequence before this test). */
+static bool test_bms_offline_then_recovers(void)
+{
+    printf("Running test_bms_offline_then_recovers...\n");
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_TONHE, NULL), "setup failed");
+    set_healthy_bms(400.0f, 50);
+    ASSERT(warmup_and_start(1500U, 4000U), "module never reached RUNNING");
+
+    g_sim_bms.transmitting = false; /* simulate BMS comms loss */
+    drive_ms(BMS_OFFLINE_TIMEOUT_MS + 500U);
+
+    BMS_View_t bv;
+    BMS_GetView(&bv);
+    ASSERT(bv.state == BMS_STATE_OFFLINE, "BMS should be OFFLINE after timeout");
+    ASSERT(bv.alarm_flags & BMS_ALARM_BMS_OFFLINE, "BMS_ALARM_BMS_OFFLINE should be set while offline");
+
+    /* Resume transmitting -- BMS should recover to ONLINE. */
+    g_sim_bms.transmitting = true;
+    drive_ms(200U);
+
+    BMS_GetView(&bv);
+    ASSERT(bv.online, "BMS should be back online after data resumes");
+    ASSERT(bv.state == BMS_STATE_ONLINE, "BMS state should return to ONLINE");
+    ASSERT(!(bv.alarm_flags & BMS_ALARM_BMS_OFFLINE),
+           "BMS_ALARM_BMS_OFFLINE must clear on recovery -- must not latch forever");
+
+    printf("[PASS] test_bms_offline_then_recovers\n");
+    return true;
+}
+
 static bool test_bms_critical_alarm(void)
 {
     printf("Running test_bms_critical_alarm...\n");
@@ -725,6 +759,7 @@ int main(void)
     pass &= test_rated_current_seeded_from_config();
 
     pass &= test_bms_offline();
+    pass &= test_bms_offline_then_recovers();
     pass &= test_bms_critical_alarm();
     pass &= test_bms_stale_but_online();
 
