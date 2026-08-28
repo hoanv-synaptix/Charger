@@ -12,23 +12,11 @@ static const CHG_LIB_DriverOps_t *get_active(void)
     return s_active_driver;
 }
 
-static bool names_match(const char *a, const char *b)
-{
-    if (a == 0 || b == 0) return false;
-    return strcmp(a, b) == 0;
-}
-
 bool CHG_LIB_RegisterDriver(CHG_LIB_DriverId_t id, const CHG_LIB_DriverOps_t *ops)
 {
     if ((uint32_t)id >= CHG_LIB_MAX_DRV || ops == 0) return false;
     s_driver_table[id] = ops;
     return true;
-}
-
-bool CHG_LIB_IsDriverRegistered(CHG_LIB_DriverId_t id)
-{
-    if ((uint32_t)id >= CHG_LIB_MAX_DRV) return false;
-    return s_driver_table[id] != 0;
 }
 
 bool CHG_LIB_SelectDriver(CHG_LIB_DriverId_t id)
@@ -55,40 +43,6 @@ bool CHG_LIB_SelectDriver(CHG_LIB_DriverId_t id)
     }
 
     return true;
-}
-
-bool CHG_LIB_SelectDriverByName(const char *name)
-{
-    for (uint8_t i = 0; i < CHG_LIB_MAX_DRV; i++) {
-        if (s_driver_table[i] != 0 && names_match(s_driver_table[i]->name, name)) {
-            /* Same driver? Just return */
-            if (s_active_driver == s_driver_table[i]) {
-                return true;
-            }
-
-            /* Deinit old driver to stop any ongoing polling/timers */
-            const CHG_LIB_DriverOps_t *old_driver = s_active_driver;
-            if (old_driver != 0) {
-                if (old_driver->deinit != 0) {
-                    old_driver->deinit();
-                } else if (old_driver->init != 0) {
-                    old_driver->init();
-                }
-            }
-
-            /* Switch to new driver */
-            s_active_driver = s_driver_table[i];
-            s_active_driver_id = (CHG_LIB_DriverId_t)i;
-
-            /* Init new driver to reset its state */
-            if (s_active_driver->init != 0) {
-                s_active_driver->init();
-            }
-
-            return true;
-        }
-    }
-    return false;
 }
 
 CHG_LIB_DriverId_t CHG_LIB_GetActiveDriverId(void)
