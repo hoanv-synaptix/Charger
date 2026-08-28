@@ -498,7 +498,18 @@ static void process_module(MXR_Internal_t *m, uint32_t now)
                 m->view.alarm_flags |= CHG_LIB_ALARM_COMM_FAIL;
                 set_state(m, CHG_LIB_STATE_FAULT, now);
             } else {
+                /* BUGFIX: the RUNNING confirmation below requires
+                 * m->view.voltage > 0, but that field is only refreshed by
+                 * an actual VOLTAGE-register response (apply_response()) --
+                 * polling only ALARM_STATUS here meant voltage could never
+                 * "appear" as the comment above promises, so a module
+                 * starting cold (voltage cached at 0, the normal case) would
+                 * always exhaust all 5 reads and FAULT with COMM_FAIL even
+                 * after successfully turning on. Poll both registers each
+                 * confirm iteration so voltage actually gets refreshed
+                 * while still checking for alarms. */
                 send_read(m, CHG_LIB_REG_ALARM_STATUS);
+                send_read(m, CHG_LIB_REG_VOLTAGE);
                 m->retry_count++;
             }
         }
