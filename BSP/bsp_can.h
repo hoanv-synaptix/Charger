@@ -17,6 +17,12 @@ bool BSP_CAN_Transmit(uint8_t bus, const BSP_CAN_Frame_t *frame);
 
 void BSP_CAN_GetStats(uint32_t *c1tx, uint32_t *c1rx, uint32_t *c2tx, uint32_t *c2rx);
 
+/* TX-FIFO-full counts (HAL_FDCAN_AddMessageToTxFifoQ() failures) per bus --
+ * a stat counter, not a LOG(), because BSP_CAN_Transmit() can be called
+ * from inside chg_lib's critical section (see bsp_can.c for the full
+ * rationale). Poll this instead of expecting a log line. */
+void BSP_CAN_GetTxFailStats(uint32_t *c1_fail, uint32_t *c2_fail);
+
 /* Rx dispatch callbacks. BSP only captures frames off the wire; it must not
  * know about charger/BMS business modules (AGENTS.md sec 5-6). The
  * composition root (App_Init) registers these once at startup; the FDCAN

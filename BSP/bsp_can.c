@@ -10,6 +10,7 @@
 #include "debug_log.h"
 
 volatile uint32_t g_c1_tx = 0, g_c1_rx = 0, g_c2_tx = 0, g_c2_rx = 0;
+volatile uint32_t g_c1_tx_fail = 0, g_c2_tx_fail = 0;
 
 static BSP_CAN_ChargerRxHandler_t g_charger_rx_handler = 0;
 static BSP_CAN_BmsRxHandler_t     g_bms_rx_handler = 0;
@@ -103,7 +104,17 @@ bool BSP_CAN_Transmit(uint8_t bus, const BSP_CAN_Frame_t *frame)
 
     if (HAL_FDCAN_AddMessageToTxFifoQ((bus == 1) ? &hfdcan1 : &hfdcan2,
                                       &TxHeader, (uint8_t *)frame->data) != HAL_OK) {
-        LOG("[CAN TX FAIL] bus=%u ID:%08lX\r\n", bus, (unsigned long)frame->ext_id);
+        /* BUGFIX (bonus finding while implementing B-10): BSP_CAN_Transmit()
+         * is reached from every chg_lib driver's send_frame()-equivalent,
+         * which runs inside CHG_LIB_Process()/CHG_LIB_FeedCanFrame()'s
+         * critical section (see B-13). LOG() blocks on HAL_UART_Transmit()
+         * for up to 50ms (Utils/Log/debug_log.c) -- calling it here would
+         * block CAN RX for up to 50ms at exactly the moment the TX FIFO is
+         * already full, i.e. under the heaviest bus load, worse still with
+         * more modules (B-10). Count instead, same pattern as g_c1_tx/
+         * g_c2_tx -- BSP_CAN_GetTxFailStats() exposes it for polling. */
+        if (bus == 1) g_c1_tx_fail++;
+        else if (bus == 2) g_c2_tx_fail++;
         return false;
     }
 
@@ -147,6 +158,12 @@ void BSP_CAN_GetStats(uint32_t *c1tx, uint32_t *c1rx, uint32_t *c2tx, uint32_t *
     if (c1rx) *c1rx = g_c1_rx;
     if (c2tx) *c2tx = g_c2_tx;
     if (c2rx) *c2rx = g_c2_rx;
+}
+
+void BSP_CAN_GetTxFailStats(uint32_t *c1_fail, uint32_t *c2_fail)
+{
+    if (c1_fail) *c1_fail = g_c1_tx_fail;
+    if (c2_fail) *c2_fail = g_c2_tx_fail;
 }
 
 /* Watchdog bus-off: neu controller roi vao bus-off (khong ai ACK trong lau),
