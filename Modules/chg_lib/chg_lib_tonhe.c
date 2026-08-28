@@ -99,7 +99,6 @@ typedef struct {
 
 static TONHE_Internal_t g_modules[TONHE_MAX_MODULES];
 static volatile uint8_t g_module_count = 0;
-static volatile uint8_t g_rr_index = 0;
 static volatile uint32_t g_last_timing_tick = 0;
 
 /* ============== Forward Declarations ============== */
@@ -669,7 +668,6 @@ static void tonhe_init(void)
 {
     memset(g_modules, 0, sizeof(g_modules));
     g_module_count = 0;
-    g_rr_index = 0;
     g_last_timing_tick = 0;
 }
 
@@ -720,9 +718,6 @@ static void tonhe_remove_module(uint8_t idx)
     }
     memset(&g_modules[g_module_count - 1], 0, sizeof(g_modules[0]));
     g_module_count--;
-    if (g_rr_index >= g_module_count && g_module_count > 0) {
-        g_rr_index = g_module_count - 1;
-    }
     BSP_ExitCritical();
 }
 
@@ -839,22 +834,19 @@ static void tonhe_process(uint32_t now)
         g_last_timing_tick = now;
     }
 
-    if (g_module_count == 0) return;
-    BSP_EnterCritical();
-    uint8_t idx = g_rr_index;
-    BSP_ExitCritical();
-    if (idx >= g_module_count) idx = 0;
-    TONHE_Internal_t *mod = &g_modules[idx];
-    bool enabled;
-    BSP_EnterCritical();
-    enabled = mod->view.enabled;
-    BSP_ExitCritical();
-    if (enabled) {
-        process_module(mod, now);
+    /* BUGFIX B-10: service every enabled module every call instead of one
+     * per round-robin index -- see the matching comment in
+     * chg_lib_maxwell.c's mx_process() for the full rationale, including
+     * why the nested BSP_EnterCritical()/ExitCritical() calls this
+     * replaces were also a latent bug (BSP_EnterCritical()/ExitCritical()
+     * doesn't nest, so calling it inside CHG_LIB_Process()'s already-held
+     * critical section re-enabled interrupts partway through). */
+    for (uint8_t idx = 0; idx < g_module_count; idx++) {
+        TONHE_Internal_t *mod = &g_modules[idx];
+        if (mod->view.enabled) {
+            process_module(mod, now);
+        }
     }
-    BSP_EnterCritical();
-    if (g_module_count > 0) g_rr_index = (g_rr_index + 1) % g_module_count;
-    BSP_ExitCritical();
 }
 
 static void tonhe_feed_frame(uint32_t ext_id, const uint8_t *data, uint8_t dlc)

@@ -142,7 +142,6 @@ typedef struct {
 
 static MXR_Internal_t g_modules[MXR_MAX_MODULES];
 static volatile uint8_t g_module_count = 0;
-static volatile uint8_t g_rr_index = 0;
 
 static const uint16_t g_poll_regs[MXR_POLL_REG_COUNT] = {
  CHG_LIB_REG_VOLTAGE,
@@ -597,7 +596,6 @@ static void mx_init(void)
 {
  memset(g_modules, 0, sizeof(g_modules));
  g_module_count = 0;
- g_rr_index = 0;
 }
 
 static int8_t mx_add_module(uint8_t addr, uint8_t group)
@@ -647,9 +645,6 @@ static bool mx_set_config(uint8_t idx, float rated_current_a)
  }
  memset(&g_modules[g_module_count - 1], 0, sizeof(g_modules[0]));
  g_module_count--;
- if (g_rr_index >= g_module_count && g_module_count > 0) {
-     g_rr_index = g_module_count - 1;
- }
  BSP_ExitCritical();
 }
 
@@ -738,24 +733,28 @@ static void mx_emergency_stop(void)
 
 static void mx_process(uint32_t now)
 {
- if (g_module_count == 0) return;
- /* Round-robin: protect index and view access */
- BSP_EnterCritical();
- uint8_t idx = g_rr_index;
- BSP_ExitCritical();
- if (idx >= g_module_count) idx = 0;
- MXR_Internal_t *m = &g_modules[idx];
- /* Copy enabled flag atomically */
- bool enabled;
- BSP_EnterCritical();
- enabled = m->view.enabled;
- BSP_ExitCritical();
- if (enabled) {
- process_module(m, now);
+ /* BUGFIX B-10: used to service one module per CHG_LIB_Process() call via
+  * a round-robin index, stretching e.g. a 50ms retry cadence to 400ms
+  * with 8 modules. Now services every enabled module every call instead.
+  * Safe to do inside the single critical section CHG_LIB_Process() already
+  * holds around this whole call (see chg_lib_core.c) -- no driver call in
+  * process_module()'s tree blocks (no LOG() per B-19, CHG_LIB_CanBackend_
+  * Transmit() only enqueues to the FDCAN hardware TX FIFO), so N modules'
+  * worth of state-machine work is on the order of tens of microseconds
+  * even at the 8-module max, not milliseconds. The BSP_EnterCritical()/
+  * BSP_ExitCritical() calls this replaces were also a latent bug of their
+  * own: BSP_EnterCritical()/ExitCritical() is a plain __disable_irq()/
+  * __enable_irq() pair with no nesting/depth counter, so calling it again
+  * INSIDE the critical section CHG_LIB_Process() already holds would
+  * re-enable interrupts partway through -- silently undoing the B-13 fix
+  * that made CHG_LIB_Process() hold one critical section around the whole
+  * driver call in the first place. */
+ for (uint8_t idx = 0; idx < g_module_count; idx++) {
+     MXR_Internal_t *m = &g_modules[idx];
+     if (m->view.enabled) {
+         process_module(m, now);
+     }
  }
- BSP_EnterCritical();
- if (g_module_count > 0) g_rr_index = (g_rr_index + 1) % g_module_count;
- BSP_ExitCritical();
 }
 
 static void mx_feed_frame(uint32_t ext_id, const uint8_t *data, uint8_t dlc)

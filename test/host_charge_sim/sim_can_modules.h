@@ -68,13 +68,29 @@ typedef struct {
     float    last_set_curr_limit_ratio;
 } SimModuleState_t;
 
-/* The single module instance under test (host test is single-module by
- * design -- see plan's scenario list). Global so the C-linkage transmit
- * callbacks (which CHG_LIB_CanBackend_t requires as plain function
- * pointers, no closure) can reach it. */
-extern SimModuleState_t g_sim_module;
+/* Most scenarios only need one simulated module -- see plan's scenario
+ * list -- but the Maxwell backend also supports up to SIM_MAX_MODULES for
+ * the B-10 multi-module timing regression test (test_multi_module_
+ * timing_budget). Global array so the C-linkage transmit callbacks (which
+ * CHG_LIB_CanBackend_t requires as plain function pointers, no closure)
+ * can reach it. */
+#define SIM_MAX_MODULES 8
+extern SimModuleState_t g_sim_modules[SIM_MAX_MODULES];
+/* g_sim_module is the single-module scenarios' module -- always
+ * g_sim_modules[0]. */
+#define g_sim_module (g_sim_modules[0])
 
 void sim_module_reset(SimModuleState_t *m, uint8_t addr, uint8_t group);
+
+/* Configure `count` Maxwell modules at consecutive addresses
+ * base_addr..base_addr+count-1 (matches CHG_LIB_AddModule()'s
+ * (i+1, 0) addressing in charge_cycle_config.c). Only the Maxwell
+ * backend's transmit/tick look up by address across all of them; the
+ * Lianming/TonHe backends remain single-module (g_sim_module /
+ * g_sim_modules[0] only). Resets every slot up to `count`; slots beyond
+ * it are left as-is (harmless, since g_sim_module_count only iterates
+ * [0, count)). */
+void sim_module_reset_n(uint8_t count, uint8_t base_addr, uint8_t group);
 
 /* Install the given driver's simulated CAN backend (replaces the real BSP
  * one) -- call once per scenario, before ChargeCycleConfig_Set() selects

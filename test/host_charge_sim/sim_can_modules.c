@@ -15,7 +15,15 @@
 #include "priv/chg_lib_protocol.h"
 #include <string.h>
 
-SimModuleState_t g_sim_module;
+SimModuleState_t g_sim_modules[SIM_MAX_MODULES];
+
+/* How many of g_sim_modules[] are "installed" -- only the Maxwell
+ * transmit/tick functions iterate/match across this range; Lianming/TonHe
+ * remain hardcoded to g_sim_modules[0] (g_sim_module), matching the
+ * single-module scenarios they're used in. Defaults to 1 so every
+ * existing single-module scenario (sim_module_reset(&g_sim_module, ...))
+ * keeps working unchanged. */
+static uint8_t g_sim_module_count = 1;
 
 void sim_module_reset(SimModuleState_t *m, uint8_t addr, uint8_t group)
 {
@@ -24,6 +32,32 @@ void sim_module_reset(SimModuleState_t *m, uint8_t addr, uint8_t group)
     m->group = group;
     m->rated_current = 100.0f;
     m->rated_power = 30000.0f;
+    /* Every existing scenario calls this (not sim_module_reset_n()) to set
+     * up a single module -- reset the active count back to 1 so a prior
+     * scenario's sim_module_reset_n(N, ...) can't leak into this one. */
+    g_sim_module_count = 1;
+}
+
+void sim_module_reset_n(uint8_t count, uint8_t base_addr, uint8_t group)
+{
+    if (count > SIM_MAX_MODULES) count = SIM_MAX_MODULES;
+    if (count == 0) count = 1;
+    /* sim_module_reset() itself resets g_sim_module_count to 1 (so a
+     * single-module scenario can't inherit a stale count from an earlier
+     * multi-module one) -- set the real count only after every slot has
+     * been reset, not before. */
+    for (uint8_t i = 0; i < count; i++) {
+        sim_module_reset(&g_sim_modules[i], (uint8_t)(base_addr + i), group);
+    }
+    g_sim_module_count = count;
+}
+
+static SimModuleState_t *find_sim_module(uint8_t addr)
+{
+    for (uint8_t i = 0; i < g_sim_module_count; i++) {
+        if (g_sim_modules[i].addr == addr) return &g_sim_modules[i];
+    }
+    return NULL;
 }
 
 /* ============================================================= */
@@ -55,7 +89,8 @@ static bool sim_maxwell_transmit(uint32_t ext_id, const uint8_t *data, uint8_t d
 {
     if (dlc < 8) return false;
     uint8_t dst_addr = (uint8_t)((ext_id >> 11) & 0xFFU); /* module we're addressing */
-    if (dst_addr != g_sim_module.addr) return true; /* not for our simulated module */
+    SimModuleState_t *sm = find_sim_module(dst_addr);
+    if (sm == NULL) return true; /* not for any of our simulated modules */
 
     uint8_t func = data[0];
     uint16_t reg = ((uint16_t)data[2] << 8) | data[3];
@@ -67,16 +102,16 @@ static bool sim_maxwell_transmit(uint32_t ext_id, const uint8_t *data, uint8_t d
         if (reg == CHG_LIB_REG_SET_VOLTAGE) {
             /* Apply immediately -- a real module regulates fast enough that
              * the next poll already sees the new setpoint. */
-            g_sim_module.voltage = f;
+            sm->voltage = f;
         } else if (reg == CHG_LIB_REG_SET_CURR_LIMIT) {
-            g_sim_module.last_set_curr_limit_ratio = f;
+            sm->last_set_curr_limit_ratio = f;
         } else if (reg == CHG_LIB_REG_ON_OFF) {
-            g_sim_module.actually_on = (u != MXR_CMD_STOP_U32);
-            if (!g_sim_module.actually_on) {
-                g_sim_module.voltage = 0.0f;
-                g_sim_module.current = 0.0f;
-            } else if (g_sim_module.voltage <= 0.0f) {
-                g_sim_module.voltage = 1.0f; /* module reporting non-zero output */
+            sm->actually_on = (u != MXR_CMD_STOP_U32);
+            if (!sm->actually_on) {
+                sm->voltage = 0.0f;
+                sm->current = 0.0f;
+            } else if (sm->voltage <= 0.0f) {
+                sm->voltage = 1.0f; /* module reporting non-zero output */
             }
             /* No synthetic confirmation frame needed: chg_lib_maxwell.c's
              * STARTING confirm loop now polls VOLTAGE (not just
@@ -86,34 +121,33 @@ static bool sim_maxwell_transmit(uint32_t ext_id, const uint8_t *data, uint8_t d
         }
     }
 
-    g_sim_module.pending = true;
-    g_sim_module.pending_func = func;
-    g_sim_module.pending_reg = reg;
+    sm->pending = true;
+    sm->pending_func = func;
+    sm->pending_reg = reg;
     return true;
 }
 
-static void sim_maxwell_tick(uint32_t now_tick)
+static void sim_maxwell_tick_one(SimModuleState_t *sm)
 {
-    (void)now_tick;
-    if (!g_sim_module.pending) return;
-    g_sim_module.pending = false;
+    if (!sm->pending) return;
+    sm->pending = false;
 
     uint8_t resp[8];
     resp[0] = MXR_RESP_FLOAT;
     resp[1] = MXR_RESP_OK;
-    resp[2] = (uint8_t)(g_sim_module.pending_reg >> 8);
-    resp[3] = (uint8_t)(g_sim_module.pending_reg & 0xFF);
+    resp[2] = (uint8_t)(sm->pending_reg >> 8);
+    resp[3] = (uint8_t)(sm->pending_reg & 0xFF);
 
-    if (g_sim_module.actually_on) {
-        g_sim_module.current = g_sim_module.rated_current * 0.5f;
+    if (sm->actually_on) {
+        sm->current = sm->rated_current * 0.5f;
     }
 
-    switch (g_sim_module.pending_reg) {
+    switch (sm->pending_reg) {
         case CHG_LIB_REG_VOLTAGE:
-            CHG_LIB_ProtocolFloatToBE(g_sim_module.voltage, &resp[4]);
+            CHG_LIB_ProtocolFloatToBE(sm->voltage, &resp[4]);
             break;
         case CHG_LIB_REG_CURRENT:
-            CHG_LIB_ProtocolFloatToBE(g_sim_module.current, &resp[4]);
+            CHG_LIB_ProtocolFloatToBE(sm->current, &resp[4]);
             break;
         case CHG_LIB_REG_CURR_LIMIT:
             CHG_LIB_ProtocolFloatToBE(1.0f, &resp[4]); /* ratio: full limit */
@@ -134,10 +168,10 @@ static void sim_maxwell_tick(uint32_t now_tick)
             CHG_LIB_ProtocolFloatToBE(-400.0f, &resp[4]);
             break;
         case CHG_LIB_REG_RATED_POWER:
-            CHG_LIB_ProtocolFloatToBE(g_sim_module.rated_power, &resp[4]);
+            CHG_LIB_ProtocolFloatToBE(sm->rated_power, &resp[4]);
             break;
         case CHG_LIB_REG_RATED_CURRENT:
-            CHG_LIB_ProtocolFloatToBE(g_sim_module.rated_current, &resp[4]);
+            CHG_LIB_ProtocolFloatToBE(sm->rated_current, &resp[4]);
             break;
         case CHG_LIB_REG_AC_PHASE_A:
         case CHG_LIB_REG_AC_PHASE_B:
@@ -146,11 +180,11 @@ static void sim_maxwell_tick(uint32_t now_tick)
             break;
         case CHG_LIB_REG_ALARM_STATUS:
             resp[0] = MXR_RESP_INT;
-            CHG_LIB_ProtocolU32ToBE(g_sim_module.maxwell_alarm_raw, &resp[4]);
+            CHG_LIB_ProtocolU32ToBE(sm->maxwell_alarm_raw, &resp[4]);
             break;
         case CHG_LIB_REG_INPUT_POWER:
             resp[0] = MXR_RESP_INT;
-            CHG_LIB_ProtocolU32ToBE((uint32_t)(g_sim_module.voltage * g_sim_module.current), &resp[4]);
+            CHG_LIB_ProtocolU32ToBE((uint32_t)(sm->voltage * sm->current), &resp[4]);
             break;
         case CHG_LIB_REG_SET_VOLTAGE:
         case CHG_LIB_REG_SET_CURR_LIMIT:
@@ -164,8 +198,16 @@ static void sim_maxwell_tick(uint32_t now_tick)
             return; /* unknown register: no reply (matches a real module ignoring it) */
     }
 
-    uint32_t resp_id = mxr_id(MXR_ADDR_CONTROLLER, g_sim_module.addr, g_sim_module.group);
+    uint32_t resp_id = mxr_id(MXR_ADDR_CONTROLLER, sm->addr, sm->group);
     CHG_LIB_FeedCanFrame(resp_id, resp, 8);
+}
+
+static void sim_maxwell_tick(uint32_t now_tick)
+{
+    (void)now_tick;
+    for (uint8_t i = 0; i < g_sim_module_count; i++) {
+        sim_maxwell_tick_one(&g_sim_modules[i]);
+    }
 }
 
 /* ============================================================= */

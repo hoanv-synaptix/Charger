@@ -454,6 +454,84 @@ static bool test_relay_standalone_mode(void)
     return true;
 }
 
+/* Regression test for B-10: CHG_LIB_Process() used to service one module
+ * per call via a round-robin index, so N modules took roughly N times as
+ * long to reach RUNNING as a single module would (e.g. a 50ms retry
+ * cadence stretched to 400ms with 8 modules). Confirms all N modules
+ * reach RUNNING within the SAME timing budget a single module needs
+ * (warmup_and_start() elsewhere in this file uses a 4000ms start
+ * timeout for exactly one module). */
+static bool test_multi_module_timing_budget(void)
+{
+    printf("Running test_multi_module_timing_budget...\n");
+    /* 8 = MXR_MAX_MODULES / ChargeCycleConfig's max source_module_count --
+     * the worst case the old round-robin (1 module serviced per
+     * CHG_LIB_Process() call) had to handle.
+     *
+     * A flat "all N modules RUNNING within X ms" deadline turned out not
+     * to discriminate reliably in this sim: Maxwell's own confirm-read
+     * cadence (MXR_START_CONFIRM_WAIT_MS=100ms) is coarser than this
+     * harness's 20ms drive step, so round-robin servicing one module
+     * every 8*20ms=160ms still clears each individual wait-threshold check
+     * on its first visit and the *total* time to all-RUNNING barely moves.
+     * What round-robin actually does is STAGGER completion across modules
+     * by one drive-step per round-robin slot (confirmed by temporarily
+     * reverting to round-robin: modules finished 20ms apart each, in
+     * round-robin order, for a 140ms = (8-1)*20ms spread start-to-finish)
+     * -- so assert the real invariant instead: every module is serviced
+     * every call, so they must all reach RUNNING within the same drive
+     * step (or the next one, for scheduling/rounding slack), not spread
+     * out over multiple round-robin cycles. */
+    const uint8_t module_count = 8;
+    const uint32_t max_completion_spread_ms = 40U; /* 2 drive steps */
+    const uint32_t overall_timeout_ms = 2000U;
+
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_MAXWELL, NULL), "setup failed");
+    ChargeCycleConfig_t cfg;
+    build_default_cfg(&cfg, CHARGE_MODULE_TYPE_MAXWELL);
+    cfg.source_module_count = module_count;
+    ASSERT(ChargeCycleConfig_Set(&cfg), "config rejected for multi-module setup");
+    /* setup_scenario()'s sim_module_reset(&g_sim_module, ...) already ran
+     * (as part of the driver-agnostic single-module reset) -- now arm the
+     * remaining addr 2..module_count slots the ChargeCycleConfig_Set()
+     * call above just registered (addr = i+1, group 0, per
+     * charge_cycle_config.c's registration loop). */
+    sim_module_reset_n(module_count, 1, 0);
+    set_healthy_bms(400.0f, 50);
+
+    drive_ms(1500U);
+    ASSERT(ChargeController_Start(CHARGE_CTRL_OWNER_PC, false, mock_tick), "start refused");
+
+    uint32_t reached_at_ms[8];
+    bool seen[8] = {0};
+    uint8_t seen_count = 0;
+
+    for (uint32_t elapsed = 0; elapsed < overall_timeout_ms && seen_count < module_count; elapsed += 20U) {
+        drive_step(20U);
+        for (uint8_t i = 0; i < module_count; i++) {
+            if (seen[i]) continue;
+            CHG_LIB_ModuleView_t mv;
+            if (CHG_LIB_GetModuleView(i, &mv) && mv.state == CHG_LIB_STATE_RUNNING) {
+                seen[i] = true;
+                reached_at_ms[i] = elapsed;
+                seen_count++;
+            }
+        }
+    }
+    ASSERT(seen_count == module_count, "not all modules reached RUNNING within the overall timeout");
+
+    uint32_t min_ms = reached_at_ms[0], max_ms = reached_at_ms[0];
+    for (uint8_t i = 1; i < module_count; i++) {
+        if (reached_at_ms[i] < min_ms) min_ms = reached_at_ms[i];
+        if (reached_at_ms[i] > max_ms) max_ms = reached_at_ms[i];
+    }
+    ASSERT((max_ms - min_ms) <= max_completion_spread_ms,
+           "modules finished RUNNING spread too far apart -- looks like round-robin starvation, not all-modules-per-call");
+
+    printf("[PASS] test_multi_module_timing_budget\n");
+    return true;
+}
+
 /* ================================================================== */
 /* TonHe fault matrix (priority driver -- richest fault surface)       */
 /* ================================================================== */
@@ -652,6 +730,8 @@ int main(void)
 
     pass &= test_relay_bms_mode();
     pass &= test_relay_standalone_mode();
+
+    pass &= test_multi_module_timing_budget();
 
     if (pass) {
         printf("ALL TESTS PASSED.\n");

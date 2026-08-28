@@ -150,7 +150,6 @@ typedef struct {
 
 static LM_Module_t g_modules[LM_MAX_MODULES];
 static volatile uint8_t g_module_count = 0;
-static volatile uint8_t g_rr_index = 0;
 
 /* ============== Helper Functions ============== */
 
@@ -615,7 +614,6 @@ void CHG_Lianming_Init(void)
 {
     memset(g_modules, 0, sizeof(g_modules));
     g_module_count = 0;
-    g_rr_index = 0;
 }
 
 static void lm_init(void)
@@ -672,9 +670,6 @@ static void lm_remove_module(uint8_t idx)
     }
     memset(&g_modules[g_module_count - 1], 0, sizeof(g_modules[0]));
     g_module_count--;
-    if (g_rr_index >= g_module_count && g_module_count > 0) {
-        g_rr_index = g_module_count - 1;
-    }
     BSP_ExitCritical();
 }
 
@@ -769,15 +764,18 @@ static void lm_emergency_stop(void)
 
 static void lm_process(uint32_t now)
 {
-    if (g_module_count == 0U) return;
-    BSP_EnterCritical();
-    uint8_t idx = g_rr_index;
-    BSP_ExitCritical();
-    if (idx >= g_module_count) idx = 0;
-    process_module(idx, now);
-    BSP_EnterCritical();
-    if (g_module_count > 0) g_rr_index = (uint8_t)((g_rr_index + 1U) % g_module_count);
-    BSP_ExitCritical();
+    /* BUGFIX B-10: service every enabled module every call instead of one
+     * per round-robin index -- see the matching comment in
+     * chg_lib_maxwell.c's mx_process() for the full rationale, including
+     * why the nested BSP_EnterCritical()/ExitCritical() calls this
+     * replaces were also a latent bug (BSP_EnterCritical()/ExitCritical()
+     * doesn't nest, so calling it inside CHG_LIB_Process()'s already-held
+     * critical section re-enabled interrupts partway through). */
+    for (uint8_t idx = 0; idx < g_module_count; idx++) {
+        if (g_modules[idx].view.enabled) {
+            process_module(idx, now);
+        }
+    }
 }
 
 static void lm_process_rx(uint32_t ext_id, const uint8_t *data, uint8_t dlc, uint32_t now)
