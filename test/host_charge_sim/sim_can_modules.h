@@ -66,6 +66,17 @@ typedef struct {
      * written" apart from "written as exactly 0" should check `pending`
      * transitions instead; no scenario here needs that distinction. */
     float    last_set_curr_limit_ratio;
+
+    /* Set true to simulate the module going permanently silent (comms
+     * lost -- e.g. cable disconnected) without touching anything else in
+     * this struct: sim_module_tick() returns immediately for
+     * g_sim_modules[0] (the single-module scenarios' module) when this is
+     * set, sending no response and processing no pending request, so the
+     * firmware's own offline/WARNING/OFFLINE/RECOVERING timeout logic
+     * drives purely off elapsed time with zero help from the simulator.
+     * Mirrors sim_bms.h/.c's `transmitting` flag. Defaults false (memset
+     * via sim_module_reset()). */
+    bool     silent;
 } SimModuleState_t;
 
 /* Most scenarios only need one simulated module -- see plan's scenario

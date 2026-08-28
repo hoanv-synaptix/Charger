@@ -319,6 +319,13 @@ static void set_state(MXR_Internal_t *m, CHG_LIB_State_t new_state, uint32_t now
  * @note Called FIRST in process_module() for all states except OFFLINE/RECOVERING
  */
 static void check_offline_timeout(MXR_Internal_t *mod, uint32_t now) {
+    /* See the matching comment in chg_lib_tonhe.c's check_offline_timeout()
+     * -- keep `online` a plain, always-fresh function of last_rx_tick even
+     * while should_run is false and the state-machine watchdog below is
+     * gated off. */
+    mod->view.online = (mod->view.last_rx_tick != 0 &&
+                        (now - mod->view.last_rx_tick) <= MXR_OFFLINE_TIMEOUT_MS);
+
     CHG_LIB_State_t new_state;
     bool timeout_flag;
     CHG_LIB_FSM_CheckOfflineTimeout(
@@ -711,6 +718,16 @@ static bool mx_stop(uint8_t idx)
     if (m->view.state == CHG_LIB_STATE_RUNNING || m->view.state == CHG_LIB_STATE_STARTING) {
         send_set_u32(m, CHG_LIB_REG_ON_OFF, MXR_CMD_STOP);
         set_state(m, CHG_LIB_STATE_STOPPING, now);
+    } else if (m->view.state == CHG_LIB_STATE_WARNING || m->view.state == CHG_LIB_STATE_OFFLINE ||
+               m->view.state == CHG_LIB_STATE_RECOVERING) {
+        /* BUGFIX 2026-08-29 -- see the matching comment in
+         * chg_lib_tonhe.c's tonhe_stop() for the full rationale: an
+         * operator-issued STOP should read as IDLE immediately, not leave
+         * the module parked in a comms-health state that the now
+         * should_run-gated watchdog (chg_lib_fsm.c) will no longer touch
+         * on its own. FAULT intentionally excluded -- keeps its own
+         * 5-clean-read debounce (B-08). */
+        set_state(m, CHG_LIB_STATE_IDLE, now);
     }
     return true;
 }

@@ -763,6 +763,57 @@ static bool test_maxwell_input_diagnostics_polled(void)
     return true;
 }
 
+/* Regression test: a module the operator has explicitly told to stop used
+ * to just sit forever in whatever comms-health state (WARNING/OFFLINE/
+ * RECOVERING) it happened to be in at the moment of STOP, if the module
+ * never sent another frame -- xxx_stop() only handled RUNNING/STARTING,
+ * and CHG_LIB_FSM_CheckOfflineTimeout()'s own early-return for OFFLINE/
+ * RECOVERING meant nothing else would ever move it out of there either.
+ * Confirmed via real HIL testing 2026-08-29 with the module simulator
+ * fully silenced: State stayed RECOVERING indefinitely after both STOP and
+ * EMERGENCY_STOP, even though the operator's intent was unambiguous.
+ * Fixed by (a) gating the offline-timeout watchdog on should_run (a
+ * stopped module shouldn't be graded on comms health it's not being asked
+ * to have), and (b) xxx_stop() force-transitioning WARNING/OFFLINE/
+ * RECOVERING straight to IDLE. FAULT is deliberately untouched by either
+ * change -- still gated by its own 5-clean-read debounce (B-08); this
+ * fix is scoped to comms-health states, not real hardware faults. */
+static bool test_stop_forces_idle_from_recovering(void)
+{
+    printf("Running test_stop_forces_idle_from_recovering...\n");
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_TONHE, NULL), "setup failed");
+    set_healthy_bms(400.0f, 50);
+    ASSERT(warmup_and_start(1500U, 4000U), "module never reached RUNNING");
+
+    /* Module goes permanently silent (comms lost) -- WARNING(2s) ->
+     * OFFLINE(10s) -> RECOVERING(+3s more) per the TonHe driver's own
+     * timeouts, and stays there since it never sends another frame. */
+    g_sim_module.silent = true;
+    drive_ms(16000U);
+
+    CHG_LIB_ModuleView_t mv;
+    ASSERT(CHG_LIB_GetModuleView(0, &mv), "module view unavailable");
+    ASSERT(mv.state == CHG_LIB_STATE_RECOVERING, "module should be RECOVERING (still silent, mid-session)");
+
+    /* Operator presses STOP. */
+    ASSERT(CHG_LIB_Stop(0), "CHG_LIB_Stop should succeed");
+    ASSERT(CHG_LIB_GetModuleView(0, &mv), "module view unavailable");
+    ASSERT(mv.state == CHG_LIB_STATE_IDLE,
+           "module must go straight to IDLE on STOP, not stay stuck in RECOVERING");
+    ASSERT(!mv.running, "module must not read as running after STOP");
+
+    /* Keep the module silent and keep driving -- the now should_run-gated
+     * watchdog must NOT drag it back into WARNING/OFFLINE/RECOVERING just
+     * because comms are still down; it's not wanted right now. */
+    drive_ms(16000U);
+    ASSERT(CHG_LIB_GetModuleView(0, &mv), "module view unavailable");
+    ASSERT(mv.state == CHG_LIB_STATE_IDLE, "module must stay IDLE while stopped, even with comms still down");
+    ASSERT(!mv.online, "online should honestly read false -- comms really are down, just not driving the state machine");
+
+    printf("[PASS] test_stop_forces_idle_from_recovering\n");
+    return true;
+}
+
 /* ================================================================== */
 
 int main(void)
@@ -786,6 +837,7 @@ int main(void)
     pass &= test_driver_fault_recovery_debounce(CHARGE_MODULE_TYPE_MAXWELL, "maxwell");
     pass &= test_rated_current_seeded_from_config();
     pass &= test_maxwell_input_diagnostics_polled();
+    pass &= test_stop_forces_idle_from_recovering();
 
     pass &= test_bms_offline();
     pass &= test_bms_offline_then_recovers();

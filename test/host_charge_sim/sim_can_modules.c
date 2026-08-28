@@ -406,6 +406,10 @@ void sim_install_backend(SimDriverKind_t kind)
 void sim_module_tick(SimDriverKind_t kind, uint32_t now_tick)
 {
     sim_now_tick_holder = now_tick;
+    /* See SimModuleState_t.silent's doc comment. Only gates the
+     * single-module scenarios' module (g_sim_modules[0]) -- the
+     * multi-module Maxwell scenario doesn't use this flag. */
+    if (g_sim_modules[0].silent) return;
     switch (kind) {
         case SIM_DRV_MAXWELL:  sim_maxwell_tick(now_tick);  break;
         case SIM_DRV_LIANMING: sim_lianming_tick(now_tick); break;

@@ -259,6 +259,13 @@ static void set_state(LM_Module_t *mod, CHG_LIB_State_t state, uint32_t now)
  * @note Called FIRST in process_module() for all States except OFFLINE/RECOVERING
  */
 static void check_offline_timeout(LM_Module_t *mod, uint32_t now) {
+    /* See the matching comment in chg_lib_tonhe.c's check_offline_timeout()
+     * -- keep `online` a plain, always-fresh function of last_rx_tick even
+     * while should_run is false and the state-machine watchdog below is
+     * gated off. */
+    mod->view.online = (mod->view.last_rx_tick != 0 &&
+                        (now - mod->view.last_rx_tick) <= LM_OFFLINE_TIMEOUT_MS);
+
     CHG_LIB_State_t new_state;
     bool timeout_flag;
     CHG_LIB_FSM_CheckOfflineTimeout(
@@ -718,8 +725,29 @@ static bool lm_stop(uint8_t idx)
     uint32_t now = CHG_LIB_NowTick();
     if (idx >= g_module_count || !g_modules[idx].view.enabled) return false;
     g_modules[idx].should_run = false;
-    lm_stop_module(idx);
-    set_state(&g_modules[idx], CHG_LIB_STATE_STOPPING, now);
+    LM_Module_t *mod = &g_modules[idx];
+    if (mod->view.state == CHG_LIB_STATE_WARNING || mod->view.state == CHG_LIB_STATE_OFFLINE ||
+        mod->view.state == CHG_LIB_STATE_RECOVERING) {
+        /* BUGFIX 2026-08-29 -- see the matching comment in
+         * chg_lib_tonhe.c's tonhe_stop(). These are comms-health states,
+         * not a real running session: sending a STOP CAN frame to a module
+         * already known to be comms-unreachable and waiting through
+         * STOPPING's retry-then-FAULT escalation (below) would just be a
+         * slower, worse way to end up somewhere that isn't IDLE either --
+         * an operator-issued STOP should read as IDLE right away. FAULT
+         * intentionally excluded -- keeps its own 5-clean-read debounce
+         * (B-08). */
+        set_state(mod, CHG_LIB_STATE_IDLE, now);
+    } else {
+        /* Previously unconditional (sent the STOP frame + went to STOPPING
+         * regardless of state) -- now scoped to the states that actually
+         * mean something is running to stop: RUNNING/STARTING, or already
+         * STOPPING/IDLE/FAULT (where sending it again, or leaving it
+         * alone, is harmless and matches the pre-existing behavior for
+         * those). */
+        lm_stop_module(idx);
+        set_state(mod, CHG_LIB_STATE_STOPPING, now);
+    }
     return true;
 }
 

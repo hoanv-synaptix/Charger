@@ -509,6 +509,17 @@ static void set_state(TONHE_Internal_t *mod, CHG_LIB_State_t st, uint32_t now)
 }
 
 static void check_offline_timeout(TONHE_Internal_t *mod, uint32_t now) {
+    /* Keep `online` a plain, always-fresh function of last_rx_tick,
+     * independent of whether the state machine below is even running
+     * right now (CHG_LIB_FSM_CheckOfflineTimeout() now skips its own work
+     * entirely when should_run is false -- see that function's doc
+     * comment). A stopped module (should_run=false, parked at IDLE) still
+     * deserves an honest online/offline reading for the Monitor UI; it
+     * just shouldn't be dragged through WARNING/OFFLINE/RECOVERING to get
+     * one. */
+    mod->view.online = (mod->view.last_rx_tick != 0 &&
+                        (now - mod->view.last_rx_tick) <= TONHE_OFFLINE_TIMEOUT_MS);
+
     CHG_LIB_State_t new_state;
     bool timeout_flag;
     CHG_LIB_FSM_CheckOfflineTimeout(
@@ -782,6 +793,23 @@ static bool tonhe_stop(uint8_t idx)
         g_modules[idx].stop_retry_count = 0;
         g_modules[idx].stop_tick = CHG_LIB_NowTick();
         set_state(&g_modules[idx], CHG_LIB_STATE_STOPPING, CHG_LIB_NowTick());
+    } else if (g_modules[idx].view.state == CHG_LIB_STATE_WARNING ||
+               g_modules[idx].view.state == CHG_LIB_STATE_OFFLINE ||
+               g_modules[idx].view.state == CHG_LIB_STATE_RECOVERING) {
+        /* BUGFIX 2026-08-29: these are comms-health states, not a running
+         * session -- with should_run now cleared above, and
+         * check_offline_timeout()'s watchdog gated to should_run (see
+         * chg_lib_fsm.c's CHG_LIB_FSM_CheckOfflineTimeout()), nothing else
+         * would ever move this module out of here again on its own if
+         * comms stay down (the watchdog no longer touches it, and
+         * OFFLINE/RECOVERING's own early-return in that same function
+         * means it wouldn't have anyway). An operator-issued STOP is a
+         * deliberate action; its result should read as IDLE immediately,
+         * not a leftover comms-health state waiting on a reconnect that
+         * may never come. FAULT is deliberately NOT included here -- that
+         * still goes through its own 5-clean-read debounce (B-08), a real
+         * hardware fault shouldn't be waved away by STOP alone. */
+        set_state(&g_modules[idx], CHG_LIB_STATE_IDLE, CHG_LIB_NowTick());
     }
     return true;
 }

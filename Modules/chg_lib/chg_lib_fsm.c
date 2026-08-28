@@ -78,9 +78,31 @@ void CHG_LIB_FSM_CheckOfflineTimeout(
     if (*p_state == CHG_LIB_STATE_OFFLINE || *p_state == CHG_LIB_STATE_RECOVERING) {
         return;
     }
-    
+
+    /* BUGFIX 2026-08-29: this watchdog used to run unconditionally, so a
+     * module the operator had already told to stop (should_run cleared by
+     * xxx_stop()) could still get dragged from IDLE into
+     * WARNING/OFFLINE/RECOVERING purely because nothing had polled it
+     * recently -- a comms-health concept that only makes sense while the
+     * charger actually needs this module (mid-cycle, or trying to start
+     * one). Confirmed with the user: OFFLINE/RECOVERING should represent
+     * an unplanned comms loss *during* an active session, not "we haven't
+     * bothered listening to it since STOP" -- an operator-issued
+     * STOP/EMERGENCY_STOP is a deliberate action, its result should read
+     * as IDLE, not a comms-health state that only a future reconnect can
+     * clear. Only run the timeout-driven OFFLINE demotion while the
+     * module is actually wanted (should_run) -- xxx_stop() (in each
+     * driver) is the counterpart fix: it now force-transitions a stopped
+     * module straight to IDLE from WARNING/OFFLINE/RECOVERING instead of
+     * only handling RUNNING/STARTING, so a module already parked in one of
+     * those comms-health states when STOP is pressed doesn't just sit
+     * there un-reachable by this now-gated watchdog. */
+    if (!should_run) {
+        return;
+    }
+
     uint32_t since_rx = now - last_rx_tick;
-    
+
     if (since_rx > offline_timeout_ms) {
         *p_timeout_flag = true;
         *p_new_state = CHG_LIB_STATE_OFFLINE;

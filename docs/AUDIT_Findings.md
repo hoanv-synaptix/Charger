@@ -355,6 +355,25 @@ Theo yêu cầu người dùng: test toàn bộ chu trình thật — PC app (`d
 
 **Xác nhận nghiệp vụ khác trong lúc review** (không phải bug, ghi lại để tránh audit sau nhầm lẫn): cắt sạc khi **1 cell bất kỳ** (không phải trung bình) chạm trần điện áp là đúng chuẩn an toàn pin Lithium (tránh over-voltage cell lệch cân bằng) — `eval_cell_stage()` dùng `bms->max_cell_volt` đúng thiết kế, không cần sửa.
 
+## 8c. Bug thật từ HIL: module mắc kẹt RECOVERING vĩnh viễn sau STOP/EMERGENCY_STOP (2026-08-29)
+
+**Phát hiện**: Sau bài test §8b, người dùng tắt toàn bộ simulator để kiểm tra hành vi khi mất kết nối module thật ("hãy tắt toàn bộ simu đi nhé"). Với module đang ở RECOVERING (do simulator ngừng phát), người dùng bấm STOP rồi EMERGENCY_STOP — module vẫn đứng nguyên ở RECOVERING mãi mãi, không bao giờ về IDLE hay OFFLINE.
+
+**Root cause**: hai lỗ hổng cộng hưởng trong `Modules/chg_lib/`:
+1. `CHG_LIB_FSM_CheckOfflineTimeout()` (`chg_lib_fsm.c`) — watchdog đẩy module RUNNING/STARTING/WARNING → OFFLINE khi mất tin — chạy **vô điều kiện**, không quan tâm `should_run`. Một module người vận hành đã chủ động STOP (nên `should_run=false`) vẫn tiếp tục bị watchdog này "chấm điểm" theo tình trạng comms mà nó không còn được yêu cầu phải có.
+2. `xxx_stop()` của cả 3 driver (Maxwell/Lianming/TonHe) chỉ xử lý state RUNNING/STARTING (gửi frame STOP thật + chuyển STOPPING) — state WARNING/OFFLINE/RECOVERING bị bỏ qua hoàn toàn. Kết hợp với early-return sẵn có của watchdog cho chính OFFLINE/RECOVERING (dòng 78-80 `chg_lib_fsm.c`), một khi module đã rơi vào 1 trong 3 state đó, **không có đường nào đưa nó ra** nữa nếu comms không tự phục hồi.
+
+**Xác nhận nghiệp vụ với người dùng** (quyết định thiết kế, không phải suy đoán): "chúng ta sẽ chỉ connect với module sạc khi trong chu kì sạc... ấn stop thì đâu cần liên tục hỏi nó hay recovering đâu, khác trường hợp mất kết nối module thì mới recovering, còn đây là người dùng chủ động mà, vậy có nghĩa là ấn stop hay emergency phải quay về idle mới hợp logic." → RECOVERING/OFFLINE/WARNING chỉ nên đại diện cho mất-comms **ngoài ý muốn giữa chu kỳ sạc**, không phải "chưa ai hỏi thăm nó kể từ khi STOP". STOP/EMERGENCY_STOP là hành động chủ động, kết quả phải đọc ra IDLE ngay, không phải một comms-health state chờ reconnect (có thể không bao giờ xảy ra).
+
+**Fix** (`Modules/chg_lib/chg_lib_fsm.c`, `chg_lib_tonhe.c`, `chg_lib_maxwell.c`, `chg_lib_lianming.c`):
+- `CHG_LIB_FSM_CheckOfflineTimeout()`: thêm gate `if (!should_run) return;` — watchdog chỉ chạy khi module thực sự đang được yêu cầu hoạt động.
+- `xxx_stop()` mỗi driver: thêm nhánh `else if (state == WARNING||OFFLINE||RECOVERING) set_state(IDLE)` — STOP ép các state comms-health này về IDLE ngay lập tức. **FAULT cố ý không nằm trong nhánh này** — vẫn giữ debounce 5-lần-đọc-sạch hiện có (B-08); một FAULT phần cứng thật không nên bị STOP xoá đi dễ dàng.
+- `check_offline_timeout()` mỗi driver: thêm dòng refresh `view.online` vô điều kiện (độc lập với gate `should_run` ở trên) — module đã dừng vẫn phải đọc `online` trung thực theo `last_rx_tick` cho Monitor UI, chỉ là không bị watchdog kéo qua WARNING/OFFLINE/RECOVERING để có được giá trị đó.
+
+**Test**: `test/host_charge_sim/test_charge_e2e.c::test_stop_forces_idle_from_recovering` — mô phỏng module RUNNING → im lặng 16s → xác nhận RECOVERING → gọi `CHG_LIB_Stop()` → xác nhận IDLE ngay, `running=false` → im lặng tiếp 16s nữa → xác nhận **vẫn** IDLE (không bị kéo lại OFFLINE) và `online=false` (đọc trung thực). Xác nhận bracket rõ ràng: build lại với `chg_lib_fsm.c`/`chg_lib_tonhe.c`/`chg_lib_maxwell.c`/`chg_lib_lianming.c` ở trạng thái HEAD (trước fix) → test FAIL đúng dòng assert "module must go straight to IDLE on STOP, not stay stuck in RECOVERING"; build lại với fix → PASS toàn bộ suite. Verification loop đầy đủ (per-file `-fsyntax-only`, `check_architecture.py`, `check_ioc.py`, `test_logic.c`, Release build) đều sạch.
+
+**Lưu ý HIL riêng biệt** (không phải firmware bug, chỉ ghi lại tránh nhầm lẫn khi debug sau này): trong lúc tái hiện bug này, có một lần tưởng module vẫn RECOVERING dù simulator "đang chạy" — hoá ra là do ZLG USBCAN adapter's `VCI_Transmit()` âm thầm fail sau ~20-30 phút chạy liên tục (không throw exception, chỉ counter `uplink_tx_ok` đứng yên trong khi `uplink_tx_attempts` vẫn tăng) — restart lại process simulator là đủ, không phải lỗi code.
+
 ## 9. Phụ lục — File tham chiếu & Guard Checklist
 
 ### 9.1 File cần sửa theo Sprint
