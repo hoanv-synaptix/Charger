@@ -9,6 +9,7 @@
 /* USER CODE END Header */
 #include "iwdg.h"
 #include "main.h"
+#include "debug_log.h"
 
 /**
   * @brief IWDG Initialization Function
@@ -25,6 +26,7 @@ void MX_IWDG_Init(void)
   while ((RCC->CSR & RCC_CSR_LSIRDY) == 0U) {
       if ((HAL_GetTick() - start) > 100) {
           /* Timeout! Bỏ qua khởi tạo IWDG */
+          LOG("MX_IWDG_Init: LSI not ready after 100ms, IWDG disabled\r\n");
           return;
       }
   }
@@ -43,12 +45,23 @@ void MX_IWDG_Init(void)
   IWDG->RLR = 1000U;
   /* Window disabled (allow refresh anytime) */
   IWDG->WINR = 4095U;
-  /* Wait for registers to update */
-  while (IWDG->SR != 0U) { }
+  /* Wait for registers to update, bounded: if LSI is unstable the PVU/RVU/WVU
+   * busy bits in IWDG->SR can fail to clear and this would otherwise spin
+   * forever, before the main loop (and USB TX) ever starts running. */
+  start = HAL_GetTick();
+  while (IWDG->SR != 0U) {
+      if ((HAL_GetTick() - start) > 100) {
+          /* Timeout! Registers may be partially applied; do not arm the
+           * watchdog with an unconfirmed config. */
+          LOG("MX_IWDG_Init: SR busy after 100ms, IWDG disabled\r\n");
+          return;
+      }
+  }
   /* Reload */
   IWDG->KR = 0xAAAAU;
   /* Start watchdog */
   IWDG->KR = 0xCCCCU;
+  LOG("MX_IWDG_Init: IWDG armed (1s timeout)\r\n");
 
   /* Freeze IWDG when core halted in debug — G0: DBGMCU APB1FZR1 */
 #ifdef DBGMCU_APB1FZR1_DBG_IWDG_STOP
