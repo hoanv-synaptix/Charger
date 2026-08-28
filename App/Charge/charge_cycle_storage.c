@@ -98,6 +98,22 @@ void ChargeCycleStorage_Init(void) {
         ChargeCycleConfig_Set(&config);
     } else {
         LOG("ChargeCycleStorage: Using default config\r\n");
+        /* BUGFIX: still run the RAM defaults through ChargeCycleConfig_Set()
+         * so its module_type -> driver_id mapping and module
+         * auto-registration side effects apply on a genuinely blank-flash
+         * first boot too, not just the "loaded a real record" path above.
+         * Previously this branch left the driver unselected
+         * (CHG_LIB_GetActiveDriverId() == CHG_LIB_DRV_NONE) and zero
+         * modules registered: ChargeCycleConfig_GetDefaults() sets
+         * module_type = CHARGE_MODULE_TYPE_EVR_10KW_100A_100V, and only
+         * ChargeCycleConfig_Set()'s own switch statement knows that maps
+         * to CHG_LIB_DRV_TONHE -- App_Init() (app_main.c) used to
+         * re-implement a narrower module_type range check that silently
+         * excluded exactly that value, so it never ran. Calling Set() here
+         * makes this the single source of truth for that mapping; the
+         * app_main.c workaround has been removed. */
+        ChargeCycleConfig_Get(&config);
+        ChargeCycleConfig_Set(&config);
     }
 }
 

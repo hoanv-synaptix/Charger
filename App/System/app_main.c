@@ -44,6 +44,8 @@
 
 static uint32_t last_process_tick = 0;
 static uint32_t last_led_tick     = 0;
+static uint32_t last_dwin_tick    = 0;
+static uint32_t last_main_log     = 0;
 /* Button debounce */
 static uint32_t btn_start_last    = 0;
 static uint32_t btn_stop_last     = 0;
@@ -63,6 +65,53 @@ static void led_fault_off(void){ BSP_LED_Off(BSP_LED_FAULT); }
 
 static uint8_t read_btn_start(void) { return BSP_BTN_IsPressed(BSP_BTN_START) ? 1 : 0; }
 static uint8_t read_btn_stop(void)  { return BSP_BTN_IsPressed(BSP_BTN_STOP) ? 1 : 0; }
+
+/* ============== DWIN fault code translation ============== */
+
+/**
+ * @brief Translate the internal fault_flags bitmask into DWIN_FaultCode_e
+ * @note  BUGFIX: this used to be `dwin_data.fault_code = cc_view.fault_flags`
+ *        directly -- but fault_flags (charge_controller.h) is a uint32_t
+ *        bitmask that can OR multiple CHARGE_CTRL_FAULT_* bits together
+ *        (e.g. BMS_OFFLINE=(1<<3)=8, EMERGENCY_STOP=(1<<11)=2048), while
+ *        DWIN_FaultCode_e (dwin_protocol.h) is a small sequential code
+ *        0-7 matching one icon slot on the touchscreen ("Tương ứng với Bit
+ *        Variable Icon ID trên DWIN 0.ICO"). Sending the raw bitmask meant
+ *        the operator's fault icon showed a meaningless/wrong value during
+ *        an actual fault.
+ *        This mapping is a best-effort UX priority order (most
+ *        safety-critical first), not a safety interlock itself -- the
+ *        relay/charge-control logic reads fault_flags directly and is
+ *        unaffected by this table. Revisit the exact bit->code grouping
+ *        with whoever owns the DWIN icon set (ui/DWIN_SET/) if it doesn't
+ *        match the intended on-screen meaning. */
+static uint16_t dwin_fault_code_from_flags(uint32_t flags)
+{
+    if (flags == 0U) {
+        return FAULT_NONE;
+    }
+    if (flags & CHARGE_CTRL_FAULT_EMERGENCY_STOP) {
+        return FAULT_HARDWARE;
+    }
+    if (flags & CHARGE_CTRL_FAULT_BMS_OFFLINE) {
+        return FAULT_BMS_OFFLINE;
+    }
+    if (flags & (CHARGE_CTRL_FAULT_BMS_ALARM | CHARGE_CTRL_FAULT_PROTECT_JACK_V)) {
+        return FAULT_OVER_VOLT;
+    }
+    if (flags & CHARGE_CTRL_FAULT_PROTECT_JACK_TEMP) {
+        return FAULT_OVER_TEMP;
+    }
+    if (flags & (CHARGE_CTRL_FAULT_NO_MODULE | CHARGE_CTRL_FAULT_MODULE_COUNT_MISMATCH |
+                 CHARGE_CTRL_FAULT_NO_DRIVER)) {
+        return FAULT_CHARGER_OFFLINE;
+    }
+    /* Catch-all for anything without a dedicated DWIN code yet
+     * (INVALID_CONFIG, BMS_STALE, reserved bits, future fault types):
+     * still surface *something* is wrong rather than silently showing
+     * FAULT_NONE. */
+    return FAULT_HARDWARE;
+}
 
 /* ============== Init ============== */
 
@@ -115,20 +164,17 @@ void App_Init(void)
 
     ChargeCycleConfig_Init();
 
-    /* Load config from flash — this populates module_type */
+    /* Load config from flash — this populates module_type and, via
+     * ChargeCycleConfig_Set() (called internally either way, see
+     * charge_cycle_storage.c), selects the matching driver and
+     * auto-registers its modules. That's the single source of truth for
+     * module_type -> driver_id; no separate restoration step needed here
+     * (a narrower ad-hoc re-implementation of that mapping used to live in
+     * this function and silently missed the RAM-default module_type on a
+     * blank-flash first boot -- fixed at the source in
+     * ChargeCycleStorage_Init() instead of duplicating the mapping here). */
     ChargeCycleStorage_Init();
-
-    /* Select driver based on saved module_type from flash.
-     * module_type: 2=MAXWELL,3=LIANMING,4=TONHE → driver_id = module_type-1 */
-    {
-        ChargeCycleConfig_t cfg;
-        ChargeCycleConfig_Get(&cfg);
-        if (cfg.module_type >= CHARGE_MODULE_TYPE_MAXWELL &&
-            cfg.module_type <= CHARGE_MODULE_TYPE_TONHE) {
-            CHG_LIB_SelectDriver((CHG_LIB_DriverId_t)(cfg.module_type - 1U));
-            LOG("App_Init: Driver restored from flash: type=%u\r\n", (unsigned)cfg.module_type);
-        }
-    }
+    LOG("App_Init: Driver selected: id=%u\r\n", (unsigned)CHG_LIB_GetActiveDriverId());
 
     /* Initialize charge controller */
     ChargeController_Init();
@@ -147,7 +193,6 @@ void App_Loop(void)
 {
     uint32_t now = BSP_GetTick();
 
-    static uint32_t last_main_log = 0;
     if (now - last_main_log >= 2000) {
         last_main_log = now;
         LOG("[MAIN_LOOP] running tick=%lu\r\n", now);
@@ -271,7 +316,6 @@ void App_Loop(void)
     }
 
     /* (4) DWIN Update */
-    static uint32_t last_dwin_tick = 0;
     if ((now - last_dwin_tick) >= 50) { // Call every 50ms (so all 12 frames take 600ms)
         last_dwin_tick = now;
         DWIN_SystemData_t dwin_data = {0};
@@ -293,7 +337,7 @@ void App_Loop(void)
         }
         
         dwin_data.temp_charger = (int16_t)BSP_ADC_GetTempC(0);
-        dwin_data.fault_code = cc_view.fault_flags;
+        dwin_data.fault_code = dwin_fault_code_from_flags(cc_view.fault_flags);
         
         DWIN_UpdateData(&dwin_data);
     }
@@ -301,8 +345,6 @@ void App_Loop(void)
     /* (5) Refresh IWDG — main loop only, never in ISR (~1s timeout) */
     MX_IWDG_Refresh();
 }
-
-CHG_LIB_DriverId_t App_GetCurrentDriver(void) { return CHG_LIB_GetActiveDriverId(); }
 
 void DWIN_OnCommandReceived(uint16_t command) {
     if (command == 1) {
