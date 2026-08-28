@@ -20,14 +20,18 @@ copied to match. Drives the real firmware over its real USB debug protocol
 (App/Protocol/pc_debug_protocol.c) and asserts it reaches RUNNING, then
 returns it to a clean IDLE before exiting.
 
-Scope as of 2026-08-28: TonHe module simulation only, matching the
-currently-configured hardware driver (CHG_LIB_DRV_TONHE). Maxwell/Lianming
-HIL coverage is not built yet -- host_charge_sim covers all 3 drivers'
-protocol logic already; this file's job is specifically to prove the real
-MCU (real HAL/FDCAN/USB CDC, not a host mock) behaves the same way, which
-only needed proving once to validate the real-hardware path exists and
-works. Extend TonheModuleSim's sibling classes the same way if/when Maxwell
-or Lianming HIL coverage is needed.
+Covers all 3 drivers (Maxwell/Lianming/TonHe). Pass one or more driver names
+on the command line, or "all" to run all three back-to-back:
+    python test/integration_sync_test.py                  # tonhe (default)
+    python test/integration_sync_test.py maxwell
+    python test/integration_sync_test.py maxwell lianming
+    python test/integration_sync_test.py all
+
+Testing a driver other than the one currently configured on the unit sends
+a real PC_CMD_SET_DRIVER + PC_CMD_SET_MODULE_ADDR over the wire first --
+this PERSISTS to the unit's flash (see PC_CMD_SET_DRIVER's handler in
+pc_protocol.c), so this script always restores whatever driver/module addr
+it found configured at the start once done, best-effort.
 
 Driver requirement (Windows): the ZLG "USBCAN 2I"-class adapter needs its
 vendor driver installed (ZLG/Zhiyuan's classic ControlCAN USBCAN driver
@@ -36,9 +40,8 @@ ctypes (the pip `zlgcan` package needs a different, newer unified
 zlgcan.dll this project's hardware doesn't have installed). Set
 ZLG_USBCAN_DLL_PATH to override the default install path if yours differs.
 
-Usage:
+Setup:
     pip install pyserial
-    python test/integration_sync_test.py
 """
 import ctypes
 from ctypes import wintypes as W
@@ -181,6 +184,8 @@ DEBUG_CMD_GET_SYSTEM = 0x18
 DEBUG_RSP_SYSTEM_INFO = 0x94
 PC_CMD_START = 0x03
 PC_CMD_STOP = 0x04
+PC_CMD_SET_MODULE_ADDR = 0x05
+PC_CMD_SET_DRIVER = 0x09
 PC_RSP_ACK = 0x82
 PC_RSP_NACK = 0x83
 
@@ -240,6 +245,32 @@ def read_frame(ser: "serial.Serial", timeout_s: float = 2.0):
     return None, None
 
 
+# Once DEBUG_CMD_ENTER is sent, the firmware's DebugProtocol_SendStream()
+# starts pushing DEBUG_RSP_ALL_MODULES/SYSTEM_INFO/BMS_DATA unsolicited
+# every DEBUG_STREAM_INTERVAL_MS (1000ms) -- see App/Protocol/
+# pc_debug_protocol.c. A plain read_frame() after sending e.g. PC_CMD_START
+# can pick up one of THESE instead of the real ACK/NACK for the command
+# just sent, especially once a scenario has been running for a few
+# seconds. read_reply() skips exactly that class of frame and keeps
+# reading until it gets one of the caller's expected response codes (or
+# times out) -- required for every command/ACK exchange in this file,
+# not just GET_SYSTEM (which tolerates it because any SYSTEM_INFO frame,
+# streamed or requested, carries the same up-to-date fields).
+def read_reply(ser: "serial.Serial", expected_cmds, timeout_s: float = 2.0):
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        remaining = max(0.0, deadline - time.time())
+        cmd, payload = read_frame(ser, timeout_s=remaining)
+        if cmd is None:
+            return None, None
+        if cmd in expected_cmds:
+            return cmd, payload
+        # Not what we asked for -- most commonly an unsolicited debug
+        # stream frame, but keep waiting either way rather than returning
+        # a mismatched frame as if it were the reply.
+    return None, None
+
+
 def find_mcu_port():
     for p in serial.tools.list_ports.comports():
         if p.vid == 0x0483 and p.pid == 0x5740:
@@ -250,8 +281,8 @@ def find_mcu_port():
 def get_system_info(ser):
     ser.reset_input_buffer()
     ser.write(build_frame(DEBUG_CMD_GET_SYSTEM))
-    cmd, payload = read_frame(ser)
-    if cmd != DEBUG_RSP_SYSTEM_INFO or len(payload) != struct.calcsize(SYSTEM_INFO_FMT):
+    cmd, payload = read_reply(ser, {DEBUG_RSP_SYSTEM_INFO})
+    if cmd is None or len(payload) != struct.calcsize(SYSTEM_INFO_FMT):
         return None
     return dict(zip(SYSTEM_INFO_KEYS, struct.unpack(SYSTEM_INFO_FMT, payload)))
 
@@ -437,6 +468,252 @@ class TonheModuleSim(threading.Thread):
 
 
 # ============================================================= #
+# Maxwell module simulator (CAN1, real byte layouts -- copied from #
+# test/host_charge_sim/sim_can_modules.c, ground truth:            #
+# Modules/chg_lib/chg_lib_maxwell.c, register map in               #
+# Modules/chg_lib/priv/chg_lib_protocol.h)                         #
+# ============================================================= #
+
+class MaxwellModuleSim(threading.Thread):
+    CAN_CHANNEL = 0
+    CAN_BITRATE = 125000
+
+    PROTNO = 0x060
+    PTP_POINT = 1
+    ADDR_CONTROLLER = 0xF0
+    FUNC_SET = 0x03
+    FUNC_READ = 0x10
+    RESP_FLOAT = 0x41
+    RESP_INT = 0x42
+    RESP_OK = 0xF0
+    CMD_STOP_U32 = 0x00010000
+
+    REG_VOLTAGE = 0x0001
+    REG_CURRENT = 0x0002
+    REG_CURR_LIMIT = 0x0003
+    REG_TEMP_DCDC = 0x0004
+    REG_PFC0_VOLTAGE = 0x0008
+    REG_PFC1_VOLTAGE = 0x000A
+    REG_TEMP_AMBIENT = 0x000B
+    REG_AC_PHASE_A = 0x000C
+    REG_AC_PHASE_B = 0x000D
+    REG_AC_PHASE_C = 0x000E
+    REG_TEMP_PFC = 0x0010
+    REG_RATED_POWER = 0x0011
+    REG_RATED_CURRENT = 0x0012
+    REG_SET_VOLTAGE = 0x0021
+    REG_SET_CURR_LIMIT = 0x0022
+    REG_SET_OVP = 0x0023
+    REG_ON_OFF = 0x0030
+    REG_ALARM_STATUS = 0x0040
+    REG_SHORT_RESET = 0x0044
+    REG_INPUT_MODE_SET = 0x0046
+    REG_INPUT_POWER = 0x0048
+    # write-ack-only registers (reply value unused by apply_response())
+    WRITE_ACK_REGS = {REG_SET_VOLTAGE, REG_SET_CURR_LIMIT, REG_SET_OVP, REG_ON_OFF,
+                       REG_SHORT_RESET, REG_INPUT_MODE_SET}
+
+    def __init__(self, dev: ZlgVci, addr: int, group: int = 0,
+                 rated_current: float = 100.0, rated_power: float = 30000.0):
+        super().__init__(daemon=True)
+        self.dev = dev
+        self.addr = addr
+        self.group = group
+        self.rated_current = rated_current
+        self.rated_power = rated_power
+        self.running = True
+        self.actually_on = False
+        self.voltage = 0.0
+        self.current = 0.0
+        self.pending = False
+        self.pending_reg = 0
+
+    @staticmethod
+    def _mxr_id(dst_addr, src_addr, group):
+        return ((MaxwellModuleSim.PROTNO & 0x1FF) << 20 | (MaxwellModuleSim.PTP_POINT & 1) << 19 |
+                 (dst_addr & 0xFF) << 11 | (src_addr & 0xFF) << 3 | (group & 0x07))
+
+    def _handle_rx(self, can_id, data):
+        dst_addr = (can_id >> 11) & 0xFF
+        if dst_addr != self.addr:
+            return
+        func = data[0]
+        reg = (data[2] << 8) | data[3]
+        if func == self.FUNC_SET:
+            u = struct.unpack(">I", data[4:8])[0]
+            f = struct.unpack(">f", data[4:8])[0]
+            if reg == self.REG_SET_VOLTAGE:
+                self.voltage = f
+            elif reg == self.REG_SET_CURR_LIMIT:
+                pass  # ratio captured off the wire only if a test needs it
+            elif reg == self.REG_ON_OFF:
+                self.actually_on = (u != self.CMD_STOP_U32)
+                if not self.actually_on:
+                    self.voltage = 0.0
+                    self.current = 0.0
+                elif self.voltage <= 0.0:
+                    self.voltage = 1.0
+        self.pending = True
+        self.pending_reg = reg
+
+    def _tick(self):
+        if not self.pending:
+            return
+        self.pending = False
+        resp = bytearray(8)
+        resp[0] = self.RESP_FLOAT
+        resp[1] = self.RESP_OK
+        resp[2] = (self.pending_reg >> 8) & 0xFF
+        resp[3] = self.pending_reg & 0xFF
+
+        if self.actually_on:
+            self.current = self.rated_current * 0.5
+
+        reg = self.pending_reg
+        if reg == self.REG_VOLTAGE:
+            resp[4:8] = struct.pack(">f", self.voltage)
+        elif reg == self.REG_CURRENT:
+            resp[4:8] = struct.pack(">f", self.current)
+        elif reg == self.REG_CURR_LIMIT:
+            resp[4:8] = struct.pack(">f", 1.0)
+        elif reg == self.REG_TEMP_DCDC:
+            resp[4:8] = struct.pack(">f", 35.0)
+        elif reg == self.REG_TEMP_AMBIENT:
+            resp[4:8] = struct.pack(">f", 28.0)
+        elif reg == self.REG_TEMP_PFC:
+            resp[4:8] = struct.pack(">f", 40.0)
+        elif reg == self.REG_PFC0_VOLTAGE:
+            resp[4:8] = struct.pack(">f", 400.0)
+        elif reg == self.REG_PFC1_VOLTAGE:
+            resp[4:8] = struct.pack(">f", -400.0)
+        elif reg == self.REG_RATED_POWER:
+            resp[4:8] = struct.pack(">f", self.rated_power)
+        elif reg == self.REG_RATED_CURRENT:
+            resp[4:8] = struct.pack(">f", self.rated_current)
+        elif reg in (self.REG_AC_PHASE_A, self.REG_AC_PHASE_B, self.REG_AC_PHASE_C):
+            resp[4:8] = struct.pack(">f", 230.0)
+        elif reg == self.REG_ALARM_STATUS:
+            resp[0] = self.RESP_INT
+            resp[4:8] = struct.pack(">I", 0)  # healthy
+        elif reg == self.REG_INPUT_POWER:
+            resp[0] = self.RESP_INT
+            resp[4:8] = struct.pack(">I", int(self.voltage * self.current) & 0xFFFFFFFF)
+        elif reg in self.WRITE_ACK_REGS:
+            pass  # resp[4:8] already zeroed
+        else:
+            return  # unknown register: no reply, matches a real module ignoring it
+
+        resp_id = self._mxr_id(self.ADDR_CONTROLLER, self.addr, self.group)
+        self.dev.transmit(self.CAN_CHANNEL, resp_id, bytes(resp), extended=True)
+
+    def run(self):
+        while self.running:
+            for can_id, ext, data in self.dev.receive(self.CAN_CHANNEL, wait_ms=0):
+                if ext and len(data) >= 8:
+                    self._handle_rx(can_id, data)
+            self._tick()
+            time.sleep(0.01)
+
+
+# ============================================================= #
+# Lianming module simulator (CAN1, real byte layouts -- copied     #
+# from test/host_charge_sim/sim_can_modules.c, ground truth:       #
+# Modules/chg_lib/chg_lib_lianming.c)                              #
+# ============================================================= #
+
+class LianmingModuleSim(threading.Thread):
+    CAN_CHANNEL = 0
+    CAN_BITRATE = 125000
+
+    CMD_BASE = 0x1907C080
+    RESP_BASE = 0x1807C080
+    ADDR_MASK = 0x7F
+    CMD_SET_OUTPUT = 0x00
+    CMD_READ_INFO = 0x01
+    CMD_START_STOP = 0x02
+    START_VALUE = 0x55
+    STOP_VALUE = 0xAA
+
+    def __init__(self, dev: ZlgVci, addr: int, rated_current: float = 100.0):
+        super().__init__(daemon=True)
+        self.dev = dev
+        self.addr = addr
+        self.rated_current = rated_current
+        self.running = True
+        self.actually_on = False
+        self.voltage = 0.0
+        self.current = 0.0
+        self.status_raw = 0
+        self.pending = False
+        self.pending_func = 0
+
+    def _handle_rx(self, can_id, data):
+        id_base = can_id & ~self.ADDR_MASK
+        if id_base != self.CMD_BASE:
+            return
+        addr = can_id & self.ADDR_MASK
+        if addr != self.addr:
+            return
+        cmd = data[0]
+        if cmd == self.CMD_START_STOP:
+            self.actually_on = (data[7] == self.START_VALUE)
+            if not self.actually_on:
+                self.voltage = 0.0
+                self.current = 0.0
+            elif self.voltage <= 0.0:
+                self.voltage = 1.0
+        # CMD_SET_OUTPUT: byte1-3 current(mA)/4-7 voltage(mV) -- not decoded,
+        # matches sim_can_modules.c's own scope (not needed for RUNNING).
+        self.pending = True
+        self.pending_func = cmd
+
+    def _tick(self):
+        if not self.pending:
+            return
+        self.pending = False
+        resp_id = self.RESP_BASE | self.addr
+
+        if self.pending_func in (self.CMD_START_STOP, self.CMD_SET_OUTPUT):
+            self.dev.transmit(self.CAN_CHANNEL, resp_id, bytes([self.pending_func, 0x01, 0, 0, 0, 0, 0, 0]), extended=True)
+            return
+
+        # CMD_READ_INFO: 2-3=current(0.1A/bit BE), 4-5=voltage(0.1V/bit BE),
+        # 6-7=status_flags (bit0=0 means running).
+        if self.actually_on:
+            self.current = self.rated_current * 0.5
+        curr_raw = int(self.current * 10.0) & 0xFFFF
+        volt_raw = int(self.voltage * 10.0) & 0xFFFF
+        status = self.status_raw
+        status = (status & ~0x01) if self.actually_on else (status | 0x01)
+        resp = bytes([
+            self.CMD_READ_INFO, 0x00,
+            (curr_raw >> 8) & 0xFF, curr_raw & 0xFF,
+            (volt_raw >> 8) & 0xFF, volt_raw & 0xFF,
+            (status >> 8) & 0xFF, status & 0xFF,
+        ])
+        self.dev.transmit(self.CAN_CHANNEL, resp_id, resp, extended=True)
+
+    def run(self):
+        while self.running:
+            for can_id, ext, data in self.dev.receive(self.CAN_CHANNEL, wait_ms=0):
+                if ext and len(data) >= 8:
+                    self._handle_rx(can_id, data)
+            self._tick()
+            time.sleep(0.01)
+
+
+# ============================================================= #
+# Driver registry -- CHG_LIB_DriverId_t values from chg_lib.h    #
+# ============================================================= #
+
+DRIVERS = {
+    "maxwell": (1, MaxwellModuleSim),
+    "lianming": (2, LianmingModuleSim),
+    "tonhe": (3, TonheModuleSim),
+}
+
+
+# ============================================================= #
 # Main flow                                                        #
 # ============================================================= #
 
@@ -445,15 +722,114 @@ def probe_module(ser) -> int:
     a fallback if none is registered yet."""
     ser.reset_input_buffer()
     ser.write(build_frame(0x12))  # DEBUG_CMD_READ_ALL
-    cmd, payload = read_frame(ser)
-    if cmd != 0x91 or len(payload) < 2 or payload[1] < 1:
+    cmd, payload = read_reply(ser, {0x91})  # DEBUG_RSP_ALL_MODULES
+    if cmd is None or len(payload) < 2 or payload[1] < 1:
         return 1
     # DebugModuleData_t: identity(6B) ... addr is byte offset 71 (see
     # App/Protocol/pc_debug_protocol.h field order).
     return payload[2 + 71]
 
 
+def switch_driver(ser, driver_id: int, module_addr: int = 1, module_group: int = 0) -> bool:
+    """PC_CMD_SET_DRIVER then PC_CMD_SET_MODULE_ADDR, matching the real PC
+    app's flow (App/Protocol/pc_protocol.c's PC_CMD_SET_DRIVER handler
+    clears any module registered by ChargeCycleConfig_Set()'s side effect
+    specifically so this explicit SET_MODULE_ADDR is the source of truth)."""
+    ser.reset_input_buffer()
+    ser.write(build_frame(PC_CMD_SET_DRIVER, bytes([driver_id])))
+    cmd, payload = read_reply(ser, {PC_RSP_ACK, PC_RSP_NACK})
+    if cmd != PC_RSP_ACK:
+        print(f"[FAIL] SET_DRIVER({driver_id}) failed: cmd={cmd!r}")
+        return False
+    ser.write(build_frame(PC_CMD_SET_MODULE_ADDR, bytes([module_addr, module_group])))
+    cmd, payload = read_reply(ser, {PC_RSP_ACK, PC_RSP_NACK})
+    if cmd != PC_RSP_ACK:
+        print(f"[FAIL] SET_MODULE_ADDR({module_addr},{module_group}) failed: cmd={cmd!r}")
+        return False
+    return True
+
+
+def run_scenario(dev: ZlgVci, ser, driver_name: str, module_addr: int) -> bool:
+    """Runs one BMS+module simulation against the real MCU (already
+    switched to `driver_name` and holding `module_addr`) and returns
+    whether it reached RUNNING. Leaves the controller in IDLE either way."""
+    driver_id, sim_cls = DRIVERS[driver_name]
+    print(f"\n=== Scenario: {driver_name} (driver_id={driver_id}, module addr={module_addr}) ===")
+
+    bms = BmsSim(dev)
+    module = sim_cls(dev, addr=module_addr)
+    bms.start()
+    module.start()
+    print(f"[INFO] BMS + {driver_name} module simulators running")
+
+    try:
+        print("[STEP] Letting simulators settle for up to 12s (module may go through "
+              "OFFLINE->RECOVERING first if MCU uptime already exceeds the offline "
+              "timeout when registered -- see B-11) or until online...")
+        settle_deadline = time.time() + 12.0
+        pre = None
+        while time.time() < settle_deadline:
+            pre = get_system_info(ser)
+            if pre:
+                print(f"  modules_online={pre['modules_online']} state={pre['controller_state']}")
+                if pre['modules_online'] > 0:
+                    break
+            time.sleep(0.5)
+        if pre:
+            print(f"[INFO] Pre-start: modules_total={pre['modules_total']} online={pre['modules_online']} "
+                  f"driver_id={pre['driver_id']} bms_stale={pre['bms_stale']} fault=0x{pre['controller_fault_flags']:08X}")
+
+        print("[STEP] PC_CMD_START (manual_mode=0, BMS-controlled)...")
+        ser.write(build_frame(PC_CMD_START, bytes([0])))
+        cmd, payload = read_reply(ser, {PC_RSP_ACK, PC_RSP_NACK})
+        if cmd == PC_RSP_NACK:
+            # send_nack(cmd, err) payload is [cmd_echo, err] -- pc_protocol.c:246-249.
+            reason = payload[1] if len(payload) > 1 else -1
+            print(f"[FAIL] START was NACKed, reason=0x{reason:02X}")
+            return False
+        if cmd != PC_RSP_ACK:
+            print(f"[FAIL] START got no valid reply (cmd={cmd!r})")
+            return False
+
+        print("[STEP] Polling GET_SYSTEM for up to 8s, waiting for controller RUNNING...")
+        reached_running = False
+        deadline = time.time() + 8.0
+        while time.time() < deadline:
+            info = get_system_info(ser)
+            if info:
+                print(f"  state={info['controller_state']} charging={info['charging']} "
+                      f"modules_online={info['modules_online']} target_v={info['controller_target_voltage']:.1f} "
+                      f"fault=0x{info['controller_fault_flags']:08X}")
+                if info["controller_state"] == CHARGE_CTRL_STATE_RUNNING:
+                    reached_running = True
+                    break
+            time.sleep(0.2)
+
+        print("[STEP] PC_CMD_STOP -- returning to a clean idle state...")
+        ser.write(build_frame(PC_CMD_STOP))
+        read_reply(ser, {PC_RSP_ACK, PC_RSP_NACK})
+        time.sleep(0.5)
+
+        if reached_running:
+            print(f"[PASS] Real MCU reached RUNNING against the simulated BMS+{driver_name} bus.")
+        else:
+            print(f"[FAIL] {driver_name}: did not reach RUNNING within timeout.")
+        return reached_running
+    finally:
+        bms.running = False
+        module.running = False
+        time.sleep(0.1)
+
+
 def main():
+    requested = sys.argv[1:] or ["tonhe"]
+    if requested == ["all"]:
+        requested = ["maxwell", "lianming", "tonhe"]
+    unknown = [d for d in requested if d not in DRIVERS]
+    if unknown:
+        print(f"[FAIL] Unknown driver(s) {unknown}; choose from {list(DRIVERS)} or 'all'")
+        sys.exit(1)
+
     port = find_mcu_port()
     if not port:
         print("[FAIL] MCU USB CDC port not found (looking for VID:PID 0483:5740).")
@@ -475,11 +851,9 @@ def main():
             info = dev.board_info()
             print(f"[INFO] CAN adapter: {info.str_hw_Type.decode(errors='replace')} "
                   f"(serial {info.str_Serial_Num.decode(errors='replace')}, {info.can_Num} channel(s))")
-            dev.init_channel(TonheModuleSim.CAN_CHANNEL, TonheModuleSim.CAN_BITRATE)
-            dev.init_channel(BmsSim.CAN_CHANNEL, BmsSim.CAN_BITRATE)
-            print(f"[INFO] CAN channels started: "
-                  f"ch{TonheModuleSim.CAN_CHANNEL}={TonheModuleSim.CAN_BITRATE}bps (CAN1/modules), "
-                  f"ch{BmsSim.CAN_CHANNEL}={BmsSim.CAN_BITRATE}bps (CAN2/BMS)")
+            dev.init_channel(0, 125000)  # CAN1 -- charger modules, all 3 drivers
+            dev.init_channel(1, 250000)  # CAN2 -- BMS
+            print("[INFO] CAN channels started: ch0=125000bps (CAN1/modules), ch1=250000bps (CAN2/BMS)")
 
             ser.dtr = True
             ser.rts = True
@@ -488,57 +862,46 @@ def main():
 
             print("[STEP] DEBUG_CMD_ENTER...")
             ser.write(build_frame(DEBUG_CMD_ENTER))
-            cmd, _ = read_frame(ser)
+            cmd, _ = read_reply(ser, {PC_RSP_ACK, PC_RSP_NACK})
             if cmd != PC_RSP_ACK:
                 print(f"[FAIL] Expected ACK, got {cmd!r}")
                 sys.exit(1)
 
-            module_addr = probe_module(ser)
-            print(f"[INFO] Configured module addr={module_addr}")
+            # Capture the driver/module config as found, to restore it after
+            # testing -- SET_DRIVER persists to flash (see its handler in
+            # pc_protocol.c), so switching drivers here has a real,
+            # persistent side effect on this unit if not undone.
+            original_info = get_system_info(ser)
+            original_driver_id = original_info["driver_id"] if original_info else None
+            original_addr = probe_module(ser)
+            print(f"[INFO] Original config: driver_id={original_driver_id} module_addr={original_addr}")
 
-            bms = BmsSim(dev)
-            module = TonheModuleSim(dev, addr=module_addr)
-            bms.start()
-            module.start()
-            print("[INFO] BMS + TonHe module simulators running")
+            results = {}
+            switched_any = False
+            for driver_name in requested:
+                driver_id, _ = DRIVERS[driver_name]
+                current_info = get_system_info(ser)
+                if current_info is None or current_info["driver_id"] != driver_id:
+                    print(f"[STEP] Switching to driver_id={driver_id} ({driver_name})...")
+                    if not switch_driver(ser, driver_id, module_addr=1, module_group=0):
+                        results[driver_name] = False
+                        continue
+                    switched_any = True
+                    module_addr = 1
+                else:
+                    module_addr = probe_module(ser)
+                results[driver_name] = run_scenario(dev, ser, driver_name, module_addr)
 
-            print("[STEP] Letting simulators settle for 1.5s before START...")
-            time.sleep(1.5)
+            if switched_any and original_driver_id is not None:
+                print(f"\n[STEP] Restoring original driver_id={original_driver_id} module_addr={original_addr}...")
+                switch_driver(ser, original_driver_id, module_addr=original_addr, module_group=0)
 
-            print("[STEP] PC_CMD_START (manual_mode=0, BMS-controlled)...")
-            ser.write(build_frame(PC_CMD_START, bytes([0])))
-            cmd, payload = read_frame(ser)
-            if cmd == PC_RSP_NACK:
-                print(f"[FAIL] START was NACKed, reason=0x{payload[0]:02X}")
-                bms.running = module.running = False
-                sys.exit(1)
-
-            print("[STEP] Polling GET_SYSTEM for up to 8s, waiting for controller RUNNING...")
-            reached_running = False
-            deadline = time.time() + 8.0
-            while time.time() < deadline:
-                info = get_system_info(ser)
-                if info:
-                    print(f"  state={info['controller_state']} charging={info['charging']} "
-                          f"modules_online={info['modules_online']} target_v={info['controller_target_voltage']:.1f} "
-                          f"fault=0x{info['controller_fault_flags']:08X}")
-                    if info["controller_state"] == CHARGE_CTRL_STATE_RUNNING:
-                        reached_running = True
-                        break
-                time.sleep(0.2)
-
-            print("[STEP] PC_CMD_STOP -- returning to a clean idle state...")
-            ser.write(build_frame(PC_CMD_STOP))
-            read_frame(ser)
-            time.sleep(0.5)
-
-            bms.running = False
-            module.running = False
-
-            if reached_running:
-                print("[PASS] Real MCU reached RUNNING against the simulated BMS+TonHe bus.")
-            else:
-                print("[FAIL] Did not reach RUNNING within timeout.")
+            print("\n=== Summary ===")
+            all_pass = True
+            for name, ok in results.items():
+                print(f"  {name}: {'PASS' if ok else 'FAIL'}")
+                all_pass = all_pass and ok
+            if not all_pass:
                 sys.exit(1)
     except RuntimeError as e:
         print(f"[FAIL] {e}")
