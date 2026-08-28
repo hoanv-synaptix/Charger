@@ -5,7 +5,13 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    # Bundle assets/ (brand icons) into the exe -- without this,
+    # _apply_brand_icon()'s iconphoto() call can't find the PNGs at
+    # runtime once frozen (main.py's __file__-relative path resolution
+    # doesn't point into the PyInstaller extraction dir), so the running
+    # window/taskbar icon silently falls back to nothing even though the
+    # .exe file itself has the icon= below.
+    datas=[('assets', 'assets')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

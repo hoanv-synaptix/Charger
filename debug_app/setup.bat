@@ -55,7 +55,13 @@ echo.
 REM Step 3: Build executable
 echo [3/3] Building executable with PyInstaller...
 echo      This may take 1-2 minutes...
-%PYTHON_EXE% -m PyInstaller --noconfirm --onefile --windowed --name "ChargerDebugApp" main.py
+REM Build FROM the .spec file, not raw CLI flags -- the spec is hand-edited
+REM (icon=, bundled assets/) and building via "pyinstaller main.py ..." here
+REM instead regenerates a fresh spec from scratch every time, silently
+REM discarding those edits (this exact thing happened once already: the
+REM PKG Battery icon disappeared from a rebuilt .exe because this line used
+REM to bypass the spec). See ChargerDebugApp.spec.
+%PYTHON_EXE% -m PyInstaller --noconfirm ChargerDebugApp.spec
 if %errorlevel% neq 0 (
     echo ERROR: Build failed
     pause

@@ -6,6 +6,7 @@ Charger Debug Application - Pixel-Perfect WinForms Layout
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import os
+import sys
 import struct
 import time
 import csv
@@ -22,6 +23,17 @@ from protocol.debug_protocol import (
     TONHE_STATUS_FAULT_NAMES, TONHE_PFC_FAULT_NAMES
 )
 from services.serial_service import SerialService
+
+
+def _assets_dir() -> str:
+    """Resolve the assets/ folder both when running as a normal script and
+    when frozen into a PyInstaller .exe. Frozen builds extract bundled data
+    (see ChargerDebugApp*.spec's datas=[('assets','assets')]) into a temp
+    dir exposed as sys._MEIPASS -- __file__ inside a frozen app does NOT
+    point there, so os.path.dirname(__file__)/"assets" alone only works for
+    `python main.py`, not the packaged .exe."""
+    base = getattr(sys, "_MEIPASS", None) or os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base, "assets")
 
 
 # =============================================================================
@@ -375,7 +387,7 @@ class ChargerDebugApp:
         missing/unreadable asset must never block the app from starting.
         """
         try:
-            assets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
+            assets_dir = _assets_dir()
             self._brand_icon_images = [
                 tk.PhotoImage(file=os.path.join(assets_dir, f"pkg_icon_{size}.png"))
                 for size in (16, 32, 48, 64, 128, 256)
