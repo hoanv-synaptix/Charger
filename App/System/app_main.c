@@ -238,15 +238,19 @@ void App_Loop(void)
          * ChargeController_Process() (relay_should_close: RUNNING + điện áp
          * module ≥ 90% target + BMS an toàn khi ở chế độ BMS-Controlled,
          * không yêu cầu BMS ở chế độ Standalone). App layer chỉ đọc kết quả
-         * và ghi GPIO — không tự quyết định điều kiện an toàn ở đây. */
+         * và ghi GPIO — không tự quyết định điều kiện an toàn ở đây.
+         *
+         * Cả 3 relay (RELAY_1/PB14, RELAY_2/PB15, RELAY_3/PA8) đóng/mở CÙNG
+         * lúc, cùng vai trò -- xác nhận với người dùng 2026-08-29: phần cứng
+         * thực tế chỉ cần 1 relay để đóng/cắt mạch sạc, 3 relay không phải
+         * 3 chức năng khác nhau (không phải pre-charge/main/aux riêng biệt).
+         * RELAY_3 nằm khác port (GPIOA) nên ghi bằng lệnh riêng. */
         {
             ChargeCtrlView_t relay_view;
             ChargeController_GetView(&relay_view);
-            if (relay_view.relay_should_close) {
-                HAL_GPIO_WritePin(GPIOB, MCU_PB14_RELAY_1_Pin|MCU_PB15_RELAY_2_Pin, GPIO_PIN_SET);
-            } else {
-                HAL_GPIO_WritePin(GPIOB, MCU_PB14_RELAY_1_Pin|MCU_PB15_RELAY_2_Pin, GPIO_PIN_RESET);
-            }
+            GPIO_PinState relay_pin_state = relay_view.relay_should_close ? GPIO_PIN_SET : GPIO_PIN_RESET;
+            HAL_GPIO_WritePin(GPIOB, MCU_PB14_RELAY_1_Pin|MCU_PB15_RELAY_2_Pin, relay_pin_state);
+            HAL_GPIO_WritePin(GPIOA, MCU_PA8_RELAY_3_Pin, relay_pin_state);
         }
     }
 

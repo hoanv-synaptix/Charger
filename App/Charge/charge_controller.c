@@ -574,6 +574,30 @@ static ChargeStageBand_t band_from_thresholds(float value, float t1, float t2,
  * @brief Shared band->current-limit mapping, identical shape across all 3
  *        stage sources -- only which per-band current constants get read
  *        differs (curr1..curr4, one per band, source-specific).
+ *
+ * @note  ABOVE_MAX always sets eval->inhibit=1 here (current_limit_c=0), but
+ *        that flag means two DIFFERENT things depending on which caller you
+ *        are, because the underlying business rule differs per stage --
+ *        confirmed with the user 2026-08-29: within one charge cycle, cell
+ *        voltage and SOC only ever move forward (band N -> N+1, never back,
+ *        even if the raw reading dips); temperature is the only one of the
+ *        three allowed to step back down a band, and only once it drops
+ *        below (lower_threshold - temp_delta_c) (see eval_temp_stage's
+ *        hysteresis).
+ *          - eval_temp_stage(): ABOVE_MAX is a genuine LIVE, RECOVERABLE
+ *            inhibit (FR-CTRL-11) -- current goes to 0 while over-temp, and
+ *            resumes on its own once temperature drops back into range.
+ *            Callers may use eval.inhibit directly for this source.
+ *          - eval_cell_stage()/eval_soc_stage(): ABOVE_MAX is a COMPLETION
+ *            latch (FR-CTRL-09/10), not a recoverable inhibit -- the charge
+ *            cycle is meant to END (STOPPING), not just pause. These two
+ *            functions track that separately via g_ctrl.cell_full_latched /
+ *            g_ctrl.soc_full_latched (set as a side effect, band forced to
+ *            stay ABOVE_MAX once latched). Callers MUST check those latch
+ *            flags for completion BEFORE treating eval.inhibit as an
+ *            ordinary current-gating inhibit for these two sources -- see
+ *            run_bms_controlled_mode()'s completion check, which runs before
+ *            the inhibit-driven current calculation for exactly this reason.
  */
 static void apply_band_current_limit(ChargeStageBand_t band, float curr1, float curr2,
                                      float curr3, float curr4, ChargeStageEval_t *eval) {
@@ -850,6 +874,20 @@ static void apply_jack_temp_derating(const ChargeCycleConfig_t *cfg, uint32_t no
 
 /* ============== Mode Handlers ============== */
 
+/**
+ * @brief Manual mode: hold the operator-supplied V/I setpoint fixed for the
+ *        whole RUNNING session.
+ * @note  Confirmed with the user 2026-08-29: Manual is meant to run at one
+ *        constant setpoint for its entire duration -- no stage bands
+ *        (cell/temp/SOC), no jack-temp soft derating (apply_jack_temp_derating()
+ *        is intentionally NOT called here, unlike run_standalone_mode()/
+ *        run_bms_controlled_mode()). The operator who set Manual owns the
+ *        setpoint and any thermal/charge-curve judgment behind it. Hard
+ *        protection (jack-V fault, module alarms, E-STOP) still applies --
+ *        that runs in ChargeController_Process() before this handler is
+ *        even called, unconditionally of mode -- only the *soft*, automatic
+ *        derating/staging is skipped.
+ */
 static void run_manual_mode(uint32_t now_tick) {
     (void)now_tick;
 
@@ -977,7 +1015,16 @@ static void run_bms_controlled_mode(uint32_t now_tick) {
         return;
     }
 
-    /* Base targets: Ignore BMS requests entirely, use local configuration */
+    /* Base targets: Ignore BMS requests entirely, use local configuration.
+     * Confirmed with the user 2026-08-29 (closes SRS TBD-04): this is the
+     * intended design, not a gap. In BMS-Controlled mode the BMS's role is
+     * monitoring/safety only (online/offline, critical alarms, cell-V/SOC
+     * telemetry feeding the stage bands below, BMS_ShouldCloseChargeRelay()
+     * for the relay) -- the actual V/I setpoint is always decided by the
+     * charge algorithm from the locally-configured ChargeCycleConfig_t
+     * (vmax_v / imax_c / stage bands), never by the BMS's own
+     * ChgRequest_INFO (bms.chg_volt_request/bms.chg_curr_request are parsed
+     * and available in BMS_View_t, but deliberately unused here). */
     g_ctrl.target_voltage_v = cfg.vmax_v;
 
     /* Clamp voltage to hardware limits */
@@ -985,7 +1032,14 @@ static void run_bms_controlled_mode(uint32_t now_tick) {
         g_ctrl.target_voltage_v = cfg.module_u_max_v;
     }
 
-    /* Compute stage limits */
+    /* Compute stage limits. This call is also what evaluates cell/SOC
+     * completion (eval_cell_stage()/eval_soc_stage() latch
+     * g_ctrl.cell_full_latched/soc_full_latched as a side effect) -- checked
+     * immediately below, BEFORE any of stage_inhibit/stage_limit_source/etc
+     * are used for anything, so a completed cycle never gets treated as an
+     * ordinary current-gating inhibit even for one tick. See
+     * apply_band_current_limit()'s doc comment for why cell/SOC's ABOVE_MAX
+     * must NOT be read as a ChargeStageEval_t.inhibit like temperature's is. */
     float stage_limit_c = 0.0f;
     uint8_t stage_inhibit = 0;
     uint8_t stage_limit_source = CHARGE_LIMIT_SOURCE_NONE;
@@ -993,14 +1047,13 @@ static void run_bms_controlled_mode(uint32_t now_tick) {
     compute_stage_limits(&cfg, &bms, &stage_limit_c, &stage_inhibit,
                          &stage_limit_source, &stage_band);
 
-    g_ctrl.inhibit = stage_inhibit;
-    g_ctrl.derating = 0;
-    g_ctrl.active_limit_source = stage_limit_source;
-    g_ctrl.active_stage_band = stage_band;
-    g_ctrl.active_limit_current_c = stage_limit_c;
-
-    /* Cell voltage and SOC completion end the current cycle.  Temperature
-     * inhibit remains recoverable and is handled as a live block below. */
+    /* Completion check FIRST, ahead of the ordinary inhibit/derating fields
+     * below -- cell voltage or SOC reaching its top band ends the charge
+     * cycle outright (FR-CTRL-09/10), it is not merely "current=0, stay
+     * RUNNING" like a temperature inhibit (FR-CTRL-11). Returning here means
+     * g_ctrl.inhibit/active_limit_source/active_stage_band are deliberately
+     * left untouched by this stage-limit read -- there is no "recoverable"
+     * state to report once the cycle is ending. */
     if (g_ctrl.cell_full_latched || g_ctrl.soc_full_latched) {
         if (g_ctrl.cell_full_latched) {
             g_ctrl.stop_reason = CHARGE_STOP_CELL_VOLTAGE_REACHED;
@@ -1012,6 +1065,15 @@ static void run_bms_controlled_mode(uint32_t now_tick) {
         transition_to(CHARGE_CTRL_STATE_STOPPING, now_tick);
         return;
     }
+
+    /* Not completing: stage_inhibit here is a genuine, recoverable
+     * current-gating inhibit (temperature out of range, or cell/SOC still
+     * below their configured minimum). */
+    g_ctrl.inhibit = stage_inhibit;
+    g_ctrl.derating = 0;
+    g_ctrl.active_limit_source = stage_limit_source;
+    g_ctrl.active_stage_band = stage_band;
+    g_ctrl.active_limit_current_c = stage_limit_c;
 
     /* Calculate current */
     if (g_ctrl.inhibit) {

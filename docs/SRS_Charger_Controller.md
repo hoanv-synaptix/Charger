@@ -543,11 +543,16 @@ PC                    MCU                                   CAN1           CAN2/
 | Mã | Mô tả | Ưu tiên |
 |----|-------|---------|
 | TBD-01 | DWIN HMI chưa tích hợp vào App_Loop (protocol sẵn sàng) | Trung bình |
-| TBD-02 | `BMS_ShouldCloseChargeRelay()` có API nhưng chưa nối vào flow relay | Cao |
-| TBD-03 | Jack-temp ADC chưa đọc thực (giả lập 25°C) | Cao |
-| TBD-04 | `bms_chg_v/i_request` được parse nhưng BMS-mode cố tình bỏ qua (dùng config nội bộ) — cần xác nhận nghiệp vụ | Xác nhận |
-| TBD-05 | Relay 1/2/3 (PB14/PB15/PA8) chưa có logic điều khiển | Trung bình |
+| ~~TBD-02~~ | ~~`BMS_ShouldCloseChargeRelay()` có API nhưng chưa nối vào flow relay~~ | **Đã đóng** — _2026-08-29: đã nối từ trước (không rõ session nào, không có ghi chú); xác nhận lại bằng code khi review thuật toán sạc theo yêu cầu người dùng: `update_relay_decision()` (`charge_controller.c`) gọi `BMS_ShouldCloseChargeRelay()` ở chế độ BMS-Controlled, `app_main.c` đọc `relay_should_close` và ghi GPIO mỗi 20ms. Xem thêm TBD-05._ |
+| ~~TBD-03~~ | ~~Jack-temp ADC chưa đọc thực (giả lập 25°C)~~ | **Đã đóng** — _2026-08-29: đã đọc ADC thật từ trước (không rõ session nào); xác nhận lại bằng code: `app_main.c` đọc max 4 kênh NTC (`BSP_ADC_GetTempC`) mỗi chu kỳ, chỉ fallback 25°C khi cả 4 kênh disconnect (`<-50°C` sentinel), truyền vào `ChargeController_SetJackTempC()`._ |
+| **TBD-04** | `bms_chg_v/i_request` được parse nhưng BMS-mode cố tình bỏ qua (dùng config nội bộ) | **Đã xác nhận nghiệp vụ 2026-08-29**: đúng thiết kế, không phải gap. BMS chỉ đóng vai trò giám sát/an toàn (online/offline, alarm, telemetry nuôi stage band, `BMS_ShouldCloseChargeRelay()`); U/I mục tiêu luôn do thuật toán sạc quyết định từ `ChargeCycleConfig_t` cấu hình cục bộ, không theo yêu cầu động của BMS. Đã ghi rõ trong comment `run_bms_controlled_mode()`. |
+| ~~TBD-05~~ | ~~Relay 1/2/3 (PB14/PB15/PA8) chưa có logic điều khiển~~ | **Đã đóng 2026-08-29**: xác nhận với người dùng — thực tế chỉ cần 1 relay để đóng/cắt mạch sạc, cả 3 relay không phải 3 chức năng khác nhau. Sửa `app_main.c` để RELAY_3 (PA8) đóng/mở đồng thời, cùng điều kiện với RELAY_1/RELAY_2 (`relay_should_close`). |
 | TBD-06 | UART5/LTE chưa triển khai | Thấp |
+
+**Xác nhận nghiệp vụ khác (2026-08-29, khi review thuật toán sạc theo yêu cầu người dùng)**:
+- Stage band cell-voltage/SOC: chỉ tiến (band N → N+1), không có chiều lùi trong 1 chu kỳ sạc, kể cả khi giá trị đo giảm tạm thời — khớp `eval_cell_stage()`/`eval_soc_stage()`'s high-watermark latch hiện tại, không cần sửa.
+- Stage band nhiệt độ: là band **duy nhất** được phép lùi (N+1 → N), chỉ khi nhiệt độ giảm quá `threshold - temp_delta_c` (hysteresis) — khớp `eval_temp_stage()` hiện tại, không cần sửa.
+- Chế độ Manual: giữ nguyên 1 setpoint cố định trong suốt phiên RUNNING, không áp dụng jack-temp soft derating tự động (khác Standalone/BMS-Controlled) — người vận hành Manual tự chịu trách nhiệm phần này; hard protection (jack-V fault, alarm module, E-STOP) vẫn áp dụng bình thường vì chạy trước khi dispatch theo mode. Đã ghi rõ trong comment `run_manual_mode()`.
 
 ### 7.3 Hướng dẫn bảo trì cấu hình CubeMX
 
