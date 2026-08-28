@@ -20,14 +20,20 @@
 #     shows up and a shared storage module becomes worth building.
 #
 #   App/Protocol/pc_debug_protocol.c:bsp_can.h
-#     DEBUG_CMD_SEND_RAW_CAN intentionally bypasses BMS/chg_lib to inject a
-#     raw frame on either bus for bench testing. That is the feature; it is
-#     not a layering accident. Now gated behind CHG_DEBUG_RAW_CAN
+#     Two separate reasons this include is here, as of 2026-08-28:
+#     (1) DEBUG_CMD_SEND_RAW_CAN intentionally bypasses BMS/chg_lib to
+#     inject a raw frame on either bus for bench testing. That is the
+#     feature; it is not a layering accident. Gated behind CHG_DEBUG_RAW_CAN
 #     (CMakeLists.txt), defined only for the Debug config -- Release builds
-#     do not compile the command in at all, so the #include only shows up
-#     as a violation in Debug builds' worth of source. The static checker
-#     is preprocessor-blind so it still flags the line unconditionally;
-#     that's expected, not a bug.
+#     do not compile that command in at all.
+#     (2) DebugProtocol_BuildSystemInfo() (all build configs) calls
+#     BSP_CAN_GetStats() for the CAN1/CAN2 tx/rx counters it reports --
+#     previously a local `extern uint32_t g_c1_tx...` reaching past BSP's
+#     public API into its raw globals (found in review), now goes through
+#     the accessor BSP already exposes for exactly this. This half of the
+#     include is unconditional, unlike (1).
+#     The static checker is preprocessor-blind so it flags the line
+#     regardless of the #ifdef in (1); that's expected, not a bug.
 #
 #   App/Protocol/pc_debug_protocol.c:bsp_sys.h
 #   App/Protocol/pc_protocol.c:bsp_sys.h

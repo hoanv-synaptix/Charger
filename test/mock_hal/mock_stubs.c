@@ -27,10 +27,19 @@ bool BSP_CAN_Transmit(uint8_t bus, const BSP_CAN_Frame_t *frame)
 }
 
 /* BSP/bsp_can.c's real CAN TX/RX counters -- pc_debug_protocol.c's
- * DebugProtocol_BuildSystemInfo() reads these via `extern`. bsp_can.c
- * itself isn't host-buildable (real FDCAN/HAL types), so stand in with
- * plain globals; tests that care can write to them directly. */
+ * DebugProtocol_BuildSystemInfo() reads these via BSP_CAN_GetStats().
+ * bsp_can.c itself isn't host-buildable (real FDCAN/HAL types), so stand
+ * in with plain globals + the same accessor signature; tests that care
+ * can write to the globals directly. */
 uint32_t g_c1_tx = 0, g_c1_rx = 0, g_c2_tx = 0, g_c2_rx = 0;
+
+void BSP_CAN_GetStats(uint32_t *c1tx, uint32_t *c1rx, uint32_t *c2tx, uint32_t *c2rx)
+{
+    if (c1tx) *c1tx = g_c1_tx;
+    if (c1rx) *c1rx = g_c1_rx;
+    if (c2tx) *c2tx = g_c2_tx;
+    if (c2rx) *c2rx = g_c2_rx;
+}
 
 /* USB CDC: every transfer "succeeds" instantly (no real endpoint on host).
  * pc_protocol.c only checks the return value against USBD_OK/USBD_BUSY and

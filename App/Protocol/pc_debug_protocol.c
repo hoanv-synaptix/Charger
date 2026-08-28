@@ -12,9 +12,7 @@
 #include "charge_cycle_storage.h"
 #include "charge_controller.h"
 #include "debug_log.h"
-#ifdef CHG_DEBUG_RAW_CAN
 #include "bsp_can.h"
-#endif
 #include "bsp_sys.h"
 #include <string.h>
 
@@ -52,8 +50,23 @@ bool DebugProtocol_IsActive(void)
     return g_debug_active;
 }
 
-uint16_t DebugProtocol_BuildModuleData(uint8_t idx, uint8_t *data)
+uint16_t DebugProtocol_BuildModuleData(uint8_t idx, uint8_t *data, uint16_t max_len)
 {
+    /* BUGFIX: this used to have no max_len parameter at all and would
+     * unconditionally write sizeof(DebugModuleData_t) (123) bytes into
+     * `data`. DebugProtocol_BuildAllModulesData()'s loop calls this at an
+     * advancing offset into a 255-byte (PC_MAX_PAYLOAD) stack buffer and
+     * only checked the offset fit *after* this function had already
+     * written -- on any system with 3+ modules (a normal configuration;
+     * see B-10) the 3rd module's write landed past the end of the caller's
+     * buffer, corrupting the stack. Checking here, before writing
+     * anything, is the actual fix -- the call-site check in
+     * BuildAllModulesData() alone cannot prevent this since it runs too
+     * late. */
+    if (max_len < sizeof(DebugModuleData_t)) {
+        return 0;
+    }
+
     CHG_LIB_ModuleView_t view;
     if (!CHG_LIB_GetModuleView(idx, &view)) {
         return 0;
@@ -132,13 +145,14 @@ uint16_t DebugProtocol_BuildAllModulesData(uint8_t *data, uint16_t max_len)
     data[written++] = g_stream_sequence++;
     data[written++] = 0U;
 
-    /* Build data for each module */
+    /* Build data for each module. Pass the actual remaining space
+     * (max_len - written) so BuildModuleData() can refuse to write past
+     * the caller's buffer itself, instead of relying on a check here that
+     * runs after the write already happened (see the BUGFIX comment on
+     * BuildModuleData()). */
     for (uint8_t i = 0; i < module_count; i++) {
-        uint16_t mod_len = DebugProtocol_BuildModuleData(i, &data[written]);
+        uint16_t mod_len = DebugProtocol_BuildModuleData(i, &data[written], (uint16_t)(max_len - written));
         if (mod_len == 0) {
-            break;
-        }
-        if (written + mod_len > max_len) {
             break;
         }
         written += mod_len;
@@ -203,11 +217,25 @@ uint16_t DebugProtocol_BuildSystemInfo(uint8_t *data, uint16_t max_len)
     info->controller_target_current_total = ctrl_view.target_current_total_a;
     info->active_limit_current_c = ctrl_view.active_limit_current_c;
     
-    extern uint32_t g_c1_tx, g_c1_rx, g_c2_tx, g_c2_rx;
-    info->can1_tx_count = g_c1_tx;
-    info->can1_rx_count = g_c1_rx;
-    info->can2_tx_count = g_c2_tx;
-    info->can2_rx_count = g_c2_rx;
+    /* Go through the accessor BSP already exposes for this instead of a
+     * local `extern` reaching straight into bsp_can.c's file-scope
+     * globals -- same counters, but through the API BSP_CAN_GetStats()
+     * (bsp_can.h) exists specifically to provide.
+     * Read into aligned locals first, then assign into the struct:
+     * DebugSystemInfo_t is __attribute__((packed)) for the wire format,
+     * so &info->canN_xx_count is not guaranteed 4-byte aligned (it isn't,
+     * at this struct's actual layout) -- passing that address straight to
+     * BSP_CAN_GetStats() for a real uint32_t* store would be an unaligned
+     * write, which Cortex-M0+ (this MCU) does not support in hardware.
+     * Plain assignment into a packed member, like every other field in
+     * this function, is safe -- the compiler emits the correct unaligned
+     * store for that case. */
+    uint32_t c1tx, c1rx, c2tx, c2rx;
+    BSP_CAN_GetStats(&c1tx, &c1rx, &c2tx, &c2rx);
+    info->can1_tx_count = c1tx;
+    info->can1_rx_count = c1rx;
+    info->can2_tx_count = c2tx;
+    info->can2_rx_count = c2rx;
     
     info->controller_fault_flags = ctrl_view.fault_flags;
     info->controller_stop_reason = (uint8_t)ctrl_view.stop_reason;
@@ -219,7 +247,14 @@ uint16_t DebugProtocol_BuildSystemInfo(uint8_t *data, uint16_t max_len)
 
 uint16_t DebugProtocol_BuildBMSData(uint8_t *data, uint16_t max_len)
 {
-    if (max_len < 54) {
+    /* Must match the actual byte count this function writes below (state/
+     * relays 4 + battery 18 + cell volts 4 + temps 8 + charge req 8 +
+     * alarm/timing 8 = 50). Was checked against 54 (4 bytes of stale
+     * slack from an earlier version of this function) -- harmless today
+     * since under-checking here can only reject valid calls, never
+     * overflow, but a mismatched guard stops documenting the function's
+     * real output size. */
+    if (max_len < 50) {
         return 0;
     }
 
@@ -367,7 +402,7 @@ bool DebugProtocol_HandleCommand(uint8_t cmd, const uint8_t *payload, uint16_t l
             PC_Protocol_SendFrame(DEBUG_RSP_ERROR, reply, 1);
             return true;
         }
-        uint16_t data_len = DebugProtocol_BuildModuleData(payload[0], reply);
+        uint16_t data_len = DebugProtocol_BuildModuleData(payload[0], reply, sizeof(reply));
         if (data_len > 0) {
             PC_Protocol_SendFrame(DEBUG_RSP_MODULE_DATA, reply, data_len);
         } else {

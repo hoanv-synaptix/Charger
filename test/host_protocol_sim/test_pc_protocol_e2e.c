@@ -558,6 +558,71 @@ static bool test_debug_get_system_info_matches_wire_struct(void)
     return true;
 }
 
+/* Regression test: DebugProtocol_BuildModuleData() must refuse to write
+ * when it doesn't fit in max_len, not write unconditionally and let the
+ * caller find out too late. This is the actual fix -- see the BUGFIX
+ * comment on DebugProtocol_BuildModuleData() in pc_debug_protocol.c. */
+static bool test_build_module_data_refuses_when_too_small(void)
+{
+    printf("Running test_build_module_data_refuses_when_too_small...\n");
+    ASSERT(setup_scenario(), "setup failed");
+
+    uint8_t buf[sizeof(DebugModuleData_t)];
+    uint16_t len_too_small = DebugProtocol_BuildModuleData(0, buf, (uint16_t)(sizeof(DebugModuleData_t) - 1U));
+    ASSERT(len_too_small == 0, "must return 0 (refuse) when max_len is one byte short of the struct size");
+
+    uint16_t len_exact = DebugProtocol_BuildModuleData(0, buf, (uint16_t)sizeof(DebugModuleData_t));
+    ASSERT(len_exact == sizeof(DebugModuleData_t), "must succeed when max_len exactly fits");
+
+    printf("[PASS] test_build_module_data_refuses_when_too_small\n");
+    return true;
+}
+
+/* Regression test for the actual bug: DebugProtocol_BuildAllModulesData()
+ * used to write a full sizeof(DebugModuleData_t) (123 bytes) into the
+ * caller's buffer BEFORE checking whether it fit -- on any system with 3+
+ * modules this overflowed the 255-byte (PC_MAX_PAYLOAD) stack buffer used
+ * by both DebugProtocol_SendStream() and DEBUG_CMD_READ_ALL's reply. Uses
+ * a canary region immediately after the buffer to detect the exact class
+ * of out-of-bounds write the bug caused; register enough modules that 2
+ * fully fit in PC_MAX_PAYLOAD but a 3rd (previously) would not. */
+static bool test_build_all_modules_data_does_not_overflow_buffer(void)
+{
+    printf("Running test_build_all_modules_data_does_not_overflow_buffer...\n");
+    ASSERT(setup_scenario(), "setup failed");
+
+    /* setup_scenario() already registered module addr=1 (source_module_
+     * count=1 in its config); add 4 more addresses directly so
+     * CHG_LIB_GetModuleCount() == 5 -- comfortably past the "2 fit, 3rd
+     * overflows" boundary (2 + 123*2 = 248 <= 255 < 2 + 123*3). */
+    for (uint8_t addr = 2; addr <= 5; addr++) {
+        CHG_LIB_AddModule(addr, 0);
+    }
+    ASSERT(CHG_LIB_GetModuleCount() >= 5, "expected at least 5 registered modules for this test");
+
+    struct {
+        uint8_t buf[PC_MAX_PAYLOAD];
+        uint8_t canary[64];
+    } guarded;
+    memset(guarded.buf, 0, sizeof(guarded.buf));
+    memset(guarded.canary, 0xAA, sizeof(guarded.canary));
+
+    uint16_t len = DebugProtocol_BuildAllModulesData(guarded.buf, sizeof(guarded.buf));
+
+    for (size_t i = 0; i < sizeof(guarded.canary); i++) {
+        if (guarded.canary[i] != 0xAA) {
+            printf("[FAIL] %s:%d - canary byte %zu corrupted (0x%02X) -- buffer overflow past `buf`\n",
+                   __func__, __LINE__, i, guarded.canary[i]);
+            return false;
+        }
+    }
+    ASSERT(len <= sizeof(guarded.buf), "returned length must never exceed the buffer passed in");
+    ASSERT(len > 2, "should have written the header plus at least one module's worth of data");
+
+    printf("[PASS] test_build_all_modules_data_does_not_overflow_buffer\n");
+    return true;
+}
+
 /* ================================================================== */
 
 int main(void)
@@ -583,6 +648,8 @@ int main(void)
     pass &= test_debug_set_charge_cfg_valid_config_persists();
     pass &= test_debug_set_charge_cfg_wrong_length_rejected();
     pass &= test_debug_get_system_info_matches_wire_struct();
+    pass &= test_build_module_data_refuses_when_too_small();
+    pass &= test_build_all_modules_data_does_not_overflow_buffer();
 
     if (pass) {
         printf("ALL TESTS PASSED.\n");

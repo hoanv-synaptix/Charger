@@ -187,9 +187,10 @@ void DebugProtocol_SendStream(void);
  * @brief Build single module data
  * @param idx Module index
  * @param data Output buffer
- * @return Bytes written, 0 if invalid
+ * @param max_len Max buffer size (bytes available at `data`)
+ * @return Bytes written, 0 if invalid or if it would not fit in max_len
  */
-uint16_t DebugProtocol_BuildModuleData(uint8_t idx, uint8_t *data);
+uint16_t DebugProtocol_BuildModuleData(uint8_t idx, uint8_t *data, uint16_t max_len);
 
 /**
  * @brief Build all modules data
