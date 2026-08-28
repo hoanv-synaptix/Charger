@@ -169,10 +169,6 @@ class ChargerDebugApp:
         self.modules: Dict[int, ChargerModule] = {}
         self.selected_module_idx: Optional[int] = None
         self.driver_id = 1
-        # Monitor polling uses one serialized request/response scheduler.
-        self.monitor_poll_ms = 750
-        self.monitor_request_timeout_ms = 1000
-        self.monitor_max_retries = 2
         self.alarms: List[AlarmInfo] = []
         self.traffic: deque = deque(maxlen=500)
         self.traffic_filter = {"TX": True, "RX": True, "SYS": True, "ERROR": True, "WARN": True}
@@ -194,18 +190,9 @@ class ChargerDebugApp:
         self._last_timestamp_update = 0  # For timestamp caching
         self._module_lookup = {}  # {(addr, driver): idx} for O(1) lookup
         self._frame_queue = queue.Queue()  # Thread-safe queue for serial frames
-        self._monitor_poll_id = None  # Timer ID for cancellation
-        self._monitor_sequence = (
-            (DebugCmd.READ_ALL, DebugRsp.ALL_MODULES, "modules"),
-            (DebugCmd.GET_SYSTEM, DebugRsp.SYSTEM_INFO, "system"),
-            (DebugCmd.READ_BMS, DebugRsp.BMS_DATA, "bms"),
-        )
-        self._monitor_step = 0
-        self._monitor_pending_cmd = None
-        self._monitor_pending_rsp = None
-        self._monitor_pending_kind = None
-        self._monitor_retry_count = 0
-        self._monitor_sent_at = 0.0
+        # MCU auto-pushes ALL_MODULES/SYSTEM_INFO/BMS_DATA every 1s once ENTER
+        # is sent (DebugProtocol_SendStream) — these timestamps just track
+        # freshness for the UI, they don't drive any request scheduler.
         self._last_module_rx = 0.0
         self._last_system_rx = 0.0
         self._last_bms_rx = 0.0
@@ -222,6 +209,7 @@ class ChargerDebugApp:
         self.process_vars: Dict[str, tk.StringVar] = {}
         self.cfg_vars: Dict[str, tk.StringVar] = {}
         self.cfg_checks: Dict[str, tk.BooleanVar] = {}
+        self._pending_charge_config = None  # Config received before tab is built
 
         # Build UI
         self._build_ui()
@@ -263,10 +251,14 @@ class ChargerDebugApp:
                 except queue.Empty:
                     break
 
-            # Process coalesced frames
-            for cmd, payload in self._latest_frames.items():
-                self._process_frame(cmd, payload)
+            # Process coalesced frames — always clear dict even on exception
+            frames_to_process = list(self._latest_frames.items())
             self._latest_frames.clear()
+            for cmd, payload in frames_to_process:
+                try:
+                    self._process_frame(cmd, payload)
+                except Exception as exc:
+                    print(f"[GUI] _process_frame error cmd=0x{cmd:02X}: {exc}")
 
             if self._ui_dirty:
                 self._update_module_grid()
@@ -434,7 +426,11 @@ class ChargerDebugApp:
         if index == 2 and not self._charge_config_built:
             self._build_charge_config_tab(self.page_charge_config)
             self._charge_config_built = True
-            self.root.after_idle(self._cfg_sync_scrollregion if hasattr(self, '_charge_cfg_canvas') else lambda: None)
+            # Scrollregion is now handled by the event binding on the inner frame
+            # Apply any config received from MCU before the tab was built
+            if self._pending_charge_config is not None:
+                self._load_charge_config_to_ui(self._pending_charge_config)
+                self._pending_charge_config = None
 
         pages = (self.page_control, self.page_monitor, self.page_charge_config)
         if 0 <= index < len(pages):
@@ -1236,6 +1232,11 @@ class ChargerDebugApp:
         toolbar.grid(row=0, column=0, sticky="ew", pady=(0, 6))
         tk.Label(toolbar, text="Charge Cycle Configuration", font=("Segoe UI", 10, "bold"), bg="#F0F0F0").pack(side=tk.LEFT)
 
+        # Status label — shows result of Read/Write MCU operations inline
+        self._cfg_status_var = tk.StringVar(value="")
+        tk.Label(toolbar, textvariable=self._cfg_status_var, font=("Segoe UI", 9),
+                 bg="#F0F0F0", fg="#0066CC").pack(side=tk.LEFT, padx=(12, 0))
+
         # Right side buttons
         btn_frame = tk.Frame(toolbar, bg="#F0F0F0")
         btn_frame.pack(side=tk.RIGHT)
@@ -1991,13 +1992,6 @@ class ChargerDebugApp:
     def _toggle_connect(self):
         """Toggle connection"""
         if self.serial.is_connected():
-            # Cancel the single serialized monitor scheduler.
-            if self._monitor_poll_id:
-                self.root.after_cancel(self._monitor_poll_id)
-                self._monitor_poll_id = None
-            self._monitor_pending_cmd = None
-            self._monitor_pending_rsp = None
-            self._monitor_pending_kind = None
             self.serial.send(DebugCmd.EXIT)
             self.serial.disconnect()
             self.btn_connect.configure(text="Connect")
@@ -2019,12 +2013,11 @@ class ChargerDebugApp:
                 self.btn_connect.configure(text="Disconnect")
                 self.lbl_status.configure(text=f"Connected ({port})", fg="green")
                 self._add_traffic("SYS", "---", 0, b"", f"Connected to {port}")
+                # ENTER arms the MCU's 1s auto-push of ALL_MODULES/SYSTEM_INFO/
+                # BMS_DATA (DebugProtocol_SendStream) — the app no longer polls
+                # for these on a timer, it just reacts to what the MCU pushes.
                 self.serial.send(DebugCmd.ENTER)
                 self.root.after(100, self._sync_driver)
-                self._monitor_step = 0
-                self._monitor_pending_cmd = None
-                self._monitor_pending_rsp = None
-                self.root.after(200, self._monitor_poll)
                 self.root.after(300, self._request_charge_config)
 
     def _sync_driver(self):
@@ -2064,107 +2057,37 @@ class ChargerDebugApp:
         self._add_traffic("TX", "---", 2, bytes([addr & 0xFF, 0]),
                           f"SET_MODULE_ADDR: 0x{addr & 0xFF:02X}")
 
-    def _schedule_monitor_poll(self, delay_ms=20):
-        if self._monitor_poll_id:
-            self.root.after_cancel(self._monitor_poll_id)
-        self._monitor_poll_id = self.root.after(delay_ms, self._monitor_poll)
-
-    def _monitor_poll(self):
-        """Serialize ALL_MODULES -> SYSTEM_INFO -> BMS_DATA polling."""
-        self._monitor_poll_id = None
-        if not self.serial or not self.serial.is_connected():
-            return
-
-        now = time.monotonic()
-        if self._monitor_pending_cmd is not None:
-            elapsed_ms = (now - self._monitor_sent_at) * 1000.0
-            if elapsed_ms < self.monitor_request_timeout_ms:
-                self._schedule_monitor_poll(50)
-                return
-
-            if self._monitor_retry_count < self.monitor_max_retries:
-                self._monitor_retry_count += 1
-                self.serial.send(self._monitor_pending_cmd)
-                self._monitor_sent_at = now
-                self._add_traffic(
-                    "WARN", "---", 0, b"",
-                    f"Monitor retry {self._monitor_retry_count}: "
-                    f"0x{int(self._monitor_pending_cmd):02X}", "WARN"
-                )
-                self._schedule_monitor_poll(50)
-                return
-
-            self._add_traffic(
-                "ERROR", "---", 0, b"",
-                f"Monitor timeout: 0x{int(self._monitor_pending_cmd):02X}",
-                "ERROR"
-            )
-            self._monitor_pending_cmd = None
-            self._monitor_pending_rsp = None
-            self._monitor_pending_kind = None
-            self._monitor_step = (self._monitor_step + 1) % len(self._monitor_sequence)
-            self._schedule_monitor_poll(20)
-            return
-
-        cmd, expected_rsp, kind = self._monitor_sequence[self._monitor_step]
-        if self.serial.send(cmd):
-            self._monitor_pending_cmd = cmd
-            self._monitor_pending_rsp = expected_rsp
-            self._monitor_pending_kind = kind
-            self._monitor_retry_count = 0
-            self._monitor_sent_at = now
-        else:
-            self._add_traffic("ERROR", "---", 0, b"",
-                              f"Monitor TX failed: 0x{int(cmd):02X}", "ERROR")
-            self._monitor_step = (self._monitor_step + 1) % len(self._monitor_sequence)
-        self._schedule_monitor_poll(50)
-
-    def _monitor_response_received(self, cmd):
-        """Advance the serialized monitor scheduler after the expected response."""
-        if self._monitor_pending_rsp != cmd:
-            return
-
-        kind = self._monitor_pending_kind
-        now = time.monotonic()
-        if kind == "modules":
-            self._last_module_rx = now
-        elif kind == "system":
-            self._last_system_rx = now
-        elif kind == "bms":
-            self._last_bms_rx = now
-
-        self._monitor_pending_cmd = None
-        self._monitor_pending_rsp = None
-        self._monitor_pending_kind = None
-        self._monitor_retry_count = 0
-        self._monitor_step = (self._monitor_step + 1) % len(self._monitor_sequence)
-
-        delay = self.monitor_poll_ms if self._monitor_step == 0 else 20
-        self._schedule_monitor_poll(delay)
-
     def _request_bms_snapshot(self):
-        """Request one-shot BMS snapshot."""
+        """Request one-shot BMS snapshot on demand (MCU also auto-pushes this every 1s)."""
         if not self.serial or not self.serial.is_connected():
             messagebox.showwarning("Warning", "Connect to device first")
             return
-        # Route manual BMS reads through the same serialized scheduler.
-        if self._monitor_poll_id:
-            self.root.after_cancel(self._monitor_poll_id)
-        self._monitor_pending_cmd = None
-        self._monitor_pending_rsp = None
-        self._monitor_pending_kind = None
-        self._monitor_retry_count = 0
-        self._monitor_step = 2
-        self._schedule_monitor_poll(0)
-        self._add_traffic("SYS", "---", 0, b"", "READ_BMS snapshot queued")
+        self.serial.send(DebugCmd.READ_BMS)
+        self._add_traffic("TX", "---", 0, b"", "READ_BMS requested")
 
     def _request_charge_config(self):
         """Request charge-cycle config snapshot from MCU."""
         if not self.serial or not self.serial.is_connected():
             messagebox.showwarning("Warning", "Connect to device first")
             return
-        self.serial.send(DebugCmd.GET_CHARGE_CFG)
+        print(f"[DEBUG] Sending GET_CHARGE_CFG (0x19), connected={self.serial.is_connected()}")
+        ok = self.serial.send(DebugCmd.GET_CHARGE_CFG)
+        print(f"[DEBUG] GET_CHARGE_CFG send result: {ok}")
         self._add_traffic("TX", "---", 0, b"", "GET_CHARGE_CFG")
+        # Show inline status on Charge Config tab if it's built
+        if self._charge_config_built and hasattr(self, '_cfg_status_var'):
+            self._cfg_status_var.set("⏳ Waiting for MCU response...")
+            # Timeout: if no response in 3 seconds, show error in status label
+            if hasattr(self, '_cfg_read_timeout_id') and self._cfg_read_timeout_id:
+                self.root.after_cancel(self._cfg_read_timeout_id)
+            self._cfg_read_timeout_id = self.root.after(3000, self._on_cfg_read_timeout)
+
+    def _on_cfg_read_timeout(self):
+        """Called if MCU does not respond to GET_CHARGE_CFG within 3 seconds."""
+        self._cfg_read_timeout_id = None
+        if self._charge_config_built and hasattr(self, '_cfg_status_var'):
+            self._cfg_status_var.set("❌ No response from MCU — check connection")
+        print("[DEBUG] GET_CHARGE_CFG timeout: no response from MCU")
 
     def _load_charge_config_defaults(self):
         defaults = ChargeCycleConfig(
@@ -2763,16 +2686,12 @@ class ChargerDebugApp:
         self.root.after(100, self._force_quick_poll)
 
     def _force_quick_poll(self, count=0):
-        """Force a quick poll of system data to update UI instantly after user command."""
+        """One-shot request for fresh module/system/BMS data right after a user
+        command, so the UI doesn't have to wait for the next 1s auto-push."""
         if self.serial and self.serial.is_connected():
-            if self._monitor_poll_id:
-                self.root.after_cancel(self._monitor_poll_id)
-            self._monitor_pending_cmd = None
-            self._monitor_pending_rsp = None
-            self._monitor_pending_kind = None
-            self._monitor_retry_count = 0
-            self._monitor_step = 0
-            self._schedule_monitor_poll(0)
+            self.serial.send(DebugCmd.READ_ALL)
+            self.serial.send(DebugCmd.GET_SYSTEM)
+            self.serial.send(DebugCmd.READ_BMS)
 
     def _set_var(self, var: tk.StringVar, new_value: str):
         """Only call var.set() if value actually changed — avoids unnecessary widget redraws."""
@@ -3148,7 +3067,7 @@ class ChargerDebugApp:
             for mod_data in result:
                 self._update_module_from_data(mod_data)
             self._ui_dirty = True
-            self._monitor_response_received(cmd)
+            self._last_module_rx = time.monotonic()
 
         elif cmd == DebugRsp.MODULE_DATA and isinstance(result, ModuleData):
             self._update_module_from_data(result)
@@ -3157,19 +3076,48 @@ class ChargerDebugApp:
         elif cmd == DebugRsp.BMS_DATA and isinstance(result, BMSData):
             self.bms_data = result
             self._ui_dirty = True
-            self._monitor_response_received(cmd)
+            self._last_bms_rx = time.monotonic()
 
         elif cmd == DebugRsp.SYSTEM_INFO and isinstance(result, SystemInfo):
             self.system_info = result
             self._ui_dirty = True
-            self._monitor_response_received(cmd)
+            self._last_system_rx = time.monotonic()
+
+        elif cmd == DebugRsp.ERROR:
+            err_msg = str(result)
+            print(f"[DEBUG] ERROR frame received: {err_msg}")
+            
+            # Cancel timeout if it exists
+            if hasattr(self, '_cfg_read_timeout_id') and self._cfg_read_timeout_id:
+                self.root.after_cancel(self._cfg_read_timeout_id)
+                self._cfg_read_timeout_id = None
+                
+            if self._charge_config_built and hasattr(self, '_cfg_status_var'):
+                self._cfg_status_var.set(f"❌ Error: {err_msg}")
+            messagebox.showerror("MCU Error", f"MCU returned error: {err_msg}")
 
         elif cmd == DebugRsp.CHARGE_CFG:
+            print(f"[DEBUG] CHARGE_CFG received: payload={len(payload)}B, parse_result={type(result).__name__}, tab_built={self._charge_config_built}")
+            
+            # Cancel timeout if it exists
+            if hasattr(self, '_cfg_read_timeout_id') and self._cfg_read_timeout_id:
+                self.root.after_cancel(self._cfg_read_timeout_id)
+                self._cfg_read_timeout_id = None
+                
             if isinstance(result, ChargeCycleConfig):
-                self._load_charge_config_to_ui(result)
-                self._add_traffic("SYS", "---", len(payload), payload, "Charge config updated from MCU")
+                self._add_traffic("SYS", "---", len(payload), payload, "Charge config received from MCU")
+                if self._charge_config_built:
+                    self._load_charge_config_to_ui(result)
+                    if hasattr(self, '_cfg_status_var'):
+                        self._cfg_status_var.set("✅ Config loaded successfully")
+                else:
+                    # Tab not yet built — store for later, apply when user opens the tab
+                    self._pending_charge_config = result
                 messagebox.showinfo("Info", "Charge config loaded from MCU successfully")
             else:
+                print(f"[DEBUG] CHARGE_CFG parse FAILED: result={result!r}")
+                if self._charge_config_built and hasattr(self, '_cfg_status_var'):
+                    self._cfg_status_var.set("❌ Failed to parse config")
                 messagebox.showerror("Error", f"Failed to parse charge config: {result}")
 
     def _update_module_from_data(self, data: ModuleData):
@@ -3258,6 +3206,9 @@ class ChargerDebugApp:
         """Handle log message — capped to prevent memory leak"""
         if len(self.log_entries) < 2000:
             self.log_entries.append(msg)
+        # Print serial-level RX/TX log to console for diagnostics
+        if "0x97" in msg or "GET_CHARGE" in msg or "CHARGE_CFG" in msg or "Bad CRC" in msg:
+            print(f"[SERIAL] {msg}")
 
     def _get_timestamp(self):
         """Get current timestamp"""

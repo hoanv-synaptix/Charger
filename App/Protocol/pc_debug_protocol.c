@@ -316,10 +316,21 @@ void DebugProtocol_SendStream(void)
     g_last_stream_tick = now;
 
     uint8_t buf[PC_MAX_PAYLOAD];
-    uint16_t len = DebugProtocol_BuildAllModulesData(buf, sizeof(buf));
+    uint16_t len;
 
+    len = DebugProtocol_BuildAllModulesData(buf, sizeof(buf));
     if (len > 0) {
         PC_Protocol_SendFrame(DEBUG_RSP_ALL_MODULES, buf, len);
+    }
+
+    len = DebugProtocol_BuildSystemInfo(buf, sizeof(buf));
+    if (len > 0) {
+        PC_Protocol_SendFrame(DEBUG_RSP_SYSTEM_INFO, buf, len);
+    }
+
+    len = DebugProtocol_BuildBMSData(buf, sizeof(buf));
+    if (len > 0) {
+        PC_Protocol_SendFrame(DEBUG_RSP_BMS_DATA, buf, len);
     }
 }
 

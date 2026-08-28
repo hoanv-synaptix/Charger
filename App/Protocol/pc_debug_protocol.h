@@ -35,7 +35,7 @@
 
 /* ============== Constants ============== */
 #define DEBUG_MAX_MODULES         8
-#define DEBUG_STREAM_INTERVAL_MS  200
+#define DEBUG_STREAM_INTERVAL_MS  1000
 
 /* ============== Data Structures ============== */
 

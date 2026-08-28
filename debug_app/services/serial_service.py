@@ -10,7 +10,16 @@ SOF1 = 0xAA
 SOF2 = 0x55
 CRC_POLY = 0x07
 MAX_PAYLOAD = 255
+DEBUG_SERIAL = True  # Enable raw serial logging
+DEBUG_LOG_FILE = "serial_debug.log"
 
+def _debug_log(msg: str):
+    if DEBUG_SERIAL:
+        try:
+            with open(DEBUG_LOG_FILE, "a") as f:
+                f.write(f"[{time.strftime('%H:%M:%S')}] {msg}\n")
+        except:
+            pass
 
 def crc8(data: bytes) -> int:
     """Calculate CRC8 checksum"""
@@ -84,6 +93,8 @@ class SerialService:
         try:
             frame = build_frame(cmd, payload)
             self.port.write(frame)
+            if DEBUG_SERIAL:
+                _debug_log(f"[SERIAL TX] cmd=0x{cmd:02X} len={len(payload)} frame={frame.hex().upper()}")
             self._log(f"TX: cmd=0x{cmd:02X} len={len(payload)} data={payload.hex()}")
             return True
         except Exception as e:
@@ -120,11 +131,15 @@ class SerialService:
 
             if idx < 0:
                 # No SOF found, clear buffer
+                if DEBUG_SERIAL:
+                    _debug_log(f"[SERIAL RX] No SOF in {len(buf)} bytes, clearing: {buf[:16].hex().upper()}...")
                 buf.clear()
                 return
 
             if idx > 0:
                 # Discard bytes before SOF
+                if DEBUG_SERIAL:
+                    _debug_log(f"[SERIAL RX] Skipping {idx} bytes before SOF")
                 del buf[:idx]
 
             if len(buf) < 4:
@@ -133,8 +148,13 @@ class SerialService:
             cmd = buf[2]
             plen = buf[3]
 
+            if DEBUG_SERIAL and len(buf) == 4:
+                _debug_log(f"[SERIAL RX] Header: cmd=0x{cmd:02X} plen={plen}, waiting for {4+plen+1} total bytes")
+
             if plen > MAX_PAYLOAD:
                 # Invalid length, skip SOF1 and try again
+                if DEBUG_SERIAL:
+                    _debug_log(f"[SERIAL RX] Invalid plen={plen}, skipping SOF")
                 del buf[0]
                 continue
 
@@ -149,11 +169,16 @@ class SerialService:
 
             # Verify CRC
             crc_data = frame[2:4 + plen]
-            if crc8(crc_data) != frame[-1]:
-                self._log(f"RX Bad CRC: expected 0x{crc8(crc_data):02X}, got 0x{frame[-1]:02X}")
+            expected_crc = crc8(crc_data)
+            if expected_crc != frame[-1]:
+                if DEBUG_SERIAL:
+                    _debug_log(f"[SERIAL RX] CRC FAIL cmd=0x{cmd:02X} plen={plen} expected=0x{expected_crc:02X} got=0x{frame[-1]:02X}")
+                self._log(f"RX Bad CRC: expected 0x{expected_crc:02X}, got 0x{frame[-1]:02X}")
                 continue
 
             payload = frame[4:4 + plen]
+            if DEBUG_SERIAL:
+                _debug_log(f"[SERIAL RX] Frame OK cmd=0x{cmd:02X} plen={plen} payload={payload[:8].hex().upper()}{'...' if plen > 8 else ''}")
             self._log(f"RX: cmd=0x{cmd:02X} len={len(payload)}")
 
             # Notify callbacks
