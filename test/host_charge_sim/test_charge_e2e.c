@@ -735,6 +735,34 @@ static bool test_rated_current_seeded_from_config(void)
     return true;
 }
 
+/* Regression test: Maxwell's poll cycle now includes 0x0005 (input DC
+ * voltage) and 0x004B (input working mode), added 2026-08-29 after
+ * cross-checking the driver against the vendor PDF's full register table
+ * found they were defined (priv/chg_lib_protocol.h) but never polled.
+ * IDLE's keepalive poll only advances one register per 1000ms, so this
+ * drives long enough (MXR_POLL_REG_COUNT=17 seconds' worth, plus margin)
+ * to guarantee a full cycle completes before checking. */
+static bool test_maxwell_input_diagnostics_polled(void)
+{
+    printf("Running test_maxwell_input_diagnostics_polled...\n");
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_MAXWELL, NULL), "setup failed");
+    set_healthy_bms(400.0f, 50);
+
+    /* Stay in IDLE (should_run stays false -- no ChargeController_Start())
+     * long enough for the round-robin poll to cycle through all 17
+     * registers at least once. */
+    drive_ms(20000U);
+
+    CHG_LIB_ModuleView_t mv;
+    ASSERT(CHG_LIB_GetModuleView(0, &mv), "module view unavailable");
+    ASSERT(mv.input_dc_voltage > 0.0f, "input_dc_voltage (0x0005) should have been polled by now");
+    ASSERT(mv.input_mode != 0U, "input_mode (0x004B) should have been polled by now");
+    ASSERT(mv.input_mode == 3U, "sim reports 3 = three-phase AC");
+
+    printf("[PASS] test_maxwell_input_diagnostics_polled\n");
+    return true;
+}
+
 /* ================================================================== */
 
 int main(void)
@@ -757,6 +785,7 @@ int main(void)
     pass &= test_driver_module_fault(CHARGE_MODULE_TYPE_MAXWELL, "maxwell");
     pass &= test_driver_fault_recovery_debounce(CHARGE_MODULE_TYPE_MAXWELL, "maxwell");
     pass &= test_rated_current_seeded_from_config();
+    pass &= test_maxwell_input_diagnostics_polled();
 
     pass &= test_bms_offline();
     pass &= test_bms_offline_then_recovers();

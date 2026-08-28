@@ -61,7 +61,7 @@
 #define MXR_OFFLINE_TIMEOUT_MS 10000
 #define MXR_RECOVERY_DELAY_MS 3000
 #define MXR_MAX_RETRIES 3
-#define MXR_POLL_REG_COUNT 15
+#define MXR_POLL_REG_COUNT 17
 #define MXR_START_MAX_ATTEMPTS      3U
 #define MXR_START_VOLTAGE_DELAY_MS  50U
 #define MXR_START_CURRENT_DELAY_MS  50U
@@ -161,6 +161,14 @@ static const uint16_t g_poll_regs[MXR_POLL_REG_COUNT] = {
  CHG_LIB_REG_AC_PHASE_A,
  CHG_LIB_REG_AC_PHASE_B,
  CHG_LIB_REG_AC_PHASE_C,
+ /* Input diagnostics -- these two registers were defined in
+  * priv/chg_lib_protocol.h (0x0005/0x004B, per the vendor PDF's full
+  * register table) but never actually added to the poll cycle. Added
+  * 2026-08-29: 0x004B in particular is a genuinely useful diagnostic
+  * (tells you AC single-phase/3-phase/DC/mode-mismatch -- the kind of
+  * thing a technician needs when troubleshooting input wiring). */
+ CHG_LIB_REG_INPUT_DC_VOLTAGE,
+ CHG_LIB_REG_INPUT_MODE_RD,
 };
 
 /* ============== CAN Frame ID Builder ============== */
@@ -413,6 +421,14 @@ static void apply_response(MXR_Internal_t *m, const uint8_t *data, uint32_t now)
  case CHG_LIB_REG_AC_PHASE_A: m->view.ac_phase_a_voltage = CHG_LIB_ProtocolBEToFloat(&data[4]); break;
  case CHG_LIB_REG_AC_PHASE_B: m->view.ac_phase_b_voltage = CHG_LIB_ProtocolBEToFloat(&data[4]); break;
  case CHG_LIB_REG_AC_PHASE_C: m->view.ac_phase_c_voltage = CHG_LIB_ProtocolBEToFloat(&data[4]); break;
+ case CHG_LIB_REG_INPUT_DC_VOLTAGE: m->view.input_dc_voltage = CHG_LIB_ProtocolBEToFloat(&data[4]); break;
+ case CHG_LIB_REG_INPUT_MODE_RD: {
+     /* Integer register (MXR_RESP_INT): 1=1-phase AC, 2=DC, 3=3-phase AC,
+      * 5=mode mismatch, per the vendor PDF's Table 1. */
+     uint32_t raw = CHG_LIB_ProtocolBEToU32(&data[4]);
+     m->view.input_mode = (raw <= 0xFFU) ? (uint8_t)raw : 0U;
+     break;
+ }
  case CHG_LIB_REG_SET_POWER:
  case CHG_LIB_REG_SET_VOLTAGE:
  case CHG_LIB_REG_SET_CURR_LIMIT:

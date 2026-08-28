@@ -178,6 +178,13 @@ static void sim_maxwell_tick_one(SimModuleState_t *sm)
         case CHG_LIB_REG_AC_PHASE_C:
             CHG_LIB_ProtocolFloatToBE(230.0f, &resp[4]);
             break;
+        case CHG_LIB_REG_INPUT_DC_VOLTAGE:
+            CHG_LIB_ProtocolFloatToBE(400.0f, &resp[4]);
+            break;
+        case CHG_LIB_REG_INPUT_MODE_RD:
+            resp[0] = MXR_RESP_INT;
+            CHG_LIB_ProtocolU32ToBE(3U, &resp[4]); /* 3 = three-phase AC */
+            break;
         case CHG_LIB_REG_ALARM_STATUS:
             resp[0] = MXR_RESP_INT;
             CHG_LIB_ProtocolU32ToBE(sm->maxwell_alarm_raw, &resp[4]);

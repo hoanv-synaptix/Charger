@@ -127,6 +127,18 @@ uint16_t DebugProtocol_BuildModuleData(uint8_t idx, uint8_t *data, uint16_t max_
     mod->timeout_count = view.stats.timeout_count;
     mod->recovery_count = view.stats.recovery_count;
 
+    /* Vendor extension: Maxwell-only input diagnostics (0x0005 input DC
+     * voltage, 0x004B input working mode) -- added 2026-08-29, reusing
+     * this already-reserved field instead of growing the wire struct
+     * (would break every existing offset in debug_app's Python parser).
+     * vendor_data[0..3] = input_dc_voltage (float, native byte order,
+     * same as every other float field in this struct); vendor_data[4] =
+     * input_mode. Zero/unset on drivers that don't populate these
+     * (Lianming/TonHe). */
+    memcpy(mod->vendor_data, &view.input_dc_voltage, sizeof(float));
+    mod->vendor_data[4] = view.input_mode;
+    mod->vendor_data_len = 5U;
+
     return sizeof(DebugModuleData_t);
 }
 

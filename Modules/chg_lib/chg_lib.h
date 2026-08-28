@@ -127,6 +127,14 @@ typedef struct {
     float            rated_power;          /* W (Maxwell: 0x0011) */
     float            rated_current;        /* A (Maxwell: 0x0012) */
 
+    /* Input diagnostics (Maxwell only: 0x0005/0x004B were defined in
+     * priv/chg_lib_protocol.h but never polled or exposed -- added
+     * 2026-08-29 after cross-checking the driver against the vendor PDF's
+     * full register table found this gap). 0 on any driver that doesn't
+     * poll these (Lianming/TonHe leave them at their zero-init default). */
+    float            input_dc_voltage;     /* V (Maxwell: 0x0005) */
+    uint8_t          input_mode;           /* Maxwell 0x004B: 1=1-phase AC, 2=DC, 3=3-phase AC, 5=mode mismatch; 0=unknown/not polled */
+
     /* Alarms */
     uint32_t         alarm_status;         /* Raw alarm bits (for PC/Telemetry) */
     CHG_LIB_AlarmFlag_t alarm_flags;       /* Standardized flags (for Firmware logic) */
