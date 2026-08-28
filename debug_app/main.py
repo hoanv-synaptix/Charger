@@ -179,10 +179,48 @@ class ChargerDebugApp:
         self.charge_config: Optional[ChargeCycleConfig] = None
         self.active_alarm_keys = set()
         self._syncing_module_selection = False
+        # (addr, driver_id) keys the user explicitly clicked Remove/Clear
+        # for -- the wire protocol has no "un-register module" command, so
+        # the MCU keeps reporting these via ALL_MODULES; this set tells
+        # _update_module_from_data()'s auto-discovery path to leave them
+        # alone instead of silently recreating the row. Cleared for a given
+        # key the moment the user re-Adds it (see _add_module()).
+        self._user_removed_keys: set = set()
+
+        # Charge Graph tab state — bounded ring buffer of (timestamp, voltage,
+        # current) samples for the currently-selected module, ~10 minutes at
+        # the MCU's ~1s telemetry cadence. Populated from
+        # _update_module_from_data() (real telemetry arrival), never from the
+        # GUI tick, and only redrawn while the tab is actually visible — see
+        # _append_charge_graph_sample()/_redraw_charge_graph().
+        self.charge_graph_history: deque = deque(maxlen=600)
+        self._charge_graph_module_idx: Optional[int] = None
+        self._charge_graph_built = False
+        self._charge_graph_active = False
+        # Wall-clock time of the first sample since the last clear/selection
+        # change -- the X axis shows elapsed time since THIS, not since
+        # whatever happens to be the oldest point still in the (bounded)
+        # deque, so a long session's axis keeps meaning "time since this
+        # charge started" even after old points have rolled out of view.
+        self._charge_graph_t0: Optional[float] = None
 
         # Throttling state
         self._ui_dirty = False
         self._traffic_dirty = False
+        # Timestamp of the last window resize or mousewheel-scroll event
+        # (see _on_root_configure()/_bind_mousewheel_to_canvas()).
+        # _gui_update_loop() checks this and skips its widget-content-update
+        # pass while an interaction is still in progress -- Tk's own
+        # geometry manager is already repainting the window during a resize
+        # or scroll drag, and layering the app's independent ~60fps
+        # .configure()/treeview-insert churn on top of that at the same time
+        # is what read as screen tearing across every tab, not just charts
+        # (confirmed with the user 2026-08-29: happens on any page, not
+        # just the one canvas-based tab). The queued frames are still
+        # drained/coalesced every tick either way, so no telemetry is lost
+        # -- only applying it to widgets is deferred until the interaction
+        # settles.
+        self._last_interaction_time = 0.0
         self._pending_traffic_inserts = []
         self._user_scrolling_traffic = False
         self._error_count = 0  # Cache error count to avoid O(n) sum every cycle
@@ -227,6 +265,10 @@ class ChargerDebugApp:
         self.root.bind("<F6>", lambda e: self._stop())
         self.root.bind("<F9>", lambda e: self._estop())
         self.root.bind("<Control-r>", lambda e: self._refresh_ports())
+        # See _last_interaction_time's docstring in __init__ -- this is the
+        # resize half of the anti-tearing throttle; the scroll half is in
+        # _bind_mousewheel_to_canvas().
+        self.root.bind("<Configure>", self._on_root_configure)
 
         # Start UI loop
         self.root.after(100, self._gui_update_loop)
@@ -234,6 +276,17 @@ class ChargerDebugApp:
     def _responsive_min_width(self, preferred: int) -> int:
         """Keep wide desktop layouts usable without forcing a huge viewport."""
         return max(820, min(preferred, self.screen_width - 40))
+
+    def _on_root_configure(self, _event=None):
+        """Root window resize -- see _last_interaction_time in __init__."""
+        self._last_interaction_time = time.perf_counter()
+
+    # How long after the last resize/scroll event _gui_update_loop() keeps
+    # deferring its widget-content-update pass. Long enough to cover the
+    # gap between individual events in a continuous drag/scroll (they fire
+    # much faster than this), short enough that releasing the mouse still
+    # feels instant.
+    INTERACTION_SETTLE_S = 0.15
 
     def _gui_update_loop(self):
         """GUI update loop with coalescing + 8ms time budget to keep UI responsive."""
@@ -260,7 +313,18 @@ class ChargerDebugApp:
                 except Exception as exc:
                     print(f"[GUI] _process_frame error cmd=0x{cmd:02X}: {exc}")
 
-            if self._ui_dirty:
+            # Defer all widget-content updates while a resize or scroll is
+            # still settling (see _last_interaction_time in __init__) --
+            # Tk's own geometry manager / the OS compositor is already
+            # repainting the window for that resize/scroll right now, and
+            # piling this loop's independent ~60fps .configure()/treeview
+            # churn on top of it at the same moment is what read as
+            # tearing across every tab, not just one. Frames stay queued
+            # (_ui_dirty/_traffic_dirty stay True) so nothing is lost --
+            # this only pushes back *applying* it to widgets a few ticks.
+            interacting = (time.perf_counter() - self._last_interaction_time) < self.INTERACTION_SETTLE_S
+
+            if self._ui_dirty and not interacting:
                 self._update_module_grid()
                 self._update_detail()
                 self._update_charge_process()
@@ -268,7 +332,7 @@ class ChargerDebugApp:
                 self._check_alarms()
                 self._ui_dirty = False
 
-            if self._traffic_dirty:
+            if self._traffic_dirty and not interacting:
                 # Skip traffic insert/delete if user is scrolling to prevent tearing
                 # But still update count labels
                 if not self._user_scrolling_traffic:
@@ -354,14 +418,24 @@ class ChargerDebugApp:
         config_tab.grid_rowconfigure(0, weight=1)
         self.page_charge_config = config_tab
 
+        graph_tab = ttk.Frame(self.page_host)
+        graph_tab.grid_columnconfigure(0, weight=1)
+        # Unlike the other 3 tabs (single content row), this tab has a
+        # fixed-height header row (0) plus an expanding canvas row (1) --
+        # row-weight config for both lives in _build_charge_graph_tab()
+        # itself, not here, so row 0 doesn't also stretch.
+        self.page_charge_graph = graph_tab
+
         self.page_control.grid(row=0, column=0, sticky="nsew")
         self.page_monitor.grid(row=0, column=0, sticky="nsew")
         self.page_charge_config.grid(row=0, column=0, sticky="nsew")
+        self.page_charge_graph.grid(row=0, column=0, sticky="nsew")
 
         self._build_monitor_tab(monitor_tab)
         self._build_control_tab(control_tab)
-        # Charge Config tab is lazy-loaded on first switch to tab 2
+        # Charge Config and Charge Graph tabs are lazy-loaded on first switch
         self._charge_config_built = False
+        self._charge_graph_built = False
         self._set_active_tab(0)
 
         # Row 3: Status bar (28px fixed)
@@ -420,8 +494,38 @@ class ChargerDebugApp:
         )
         self.btn_tab_charge_config.pack(side=tk.LEFT, padx=(2, 0))
 
+        self.btn_tab_charge_graph = tk.Button(
+            tabs,
+            text="Charge Graph",
+            command=lambda: self._set_active_tab(3),
+            font=("Segoe UI", 9),
+            relief="solid",
+            bd=1,
+            padx=18,
+            pady=5,
+            cursor="hand2",
+            highlightthickness=0,
+        )
+        self.btn_tab_charge_graph.pack(side=tk.LEFT, padx=(2, 0))
+
     def _set_active_tab(self, index: int):
-        """Switch visible page via tkraise() — no grid_remove/grid to avoid flicker."""
+        """Switch visible page via tkraise().
+
+        Reverted 2026-08-29: briefly tried grid_remove()/grid() here
+        instead (unmapping inactive pages entirely, on the theory that
+        having all 4 pages still gridded in the same cell was forcing Tk
+        to re-lay-out all of them on every resize). Confirmed with the
+        user that this made things WORSE, not better -- black patches
+        appearing specifically on shrink-then-grow, i.e. regions Tk didn't
+        repaint promptly after a page got unmapped/remapped mid-resize.
+        Back to tkraise()-only, matching the original author's own
+        "no grid_remove/grid to avoid flicker" comment -- they'd already
+        been here. The remaining rendering-during-resize/scroll issue is
+        addressed instead by throttling this app's OWN widget-content
+        updates during an active interaction (see _last_interaction_time /
+        INTERACTION_SETTLE_S in _gui_update_loop()), which doesn't touch
+        widget mapping/geometry at all and is lower-risk.
+        """
         # Lazy-load Charge Config tab on first access (Fix 2)
         if index == 2 and not self._charge_config_built:
             self._build_charge_config_tab(self.page_charge_config)
@@ -432,13 +536,28 @@ class ChargerDebugApp:
                 self._load_charge_config_to_ui(self._pending_charge_config)
                 self._pending_charge_config = None
 
-        pages = (self.page_control, self.page_monitor, self.page_charge_config)
+        # Lazy-load Charge Graph tab on first access — same reasoning as
+        # Charge Config: don't pay for the canvas/history buffers until the
+        # operator actually opens this tab.
+        if index == 3 and not self._charge_graph_built:
+            self._build_charge_graph_tab(self.page_charge_graph)
+            self._charge_graph_built = True
+
+        # The graph only needs to redraw while it's the visible page — track
+        # that here so _append_charge_graph_sample() can skip render work
+        # entirely for every sample that arrives while another tab is shown.
+        self._charge_graph_active = (index == 3)
+        if self._charge_graph_active and self._charge_graph_built:
+            self._redraw_charge_graph()
+
+        pages = (self.page_control, self.page_monitor, self.page_charge_config, self.page_charge_graph)
         if 0 <= index < len(pages):
             pages[index].tkraise()
         titles = (
             "Charger Debug App - UI v3 BMS - Control Page",
             "Charger Debug App - UI v3 BMS - Monitor Page",
             "Charger Debug App - UI v3 BMS - Charge Config Page",
+            "Charger Debug App - UI v3 BMS - Charge Graph Page",
         )
         self.root.title(titles[index])
         self._update_tab_buttons(index)
@@ -475,6 +594,15 @@ class ChargerDebugApp:
             borderwidth=1,
             activebackground=active_bg if active_index == 2 else "#F4F4F4",
             activeforeground=active_fg if active_index == 2 else "#222222",
+            highlightbackground=border,
+        )
+        self.btn_tab_charge_graph.configure(
+            bg=active_bg if active_index == 3 else inactive_bg,
+            fg=active_fg if active_index == 3 else inactive_fg,
+            relief="solid",
+            borderwidth=1,
+            activebackground=active_bg if active_index == 3 else "#F4F4F4",
+            activeforeground=active_fg if active_index == 3 else "#222222",
             highlightbackground=border,
         )
 
@@ -515,6 +643,19 @@ class ChargerDebugApp:
 
         # Spacer
         tk.Frame(frm).pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        # Raw serial debug log toggle -- off by default (see
+        # services/serial_service.py's SerialService.set_debug_enabled()
+        # docstring: this used to be a hardcoded-True constant that opened,
+        # wrote, and closed serial_debug.log on every single TX/RX frame on
+        # the serial RX thread, which was the actual root cause behind
+        # reports of the app feeling laggy). Only turn it on when actually
+        # diagnosing a comms issue.
+        self.var_debug_log = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            frm, text="Serial Debug Log", variable=self.var_debug_log,
+            command=lambda: self.serial.set_debug_enabled(self.var_debug_log.get()),
+        ).pack(side=tk.RIGHT, padx=(0, 10))
 
     # =========================================================================
     # LEFT PANEL
@@ -700,6 +841,9 @@ class ChargerDebugApp:
         Uses per-widget binding instead of bind_all to avoid conflicts
         between multiple scrollable canvases."""
         def _on_mousewheel(event):
+            # See _last_interaction_time in __init__ -- scroll half of the
+            # anti-tearing throttle (resize half is _on_root_configure()).
+            self._last_interaction_time = time.perf_counter()
             # Windows: event.delta is typically +/-120
             canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
             return "break"  # Prevent event propagation
@@ -1952,7 +2096,24 @@ class ChargerDebugApp:
                 # BMS_DATA (DebugProtocol_SendStream) — the app no longer polls
                 # for these on a timer, it just reacts to what the MCU pushes.
                 self.serial.send(DebugCmd.ENTER)
-                self.root.after(100, self._sync_driver)
+                # Deliberately NOT auto-sending SET_DRIVER/SET_MODULE_ADDR here
+                # anymore. SET_DRIVER's handler on the MCU wipes and
+                # re-registers the module list as a side effect
+                # (ChargeCycleConfig_Set() -> CHG_LIB_Init(), see B-21/B-23 in
+                # AUDIT_Findings.md) -- sending it unconditionally on every
+                # Connect meant simply opening this app against a charger that
+                # was already mid-cycle could silently drop its module
+                # registration and, ~10s later, fault it out on a module-count
+                # mismatch: connecting the debug tool could stop a live charge
+                # session. Confirmed with the user 2026-08-29 (symptom: app
+                # always shows "Idle" right after Connect even when the
+                # charger is actually running, only recoverable by pressing
+                # STOP then START). Now Connect only reads/observes --
+                # already-registered modules surface on their own via the
+                # ALL_MODULES stream (_update_module_from_data()'s
+                # auto-discovery), and SET_DRIVER/SET_MODULE_ADDR are only
+                # ever sent when the user explicitly changes the driver
+                # dropdown or clicks Add.
                 self.root.after(300, self._request_charge_config)
 
     def _sync_driver(self):
@@ -2426,6 +2587,11 @@ class ChargerDebugApp:
         """Add module"""
         try:
             addr = self._read_addr_entry()
+            # An explicit Add is the user's way of saying "yes, track this
+            # one again" -- undo any earlier Remove/Clear for this exact
+            # key so the ALL_MODULES auto-discovery path (see
+            # _update_module_from_data()) resumes updating it normally.
+            self._user_removed_keys.discard((addr, self.driver_id))
 
             # If this addr+driver is already tracked locally (e.g. a repeat
             # click, or the connect-time auto-sync -- see _sync_module_addr()
@@ -2469,7 +2635,17 @@ class ChargerDebugApp:
             messagebox.showerror("Error", "Invalid address. Use 0x01 or 1-255.")
 
     def _remove_module(self):
-        """Remove selected module"""
+        """Remove selected module.
+
+        Note: this only forgets the module on the app side -- the wire
+        protocol has no "un-register module" command, so the MCU keeps
+        reporting it via the ALL_MODULES stream (~1s) exactly as before.
+        Without _user_removed_keys, _update_module_from_data() would just
+        auto-recreate the same entry on the very next stream frame, making
+        Remove look broken (module reappears on its own). Recording the key
+        here tells that auto-discovery path to leave it alone until the
+        user explicitly re-Adds it (see _add_module()).
+        """
         selection = self.tree_modules.selection()
         if not selection:
             return
@@ -2483,6 +2659,7 @@ class ChargerDebugApp:
                 key = (mod.addr, mod.driver)
                 self._module_lookup.pop(key, None)
                 del self.modules[idx]
+                self._user_removed_keys.add(key)
                 if self.selected_module_idx == idx:
                     self.selected_module_idx = None
                 self._update_module_grid()
@@ -2490,7 +2667,10 @@ class ChargerDebugApp:
                 self._check_alarms()
 
     def _clear_modules(self):
-        """Clear all modules"""
+        """Clear all modules. Same MCU-can't-forget-it caveat as
+        _remove_module() -- mark every key as user-removed so the
+        ALL_MODULES stream doesn't silently repopulate the table."""
+        self._user_removed_keys.update(self._module_lookup.keys())
         self.modules.clear()
         self._module_lookup.clear()  # Clear lookup index
         self.selected_module_idx = None
@@ -2521,6 +2701,13 @@ class ChargerDebugApp:
         self.selected_module_idx = normalized_idx
         self._sync_module_selection_views()
         self._update_detail()
+        # A different module's V/I history is a different chart -- don't mix
+        # them. Reset lazily (only touch the canvas if the tab exists).
+        self.charge_graph_history.clear()
+        self._charge_graph_t0 = None
+        self._charge_graph_module_idx = normalized_idx
+        if self._charge_graph_built:
+            self._redraw_charge_graph()
 
     def _sync_module_selection_views(self):
         self._syncing_module_selection = True
@@ -3089,9 +3276,16 @@ class ChargerDebugApp:
         the very module the MCU had already told the app about, leaving the
         operator stuck with an empty, unselectable table -- see the
         _add_module() fix immediately above this in git history).
+
+        Exception: a key the user explicitly Removed/Cleared
+        (_user_removed_keys) is intentionally NOT auto-recreated here, even
+        though the MCU keeps streaming it -- otherwise Remove would look
+        broken (module reappearing within ~1s on its own).
         """
         # O(1) lookup using dictionary
         key = (data.addr, data.driver_id)
+        if key in self._user_removed_keys:
+            return
         idx = self._module_lookup.get(key)
         mod = self.modules.get(idx) if idx is not None else None
 
@@ -3108,6 +3302,13 @@ class ChargerDebugApp:
         mod.voltage = data.voltage if data.voltage else None
         mod.current = data.current if data.current else None
         mod.current_limit = data.current_limit if data.current_limit else None
+
+        # Charge Graph tab: sample only the currently-selected module, driven
+        # by real telemetry arrival (not the GUI tick) -- see
+        # _append_charge_graph_sample()'s docstring for why this is safe to
+        # do unconditionally here even when the tab has never been opened.
+        if idx == self.selected_module_idx:
+            self._append_charge_graph_sample(mod.voltage, mod.current)
         mod.temp_dcdc = data.temp_dcdc if data.temp_dcdc else None
         mod.temp_ambient = data.temp_ambient if data.temp_ambient else None
         mod.temp_pfc = data.temp_pfc if data.temp_pfc else None
@@ -3128,6 +3329,245 @@ class ChargerDebugApp:
         mod.timeout_count = data.timeout_count
         mod.recovery_count = data.recovery_count
         mod.last_update = time.time()
+
+    # =========================================================================
+    # CHARGE GRAPH TAB — plain tk.Canvas line chart, deliberately not
+    # matplotlib (see AUDIT_Findings.md / this session's lag investigation:
+    # the actual lag came from disk I/O on the serial RX thread, not GUI
+    # rendering, but a FigureCanvasTkAgg redraw loop would still be the
+    # wrong default for a "realtime" chart in an app that just had a
+    # performance pass — every redraw here stays a handful of polyline
+    # draws on a small point history, throttled to real sample arrival and
+    # skipped entirely while the tab isn't visible).
+    # =========================================================================
+
+    # Time gap (seconds) beyond which two consecutive samples are drawn as a
+    # break in the line rather than joined -- telemetry normally arrives
+    # ~1/s, so a >3s gap means the module/BMS genuinely stopped reporting
+    # for a while (offline, fault, tab was hidden) and joining across it
+    # would misleadingly imply continuous data, the way commercial
+    # strip-chart tools (and oscilloscopes) never do.
+    CHARGE_GRAPH_GAP_S = 3.0
+
+    def _build_charge_graph_tab(self, parent):
+        """Real-time Charge Voltage/Current chart for the selected module."""
+        parent.grid_columnconfigure(0, weight=1)
+        parent.grid_rowconfigure(1, weight=1)
+
+        header = tk.Frame(parent, bg="#F0F0F0")
+        header.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 4))
+
+        self.lbl_charge_graph_module = tk.Label(
+            header, text="Select a module to see live chart",
+            font=("Segoe UI", 10, "bold"), bg="#F0F0F0",
+        )
+        self.lbl_charge_graph_module.pack(side=tk.LEFT)
+
+        # "Now" readout -- the latest V/I values, large and color-matched to
+        # the plot lines, right next to the module name. Commercial charging
+        # dashboards always lead with this; a technician glancing at the tab
+        # shouldn't have to hunt the line's right edge or flip to Monitor.
+        self.lbl_charge_graph_now = tk.Label(
+            header, text="", font=("Segoe UI", 11, "bold"), bg="#F0F0F0",
+        )
+        self.lbl_charge_graph_now.pack(side=tk.LEFT, padx=(16, 0))
+
+        ttk.Button(header, text="Clear", command=self._clear_charge_graph, width=8).pack(side=tk.RIGHT)
+
+        canvas_frame = tk.Frame(parent, bg="#FFFFFF", highlightthickness=1, highlightbackground="#B8B8B8")
+        canvas_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
+        canvas_frame.grid_columnconfigure(0, weight=1)
+        canvas_frame.grid_rowconfigure(0, weight=1)
+
+        self.charge_graph_canvas = tk.Canvas(canvas_frame, bg="#FFFFFF", highlightthickness=0)
+        self.charge_graph_canvas.grid(row=0, column=0, sticky="nsew")
+        # Resize -> redraw at the new size. This is the app's only sizing
+        # logic for this tab -- no separate DPI/breakpoint handling needed,
+        # it just always draws to whatever size the canvas actually has.
+        # Debounced resize -> redraw, same after_idle pattern already used
+        # by _build_scrollable_page()'s sync_scrollregion(). A live
+        # window-resize drag fires <Configure> dozens of times per second;
+        # redrawing the full canvas (delete("all") + every line/tick/label)
+        # synchronously on every single one of those events is exactly the
+        # kind of thing that shows up as visible tearing -- the canvas is
+        # mid-repaint again before the previous repaint ever finished.
+        # after_idle collapses a whole burst of events into one redraw once
+        # Tk actually goes idle.
+        self.charge_graph_canvas.bind("<Configure>", self._on_charge_graph_configure)
+
+    def _on_charge_graph_configure(self, _event=None):
+        canvas = self.charge_graph_canvas
+        if getattr(canvas, "_redraw_scheduled", False):
+            return
+        canvas._redraw_scheduled = True
+
+        def do_redraw():
+            canvas._redraw_scheduled = False
+            self._redraw_charge_graph()
+
+        canvas.after_idle(do_redraw)
+
+    def _clear_charge_graph(self):
+        self.charge_graph_history.clear()
+        self._charge_graph_t0 = None
+        self._redraw_charge_graph()
+
+    def _append_charge_graph_sample(self, voltage: Optional[float], current: Optional[float]):
+        """Record one (timestamp, V, I) sample for the currently-selected
+        module. Called from _update_module_from_data() on real telemetry
+        arrival (~1/s, matching the MCU's stream cadence) -- never from the
+        60fps GUI tick, so this can't become a new lag source no matter how
+        it's later rendered. Safe to call even if the Charge Graph tab has
+        never been built (history just accumulates quietly in the deque;
+        _redraw_charge_graph() only touches widgets that exist)."""
+        if voltage is None and current is None:
+            return
+        if self._charge_graph_t0 is None:
+            self._charge_graph_t0 = time.time()
+        self.charge_graph_history.append((time.time(), voltage, current))
+        if self._charge_graph_active and self._charge_graph_built:
+            self._redraw_charge_graph()
+
+    def _charge_graph_y_limits(self):
+        """Fixed Y-axis limits from the module's hardware envelope
+        (module_u_max_v / module_i_max_a), not the data's own min/max.
+
+        Commercial charge dashboards never auto-scale the axis to whatever
+        the last few samples happened to be -- a rock-steady 80A reading
+        would auto-scale to a hair's-width band and *look* like it's
+        swinging wildly. A fixed, physically-meaningful scale (0 up to the
+        module's actual rated limit) keeps the chart's vertical position
+        meaningful and stable for the whole session. Falls back to a
+        generic placeholder range only if charge config hasn't loaded yet.
+        """
+        cfg = self.charge_config
+        v_max = cfg.module_u_max_v if cfg is not None and cfg.module_u_max_v > 0 else 100.0
+        i_max = cfg.module_i_max_a if cfg is not None and cfg.module_i_max_a > 0 else 100.0
+        return 0.0, v_max, 0.0, i_max
+
+    def _redraw_charge_graph(self):
+        """Redraw the Charge Graph canvas from self.charge_graph_history.
+        No-op if the tab hasn't been built yet, or the canvas has no usable
+        size yet (e.g. during initial layout)."""
+        canvas = getattr(self, "charge_graph_canvas", None)
+        if canvas is None:
+            return
+
+        mod = self.modules.get(self.selected_module_idx)
+        if hasattr(self, "lbl_charge_graph_module"):
+            if mod is None:
+                self.lbl_charge_graph_module.configure(text="Select a module to see live chart")
+            else:
+                self.lbl_charge_graph_module.configure(
+                    text=f"{mod.get_driver_name()} 0x{mod.addr:02X} — Charge Voltage / Current"
+                )
+        if hasattr(self, "lbl_charge_graph_now"):
+            last = self.charge_graph_history[-1] if self.charge_graph_history else None
+            if last is None or mod is None:
+                self.lbl_charge_graph_now.configure(text="")
+            else:
+                _, lv, la = last
+                v_txt = f"{lv:.1f}V" if lv is not None else "--- V"
+                a_txt = f"{la:.1f}A" if la is not None else "--- A"
+                self.lbl_charge_graph_now.configure(text=f"Now: {v_txt} / {a_txt}")
+
+        canvas.delete("all")
+        width = canvas.winfo_width()
+        height = canvas.winfo_height()
+        if width <= 1 or height <= 1:
+            return  # not laid out yet
+
+        history = list(self.charge_graph_history)
+        # Extra left/right room for the rotated axis-title text; extra
+        # bottom room for the elapsed-time ticks below the legend.
+        margin_l, margin_r, margin_t, margin_b = 68, 68, 16, 46
+        plot_w = max(1, width - margin_l - margin_r)
+        plot_h = max(1, height - margin_t - margin_b)
+
+        if len(history) < 2:
+            canvas.create_text(
+                width / 2, height / 2,
+                text="No data yet" if mod is not None else "Select a module to see live chart",
+                fill="#888888", font=("Segoe UI", 10),
+            )
+            return
+
+        v_min, v_max, i_min, i_max = self._charge_graph_y_limits()
+
+        t0 = self._charge_graph_t0 or history[0][0]
+        t1 = history[-1][0]
+        t_span = max(0.001, t1 - t0)
+
+        def x_of(t):
+            return margin_l + (t - t0) / t_span * plot_w
+
+        def y_of_v(v):
+            return margin_t + (1.0 - (v - v_min) / (v_max - v_min)) * plot_h
+
+        def y_of_i(a):
+            return margin_t + (1.0 - (a - i_min) / (i_max - i_min)) * plot_h
+
+        # Horizontal gridlines + axis box. 5 bands -> 6 labeled ticks per
+        # side (0%, 20%, ..., 100% of the fixed range), not just min/max --
+        # a bare 2-tick axis is what read as "empty"/sparse before.
+        for i in range(6):
+            frac = i / 5.0
+            y = margin_t + plot_h * frac
+            canvas.create_line(margin_l, y, margin_l + plot_w, y, fill="#EEEEEE")
+            v_tick = v_max - (v_max - v_min) * frac
+            i_tick = i_max - (i_max - i_min) * frac
+            canvas.create_text(margin_l - 8, y, text=f"{v_tick:.0f}", anchor="e", fill="#1565C0", font=("Segoe UI", 8))
+            canvas.create_text(margin_l + plot_w + 8, y, text=f"{i_tick:.0f}", anchor="w", fill="#EF6C00", font=("Segoe UI", 8))
+        canvas.create_rectangle(margin_l, margin_t, margin_l + plot_w, margin_t + plot_h, outline="#CCCCCC")
+
+        # Rotated axis titles (units live here once, not repeated per tick).
+        canvas.create_text(margin_l - 40, margin_t + plot_h / 2, text="Voltage (V)",
+                            angle=90, fill="#1565C0", font=("Segoe UI", 9, "bold"))
+        canvas.create_text(margin_l + plot_w + 40, margin_t + plot_h / 2, text="Current (A)",
+                            angle=270, fill="#EF6C00", font=("Segoe UI", 9, "bold"))
+
+        # Time axis (X): elapsed time (mm:ss) since the session started
+        # (first sample since the last Clear/module switch), not
+        # wall-clock -- what a technician timing a charge cares about is
+        # "12 minutes in", not the clock on the wall.
+        for i in range(5):
+            frac = i / 4.0
+            x = margin_l + plot_w * frac
+            canvas.create_line(x, margin_t, x, margin_t + plot_h, fill="#F5F5F5")
+            elapsed = t_span * frac
+            t_label = f"{int(elapsed // 60):d}:{int(elapsed % 60):02d}"
+            anchor = "n" if 0 < i < 4 else ("nw" if i == 0 else "ne")
+            canvas.create_text(x, margin_t + plot_h + 6, text=t_label, anchor=anchor,
+                                fill="#666666", font=("Segoe UI", 8))
+
+        # Voltage/current lines, split into separate segments across any
+        # gap wider than CHARGE_GRAPH_GAP_S so a real telemetry dropout
+        # reads as a break, not a smoothed-over straight line.
+        def draw_segments(value_index, color):
+            segment = []
+            last_t = None
+            for t, v, a in history:
+                val = v if value_index == 1 else a
+                gap = last_t is not None and (t - last_t) > self.CHARGE_GRAPH_GAP_S
+                if val is None or gap:
+                    if len(segment) >= 4:
+                        canvas.create_line(*segment, fill=color, width=2, capstyle=tk.ROUND, joinstyle=tk.ROUND)
+                    segment = []
+                if val is not None:
+                    y = y_of_v(val) if value_index == 1 else y_of_i(val)
+                    segment.extend((x_of(t), y))
+                last_t = t
+            if len(segment) >= 4:
+                canvas.create_line(*segment, fill=color, width=2, capstyle=tk.ROUND, joinstyle=tk.ROUND)
+
+        draw_segments(1, "#1565C0")  # Voltage
+        draw_segments(2, "#EF6C00")  # Current
+
+        # Legend.
+        canvas.create_line(margin_l, height - 12, margin_l + 20, height - 12, fill="#1565C0", width=2)
+        canvas.create_text(margin_l + 26, height - 12, text="Voltage", anchor="w", fill="#1565C0", font=("Segoe UI", 8))
+        canvas.create_line(margin_l + 90, height - 12, margin_l + 110, height - 12, fill="#EF6C00", width=2)
+        canvas.create_text(margin_l + 116, height - 12, text="Current", anchor="w", fill="#EF6C00", font=("Segoe UI", 8))
 
     def _check_alarms(self):
         """Rebuild active alarm list from the current module snapshots."""

@@ -1,5 +1,6 @@
 """USB CDC Serial Service for Debug App"""
 
+import os
 import serial
 import serial.tools.list_ports
 import threading
@@ -10,16 +11,8 @@ SOF1 = 0xAA
 SOF2 = 0x55
 CRC_POLY = 0x07
 MAX_PAYLOAD = 255
-DEBUG_SERIAL = True  # Enable raw serial logging
 DEBUG_LOG_FILE = "serial_debug.log"
-
-def _debug_log(msg: str):
-    if DEBUG_SERIAL:
-        try:
-            with open(DEBUG_LOG_FILE, "a") as f:
-                f.write(f"[{time.strftime('%H:%M:%S')}] {msg}\n")
-        except:
-            pass
+DEBUG_LOG_MAX_BYTES = 5 * 1024 * 1024  # 5MB — debug aid, not an audit log; truncate past this
 
 def crc8(data: bytes) -> int:
     """Calculate CRC8 checksum"""
@@ -51,6 +44,48 @@ class SerialService:
         self.rx_thread: Optional[threading.Thread] = None
         self._callbacks = []
         self._log_callback = None
+        # Raw serial debug log to DEBUG_LOG_FILE — off by default (was a
+        # hardcoded-True module constant that opened+wrote+closed the file
+        # on every single TX/RX frame, including the MCU's automatic ~1s
+        # telemetry stream, synchronously on the RX thread; a slow disk op
+        # there delays draining the OS serial buffer, which reads back to
+        # the user as app lag). Now an explicit opt-in toggle
+        # (set_debug_enabled(), wired to a UI checkbox) that keeps one file
+        # handle open instead of reopening per call.
+        self.debug_enabled = False
+        self._debug_fh = None
+
+    def set_debug_enabled(self, enabled: bool):
+        """Toggle raw serial debug logging to DEBUG_LOG_FILE at runtime."""
+        if enabled == self.debug_enabled:
+            return
+        self.debug_enabled = enabled
+        if enabled:
+            try:
+                if os.path.exists(DEBUG_LOG_FILE) and os.path.getsize(DEBUG_LOG_FILE) > DEBUG_LOG_MAX_BYTES:
+                    # Debug aid, not an audit log -- truncate rather than
+                    # rotate/archive, so a long-forgotten enabled session
+                    # doesn't grow this file forever.
+                    open(DEBUG_LOG_FILE, "w").close()
+                self._debug_fh = open(DEBUG_LOG_FILE, "a")
+            except Exception:
+                self._debug_fh = None
+                self.debug_enabled = False
+        else:
+            if self._debug_fh:
+                try:
+                    self._debug_fh.close()
+                except Exception:
+                    pass
+                self._debug_fh = None
+
+    def _debug_log(self, msg: str):
+        if self.debug_enabled and self._debug_fh:
+            try:
+                self._debug_fh.write(f"[{time.strftime('%H:%M:%S')}] {msg}\n")
+                self._debug_fh.flush()
+            except Exception:
+                pass
 
     def list_ports(self) -> List[str]:
         """List available COM ports"""
@@ -81,6 +116,8 @@ class SerialService:
         if self.port and self.port.is_open:
             self.port.close()
         self.port = None
+        # Don't leak the debug-log handle across reconnects.
+        self.set_debug_enabled(False)
 
     def is_connected(self) -> bool:
         """Check if connected"""
@@ -93,8 +130,7 @@ class SerialService:
         try:
             frame = build_frame(cmd, payload)
             self.port.write(frame)
-            if DEBUG_SERIAL:
-                _debug_log(f"[SERIAL TX] cmd=0x{cmd:02X} len={len(payload)} frame={frame.hex().upper()}")
+            self._debug_log(f"[SERIAL TX] cmd=0x{cmd:02X} len={len(payload)} frame={frame.hex().upper()}")
             self._log(f"TX: cmd=0x{cmd:02X} len={len(payload)} data={payload.hex()}")
             return True
         except Exception as e:
@@ -131,15 +167,13 @@ class SerialService:
 
             if idx < 0:
                 # No SOF found, clear buffer
-                if DEBUG_SERIAL:
-                    _debug_log(f"[SERIAL RX] No SOF in {len(buf)} bytes, clearing: {buf[:16].hex().upper()}...")
+                self._debug_log(f"[SERIAL RX] No SOF in {len(buf)} bytes, clearing: {buf[:16].hex().upper()}...")
                 buf.clear()
                 return
 
             if idx > 0:
                 # Discard bytes before SOF
-                if DEBUG_SERIAL:
-                    _debug_log(f"[SERIAL RX] Skipping {idx} bytes before SOF")
+                self._debug_log(f"[SERIAL RX] Skipping {idx} bytes before SOF")
                 del buf[:idx]
 
             if len(buf) < 4:
@@ -148,13 +182,12 @@ class SerialService:
             cmd = buf[2]
             plen = buf[3]
 
-            if DEBUG_SERIAL and len(buf) == 4:
-                _debug_log(f"[SERIAL RX] Header: cmd=0x{cmd:02X} plen={plen}, waiting for {4+plen+1} total bytes")
+            if len(buf) == 4:
+                self._debug_log(f"[SERIAL RX] Header: cmd=0x{cmd:02X} plen={plen}, waiting for {4+plen+1} total bytes")
 
             if plen > MAX_PAYLOAD:
                 # Invalid length, skip SOF1 and try again
-                if DEBUG_SERIAL:
-                    _debug_log(f"[SERIAL RX] Invalid plen={plen}, skipping SOF")
+                self._debug_log(f"[SERIAL RX] Invalid plen={plen}, skipping SOF")
                 del buf[0]
                 continue
 
@@ -171,14 +204,12 @@ class SerialService:
             crc_data = frame[2:4 + plen]
             expected_crc = crc8(crc_data)
             if expected_crc != frame[-1]:
-                if DEBUG_SERIAL:
-                    _debug_log(f"[SERIAL RX] CRC FAIL cmd=0x{cmd:02X} plen={plen} expected=0x{expected_crc:02X} got=0x{frame[-1]:02X}")
+                self._debug_log(f"[SERIAL RX] CRC FAIL cmd=0x{cmd:02X} plen={plen} expected=0x{expected_crc:02X} got=0x{frame[-1]:02X}")
                 self._log(f"RX Bad CRC: expected 0x{expected_crc:02X}, got 0x{frame[-1]:02X}")
                 continue
 
             payload = frame[4:4 + plen]
-            if DEBUG_SERIAL:
-                _debug_log(f"[SERIAL RX] Frame OK cmd=0x{cmd:02X} plen={plen} payload={payload[:8].hex().upper()}{'...' if plen > 8 else ''}")
+            self._debug_log(f"[SERIAL RX] Frame OK cmd=0x{cmd:02X} plen={plen} payload={payload[:8].hex().upper()}{'...' if plen > 8 else ''}")
             self._log(f"RX: cmd=0x{cmd:02X} len={len(payload)}")
 
             # Notify callbacks
