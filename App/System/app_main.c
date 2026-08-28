@@ -69,7 +69,7 @@ static uint8_t read_btn_stop(void)  { return BSP_BTN_IsPressed(BSP_BTN_STOP) ? 1
 void App_Init(void)
 {
     LOG_Banner();
-    LOG("App_Init: Khoi dong he thong...\r\n");
+    LOG("App_Init: Starting system...\r\n");
 
     /* Enable Peripheral Power (RS485/CAN/HMI) - assert early with 50ms stabilization delay */
     HAL_GPIO_WritePin(GPIOA, MCU_PA4_POWER_EN_Pin, GPIO_PIN_SET);
@@ -82,20 +82,20 @@ void App_Init(void)
     BSP_RS485_Init();
 
     /* Start CAN1 + CAN2 (filter + interrupt) */
-    LOG("App_Init: Khoi dong CAN bus...\r\n");
+    LOG("App_Init: Starting CAN bus...\r\n");
     if (!BSP_CAN_Start()) {
-        LOG("App_Init: LOI - Khong the khoi dong CAN bus!\r\n");
+        LOG("App_Init: ERROR - Could not start CAN bus!\r\n");
         led_fault_on();
     } else {
-        LOG("App_Init: CAN bus khoi dong thanh cong.\r\n");
+        LOG("App_Init: CAN bus started successfully.\r\n");
     }
 
     /* Initialize BMS driver (CAN2, 250Kbps) */
     BMS_Init();
-    LOG("App_Init: BMS driver khoi dong xong.\r\n");
+    LOG("App_Init: BMS driver ready.\r\n");
 
     /* Register charger drivers (CAN1, 125Kbps) */
-    LOG("App_Init: Khoi tao charger core\r\n");
+    LOG("App_Init: Initializing charger core\r\n");
     CHG_LIB_RegisterDriver(CHG_LIB_DRV_MAXWELL, CHG_LIB_MaxwellDriverOps());
     CHG_LIB_RegisterDriver(CHG_LIB_DRV_LIANMING, CHG_LIB_LianmingDriverOps());
     CHG_LIB_RegisterDriver(CHG_LIB_DRV_TONHE, CHG_LIB_TonheDriverOps());
@@ -138,7 +138,7 @@ void App_Init(void)
     BSP_ADC_Init();
     LOG("App_Init: NTC ADC initialized.\r\n");
 
-    LOG("App_Init: Hoan tat khoi tao.\r\n");
+    LOG("App_Init: Initialization complete.\r\n");
 }
 
 /* ============== Main Loop ============== */
@@ -188,12 +188,20 @@ void App_Loop(void)
         }
 
         ChargeController_Process(now);
-        
-        /* Cập nhật Rơ-le (Relay) */
-        if (BMS_ShouldCloseChargeRelay() && ChargeController_IsRunning()) {
-            HAL_GPIO_WritePin(GPIOB, MCU_PB14_RELAY_1_Pin|MCU_PB15_RELAY_2_Pin, GPIO_PIN_SET);
-        } else {
-            HAL_GPIO_WritePin(GPIOB, MCU_PB14_RELAY_1_Pin|MCU_PB15_RELAY_2_Pin, GPIO_PIN_RESET);
+
+        /* Cập nhật Rơ-le (Relay) — quyết định đóng/mở được tính trong
+         * ChargeController_Process() (relay_should_close: RUNNING + điện áp
+         * module ≥ 90% target + BMS an toàn khi ở chế độ BMS-Controlled,
+         * không yêu cầu BMS ở chế độ Standalone). App layer chỉ đọc kết quả
+         * và ghi GPIO — không tự quyết định điều kiện an toàn ở đây. */
+        {
+            ChargeCtrlView_t relay_view;
+            ChargeController_GetView(&relay_view);
+            if (relay_view.relay_should_close) {
+                HAL_GPIO_WritePin(GPIOB, MCU_PB14_RELAY_1_Pin|MCU_PB15_RELAY_2_Pin, GPIO_PIN_SET);
+            } else {
+                HAL_GPIO_WritePin(GPIOB, MCU_PB14_RELAY_1_Pin|MCU_PB15_RELAY_2_Pin, GPIO_PIN_RESET);
+            }
         }
     }
 
@@ -219,8 +227,8 @@ void App_Loop(void)
             if (btn_start_db != btn_start_prev) {
                 btn_start_prev = btn_start_db;
                 if (btn_start_prev) {
-                    LOG("App_Loop: Nhan nut START -> Khoi dong chu trinh sac\r\n");
-                    ChargeController_Start(CHARGE_CTRL_OWNER_DWIN, false);
+                    LOG("App_Loop: START button pressed -> starting charge cycle\r\n");
+                    ChargeController_Start(CHARGE_CTRL_OWNER_DWIN, false, now);
                 }
             }
         }
@@ -233,8 +241,8 @@ void App_Loop(void)
             if (btn_stop_db != btn_stop_prev) {
                 btn_stop_prev = btn_stop_db;
                 if (btn_stop_prev) {
-                    LOG("App_Loop: Nhan nut STOP -> Dung chu trinh sac\r\n");
-                    ChargeController_Stop();
+                    LOG("App_Loop: STOP button pressed -> stopping charge cycle\r\n");
+                    ChargeController_Stop(now);
                 }
             }
         }
@@ -298,10 +306,10 @@ CHG_LIB_DriverId_t App_GetCurrentDriver(void) { return CHG_LIB_GetActiveDriverId
 
 void DWIN_OnCommandReceived(uint16_t command) {
     if (command == 1) {
-        LOG("DWIN: Nhan lenh START\r\n");
-        ChargeController_Start(CHARGE_CTRL_OWNER_DWIN, false);
+        LOG("DWIN: Received START command\r\n");
+        ChargeController_Start(CHARGE_CTRL_OWNER_DWIN, false, BSP_GetTick());
     } else if (command == 2) {
-        LOG("DWIN: Nhan lenh STOP\r\n");
-        ChargeController_Stop();
+        LOG("DWIN: Received STOP command\r\n");
+        ChargeController_Stop(BSP_GetTick());
     }
 }

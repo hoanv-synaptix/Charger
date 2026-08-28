@@ -144,16 +144,11 @@ void PC_Protocol_ProcessTx(void)
     uint8_t result;
     uint8_t head_snapshot;
     static uint32_t last_tx_start = 0;
-    static uint32_t last_poll_tick = 0;
     extern USBD_HandleTypeDef hUsbDeviceFS;
     USBD_CDC_HandleTypeDef *hcdc = get_cdc_handle();
 
     uint32_t now_tick = BSP_GetTick();
-    if (now_tick - last_poll_tick >= 1000) {
-        last_poll_tick = now_tick;
-        /* Periodic TX status — removed to avoid 50ms UART block in 20ms loop */
-    }
-    
+
     if (g_tx_count > 0) {
         if (hcdc == NULL) {
             static uint32_t last_err_tick = 0;
@@ -411,7 +406,7 @@ static void process_frame(uint8_t cmd, const uint8_t *payload, uint8_t len)
         }
 
         /* Preconditions pass - request start */
-        if (ChargeController_Start(CHARGE_CTRL_OWNER_PC, (bool)manual_mode)) {
+        if (ChargeController_Start(CHARGE_CTRL_OWNER_PC, (bool)manual_mode, BSP_GetTick())) {
             g_charging = 1;
             ok = true;
         } else {
@@ -421,13 +416,13 @@ static void process_frame(uint8_t cmd, const uint8_t *payload, uint8_t len)
     }
 
     case PC_CMD_STOP:
-        ChargeController_Stop();
+        ChargeController_Stop(BSP_GetTick());
         g_charging = 0;
         ok = true;
         break;
 
     case PC_CMD_EMERGENCY_STOP:
-        ChargeController_EmergencyStop();
+        ChargeController_EmergencyStop(BSP_GetTick());
         g_charging = 0;
         ok = true;
         break;
@@ -451,20 +446,31 @@ static void process_frame(uint8_t cmd, const uint8_t *payload, uint8_t len)
         ok = true;
         break;
 
-    case PC_CMD_SET_MODULE_ADDR:
+    case PC_CMD_SET_MODULE_ADDR: {
         if (len != 2) { send_nack(cmd, PC_ERR_BAD_LENGTH); return; }
         if (CHG_LIB_GetActiveDriverId() == CHG_LIB_DRV_NONE) {
             send_nack(cmd, PC_ERR_BAD_PARAM);
             return;
         }
-        if (CHG_LIB_AddModule(payload[0], payload[1]) < 0) {
+        int8_t idx = CHG_LIB_AddModule(payload[0], payload[1]);
+        if (idx < 0) {
             send_nack(cmd, PC_ERR_BAD_PARAM);
             return;
+        }
+        /* Seed rated current from config -- see the matching comment in
+         * charge_cycle_config.c's ChargeCycleConfig_Set() for why. */
+        {
+            ChargeCycleConfig_t mcfg;
+            ChargeCycleConfig_Get(&mcfg);
+            if (mcfg.module_i_max_a > 0.0f) {
+                CHG_LIB_SetModuleConfig((uint8_t)idx, mcfg.module_i_max_a);
+            }
         }
         /* Apply profile for manual mode; controller will override when started */
         apply_active_charge_profile();
         ok = true;
         break;
+    }
 
     case PC_CMD_READ_REG: {
         uint8_t module_idx;

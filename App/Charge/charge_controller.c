@@ -14,11 +14,9 @@
 
 #include "charge_controller.h"
 #include "charge_cycle_config.h"
-#include "charge_cycle_storage.h"
 #include "chg_lib.h"
 #include "bms_core.h"
 #include "debug_log.h"
-#include "main.h"
 #include <string.h>
 #include <math.h>
 
@@ -93,6 +91,17 @@ static struct {
      * root (App_Loop) once per control cycle via ChargeController_SetJackTempC().
      * Pure charging policy must not read BSP_ADC directly (AGENTS.md sec 5-6). */
     float jack_temp_input_c;
+
+    /* Battery relay decision -- see ChargeCtrlView_t.relay_should_close and
+     * update_relay_decision() for the full condition. relay_latched_closed
+     * is the "has it already earned >=90% this RUNNING session" latch: once
+     * set, voltage dropping back below 90% (normal charging behaviour, e.g.
+     * CV-phase current taper) does NOT reopen the relay by itself -- only
+     * leaving RUNNING or the BMS reporting unsafe does. Reset to false the
+     * moment state leaves RUNNING, so the next RUNNING session must earn it
+     * again. */
+    bool relay_should_close;
+    bool relay_latched_closed;
 } g_ctrl = {0};
 
 /* ============== Stage Evaluation Types ============== */
@@ -114,11 +123,12 @@ typedef struct {
 
 /* ============== Private Function Prototypes ============== */
 
-static void set_fault(uint32_t flags);
+static void set_fault(uint32_t flags, uint32_t now);
 static void clear_fault(void);
-static void transition_to(ChargeCtrlState_t new_state);
+static void update_relay_decision(void);
+static void transition_to(ChargeCtrlState_t new_state, uint32_t now);
 static uint8_t get_active_module_count(void);
-static bool check_preconditions_set_fault(void);
+static bool check_preconditions_set_fault(uint32_t now);
 static void apply_charge_targets(void);
 static void stop_charging(void);
 
@@ -141,7 +151,7 @@ static void update_hard_protection(const ChargeCycleConfig_t *cfg,
 
 /* ============== Private Functions ============== */
 
-static void set_fault(uint32_t flags) {
+static void set_fault(uint32_t flags, uint32_t now) {
     g_ctrl.fault_flags |= flags;
     if (flags & CHARGE_CTRL_FAULT_EMERGENCY_STOP) {
         g_ctrl.stop_reason = CHARGE_STOP_EMERGENCY;
@@ -159,7 +169,7 @@ static void set_fault(uint32_t flags) {
         g_ctrl.stop_reason = CHARGE_STOP_PRECONDITION;
     }
     if (g_ctrl.state == CHARGE_CTRL_STATE_RUNNING) {
-        transition_to(CHARGE_CTRL_STATE_FAULT);
+        transition_to(CHARGE_CTRL_STATE_FAULT, now);
     }
 }
 
@@ -167,14 +177,14 @@ static void clear_fault(void) {
     g_ctrl.fault_flags = CHARGE_CTRL_FAULT_NONE;
 }
 
-static void transition_to(ChargeCtrlState_t new_state) {
+static void transition_to(ChargeCtrlState_t new_state, uint32_t now) {
     if (g_ctrl.state == new_state) {
         return;
     }
 
     LOG("CC: State %d->%d\r\n", (int)g_ctrl.state, (int)new_state);
     g_ctrl.state = new_state;
-    g_ctrl.last_update_tick = HAL_GetTick();
+    g_ctrl.last_update_tick = now;
 }
 
 static uint8_t get_active_module_count(void) {
@@ -194,16 +204,98 @@ static uint8_t get_active_module_count(void) {
             }
         }
     }
-    if (count == 0 && total > 0) {
-        /* Debug: why zero modules? */
-        if (CHG_LIB_GetModuleView(0, &view)) {
-            LOG("CC: ModCnt total=%u en=%u online=%u state=%d\r\n",
-                (unsigned)total, (unsigned)view.enabled, (unsigned)view.online, (int)view.state);
-        } else {
-            LOG("CC: ModCnt total=%u (failed to get view 0)\r\n", (unsigned)total);
+    return count;
+}
+
+/**
+ * @brief Decide whether the battery relay should be closed this tick.
+ * @note  This is a latch, not a continuous gate: reaching the >=90% voltage
+ *        threshold CLOSES the relay, but once closed it stays closed
+ *        through normal voltage/current fluctuation (e.g. CV-phase current
+ *        taper naturally sagging the bus below 90% again) -- only a real
+ *        fault reopens it. "Fault" is:
+ *          1. Controller state leaves RUNNING (FAULT/STOPPING/IDLE/READY) --
+ *             applies in every charge_source_mode.
+ *          2. Only when charge_source_mode is BMS-Controlled: the BMS
+ *             itself stops confirming it's safe (BMS_ShouldCloseChargeRelay()
+ *             goes false -- offline, critical alarm, or its own relay-allow
+ *             flag). Checked every tick even while latched closed, since a
+ *             live BMS-reported fault mid-charge must open the relay
+ *             immediately. Standalone (no-BMS) mode never checks this: the
+ *             system may have no BMS physically installed in that mode, so
+ *             requiring BMS_IsOnline() would mean the relay could never
+ *             close at all.
+ *        Falling back below 90% target voltage is explicitly NOT a fault
+ *        once latched -- by design, per product decision.
+ *
+ *        To (re-)arm the latch (only evaluated while not already latched
+ *        closed): target_voltage_v is a real (positive) setpoint, and the
+ *        worst-case (minimum) output voltage across all active (enabled,
+ *        online, not OFFLINE/FAULT) modules has reached
+ *        BMS_CHARGE_VOLT_LIMIT_PCT of target_voltage_v -- i.e. every module
+ *        must be up, not just one of several in a multi-module stack.
+ *
+ *        The latch resets to "not yet armed" the instant state leaves
+ *        RUNNING, so the next RUNNING session must earn >=90% again from
+ *        scratch.
+ */
+static void update_relay_decision(void) {
+    if (g_ctrl.state != CHARGE_CTRL_STATE_RUNNING) {
+        g_ctrl.relay_latched_closed = false;
+        g_ctrl.relay_should_close = false;
+        return;
+    }
+
+    ChargeCycleConfig_t cfg;
+    ChargeCycleConfig_Get(&cfg);
+    bool bms_safe = true;
+    if (cfg.charge_source_mode == CHARGE_SOURCE_BMS_CONTROLLED) {
+        bms_safe = BMS_ShouldCloseChargeRelay();
+    }
+
+    if (!bms_safe) {
+        /* Live BMS-reported fault while RUNNING: open now and drop the
+         * latch -- it must earn its way back to >=90% before re-closing,
+         * same as any fresh RUNNING session. */
+        g_ctrl.relay_latched_closed = false;
+        g_ctrl.relay_should_close = false;
+        return;
+    }
+
+    if (g_ctrl.relay_latched_closed) {
+        /* Already earned it this session: stay closed regardless of
+         * voltage now (see docstring) -- RUNNING + BMS-safe (both already
+         * checked above) is all that's still required. */
+        g_ctrl.relay_should_close = true;
+        return;
+    }
+
+    /* Not yet latched: check whether this tick arms it. */
+    g_ctrl.relay_should_close = false;
+    if (g_ctrl.target_voltage_v <= 0.0f) {
+        return;
+    }
+
+    float min_voltage = -1.0f;
+    CHG_LIB_ModuleView_t view;
+    uint8_t total = CHG_LIB_GetModuleCount();
+    for (uint8_t i = 0; i < total; i++) {
+        if (!CHG_LIB_GetModuleView(i, &view)) continue;
+        if (!view.enabled || !view.online) continue;
+        if (view.state == CHG_LIB_STATE_OFFLINE || view.state == CHG_LIB_STATE_FAULT) continue;
+        if (min_voltage < 0.0f || view.voltage < min_voltage) {
+            min_voltage = view.voltage;
         }
     }
-    return count;
+    if (min_voltage < 0.0f) {
+        return; /* no active module reporting voltage */
+    }
+    if (min_voltage < (g_ctrl.target_voltage_v * ((float)BMS_CHARGE_VOLT_LIMIT_PCT / 100.0f))) {
+        return;
+    }
+
+    g_ctrl.relay_latched_closed = true;
+    g_ctrl.relay_should_close = true;
 }
 
 /**
@@ -249,10 +341,10 @@ static uint32_t check_preconditions_faults(void) {
 /**
  * @brief Check preconditions and set faults (internal use)
  */
-static bool check_preconditions_set_fault(void) {
+static bool check_preconditions_set_fault(uint32_t now) {
     uint32_t faults = check_preconditions_faults();
     if (faults != CHARGE_CTRL_FAULT_NONE) {
-        set_fault(faults);
+        set_fault(faults, now);
         return false;
     }
 
@@ -372,7 +464,7 @@ static bool check_standalone_voltage_reached(uint32_t now_tick) {
     int target_x10 = (int)(g_ctrl.target_voltage_v * 10.0f);
     LOG("CC: Standalone Vmax reached, stopping charge (target=%d.%dV)\r\n",
         target_x10 / 10, target_x10 % 10);
-    transition_to(CHARGE_CTRL_STATE_STOPPING);
+    transition_to(CHARGE_CTRL_STATE_STOPPING, now_tick);
     return true;
 }
 
@@ -416,7 +508,7 @@ static void update_hard_protection(const ChargeCycleConfig_t *cfg,
             uint32_t elapsed_s = (now_tick - g_ctrl.protect_jack_v_timer_tick) / 1000U;
             if (elapsed_s >= cfg->protect_jack_charge_delay_s) {
                 LOG("CC: Jack V PROTECT fault (%us)\r\n", (unsigned)elapsed_s);
-                set_fault(CHARGE_CTRL_FAULT_PROTECT_JACK_V);
+                set_fault(CHARGE_CTRL_FAULT_PROTECT_JACK_V, now_tick);
             }
         }
     } else {
@@ -460,6 +552,63 @@ static float get_lower_threshold_for_band(const ChargeCycleConfig_t *cfg, Charge
     return 0.0f;
 }
 
+/**
+ * @brief Shared 5-threshold band lookup, identical across all 3 stage
+ *        sources (cell voltage / temperature / SOC) -- see the callers
+ *        below. Only this ladder is truly identical between the three;
+ *        what happens next (monotonic latch for cell/SOC vs. symmetric
+ *        hysteresis for temp) genuinely differs per source and is kept
+ *        inline in each eval_*_stage(), not forced into a shared helper.
+ */
+static ChargeStageBand_t band_from_thresholds(float value, float t1, float t2,
+                                              float t3, float t4, float t5) {
+    if (value >= t5) return CHARGE_STAGE_BAND_ABOVE_MAX;
+    if (value >= t4) return CHARGE_STAGE_BAND_4_5;
+    if (value >= t3) return CHARGE_STAGE_BAND_3_4;
+    if (value >= t2) return CHARGE_STAGE_BAND_2_3;
+    if (value >= t1) return CHARGE_STAGE_BAND_1_2;
+    return CHARGE_STAGE_BAND_BELOW_MIN;
+}
+
+/**
+ * @brief Shared band->current-limit mapping, identical shape across all 3
+ *        stage sources -- only which per-band current constants get read
+ *        differs (curr1..curr4, one per band, source-specific).
+ */
+static void apply_band_current_limit(ChargeStageBand_t band, float curr1, float curr2,
+                                     float curr3, float curr4, ChargeStageEval_t *eval) {
+    eval->band = band;
+    switch (band) {
+        case CHARGE_STAGE_BAND_BELOW_MIN:
+            eval->state = CHARGE_STAGE_BELOW_MIN;
+            eval->inhibit = 1;
+            eval->current_limit_c = 0.0f;
+            break;
+        case CHARGE_STAGE_BAND_1_2:
+            eval->state = CHARGE_STAGE_IN_WINDOW;
+            eval->current_limit_c = curr1;
+            break;
+        case CHARGE_STAGE_BAND_2_3:
+            eval->state = CHARGE_STAGE_IN_WINDOW;
+            eval->current_limit_c = curr2;
+            break;
+        case CHARGE_STAGE_BAND_3_4:
+            eval->state = CHARGE_STAGE_IN_WINDOW;
+            eval->current_limit_c = curr3;
+            break;
+        case CHARGE_STAGE_BAND_4_5:
+            eval->state = CHARGE_STAGE_IN_WINDOW;
+            eval->current_limit_c = curr4;
+            break;
+        default:
+            eval->state = CHARGE_STAGE_ABOVE_MAX;
+            eval->band = CHARGE_STAGE_BAND_ABOVE_MAX;
+            eval->inhibit = 1;
+            eval->current_limit_c = 0.0f;
+            break;
+    }
+}
+
 static ChargeStageEval_t eval_cell_stage(const ChargeCycleConfig_t *cfg, const BMS_View_t *bms) {
     ChargeStageEval_t eval = {0};
 
@@ -472,19 +621,9 @@ static ChargeStageEval_t eval_cell_stage(const ChargeCycleConfig_t *cfg, const B
     eval.source = CHARGE_LIMIT_SOURCE_CELL_VOLTAGE;
     float cell_volt_v = (float)bms->max_cell_volt / 1000.0f;  /* mV -> V */
 
-    /* Check thresholds to determine target band */
-    ChargeStageBand_t new_band = CHARGE_STAGE_BAND_BELOW_MIN;
-    if (cell_volt_v >= cfg->cell_volt_5_v) {
-        new_band = CHARGE_STAGE_BAND_ABOVE_MAX;
-    } else if (cell_volt_v >= cfg->cell_volt_4_v) {
-        new_band = CHARGE_STAGE_BAND_4_5;
-    } else if (cell_volt_v >= cfg->cell_volt_3_v) {
-        new_band = CHARGE_STAGE_BAND_3_4;
-    } else if (cell_volt_v >= cfg->cell_volt_2_v) {
-        new_band = CHARGE_STAGE_BAND_2_3;
-    } else if (cell_volt_v >= cfg->cell_volt_1_v) {
-        new_band = CHARGE_STAGE_BAND_1_2;
-    }
+    ChargeStageBand_t new_band = band_from_thresholds(
+        cell_volt_v, cfg->cell_volt_1_v, cfg->cell_volt_2_v,
+        cfg->cell_volt_3_v, cfg->cell_volt_4_v, cfg->cell_volt_5_v);
 
     /* Cell voltage is monotonic within one user-started cycle.  A drop
      * below a previously reached band must never restore a higher current.
@@ -506,42 +645,8 @@ static ChargeStageEval_t eval_cell_stage(const ChargeCycleConfig_t *cfg, const B
         new_band = g_ctrl.max_cell_band;
     }
 
-    /* Apply limits based on the evaluated band */
-    switch (new_band) {
-        case CHARGE_STAGE_BAND_BELOW_MIN:
-            eval.state = CHARGE_STAGE_BELOW_MIN;
-            eval.band = CHARGE_STAGE_BAND_BELOW_MIN;
-            eval.inhibit = 1;
-            eval.current_limit_c = 0.0f;
-            break;
-        case CHARGE_STAGE_BAND_1_2:
-            eval.state = CHARGE_STAGE_IN_WINDOW;
-            eval.band = CHARGE_STAGE_BAND_1_2;
-            eval.current_limit_c = cfg->cell_curr_1_c;
-            break;
-        case CHARGE_STAGE_BAND_2_3:
-            eval.state = CHARGE_STAGE_IN_WINDOW;
-            eval.band = CHARGE_STAGE_BAND_2_3;
-            eval.current_limit_c = cfg->cell_curr_2_c;
-            break;
-        case CHARGE_STAGE_BAND_3_4:
-            eval.state = CHARGE_STAGE_IN_WINDOW;
-            eval.band = CHARGE_STAGE_BAND_3_4;
-            eval.current_limit_c = cfg->cell_curr_3_c;
-            break;
-        case CHARGE_STAGE_BAND_4_5:
-            eval.state = CHARGE_STAGE_IN_WINDOW;
-            eval.band = CHARGE_STAGE_BAND_4_5;
-            eval.current_limit_c = cfg->cell_curr_4_c;
-            break;
-        default:
-            eval.state = CHARGE_STAGE_ABOVE_MAX;
-            eval.band = CHARGE_STAGE_BAND_ABOVE_MAX;
-            eval.inhibit = 1;
-            eval.current_limit_c = 0.0f;
-            break;
-    }
-
+    apply_band_current_limit(new_band, cfg->cell_curr_1_c, cfg->cell_curr_2_c,
+                             cfg->cell_curr_3_c, cfg->cell_curr_4_c, &eval);
     return eval;
 }
 
@@ -557,19 +662,8 @@ static ChargeStageEval_t eval_temp_stage(const ChargeCycleConfig_t *cfg, const B
     eval.source = CHARGE_LIMIT_SOURCE_TEMPERATURE;
     float temp_c = (float)bms->max_cell_temp;  /* Already in Celsius */
 
-    /* Check thresholds to determine target band */
-    ChargeStageBand_t new_band = CHARGE_STAGE_BAND_BELOW_MIN;
-    if (temp_c >= cfg->temp_5_c) {
-        new_band = CHARGE_STAGE_BAND_ABOVE_MAX;
-    } else if (temp_c >= cfg->temp_4_c) {
-        new_band = CHARGE_STAGE_BAND_4_5;
-    } else if (temp_c >= cfg->temp_3_c) {
-        new_band = CHARGE_STAGE_BAND_3_4;
-    } else if (temp_c >= cfg->temp_2_c) {
-        new_band = CHARGE_STAGE_BAND_2_3;
-    } else if (temp_c >= cfg->temp_1_c) {
-        new_band = CHARGE_STAGE_BAND_1_2;
-    }
+    ChargeStageBand_t new_band = band_from_thresholds(
+        temp_c, cfg->temp_1_c, cfg->temp_2_c, cfg->temp_3_c, cfg->temp_4_c, cfg->temp_5_c);
 
     /* Apply hysteresis */
     if (g_ctrl.last_temp_band != CHARGE_STAGE_BAND_NONE) {
@@ -585,45 +679,11 @@ static ChargeStageEval_t eval_temp_stage(const ChargeCycleConfig_t *cfg, const B
             }
         }
     }
-    
+
     g_ctrl.last_temp_band = new_band;
 
-    /* Apply limits based on the evaluated band */
-    switch (new_band) {
-        case CHARGE_STAGE_BAND_BELOW_MIN:
-            eval.state = CHARGE_STAGE_BELOW_MIN;
-            eval.band = CHARGE_STAGE_BAND_BELOW_MIN;
-            eval.inhibit = 1;
-            eval.current_limit_c = 0.0f;
-            break;
-        case CHARGE_STAGE_BAND_1_2:
-            eval.state = CHARGE_STAGE_IN_WINDOW;
-            eval.band = CHARGE_STAGE_BAND_1_2;
-            eval.current_limit_c = cfg->temp_curr_1_c;
-            break;
-        case CHARGE_STAGE_BAND_2_3:
-            eval.state = CHARGE_STAGE_IN_WINDOW;
-            eval.band = CHARGE_STAGE_BAND_2_3;
-            eval.current_limit_c = cfg->temp_curr_2_c;
-            break;
-        case CHARGE_STAGE_BAND_3_4:
-            eval.state = CHARGE_STAGE_IN_WINDOW;
-            eval.band = CHARGE_STAGE_BAND_3_4;
-            eval.current_limit_c = cfg->temp_curr_3_c;
-            break;
-        case CHARGE_STAGE_BAND_4_5:
-            eval.state = CHARGE_STAGE_IN_WINDOW;
-            eval.band = CHARGE_STAGE_BAND_4_5;
-            eval.current_limit_c = cfg->temp_curr_4_c;
-            break;
-        default:
-            eval.state = CHARGE_STAGE_ABOVE_MAX;
-            eval.band = CHARGE_STAGE_BAND_ABOVE_MAX;
-            eval.inhibit = 1;
-            eval.current_limit_c = 0.0f;
-            break;
-    }
-
+    apply_band_current_limit(new_band, cfg->temp_curr_1_c, cfg->temp_curr_2_c,
+                             cfg->temp_curr_3_c, cfg->temp_curr_4_c, &eval);
     return eval;
 }
 
@@ -639,19 +699,8 @@ static ChargeStageEval_t eval_soc_stage(const ChargeCycleConfig_t *cfg, const BM
     eval.source = CHARGE_LIMIT_SOURCE_SOC;
     float soc_pct = (float)bms->soc;  /* Already in percentage */
 
-    /* Check thresholds to determine target band */
-    ChargeStageBand_t new_band = CHARGE_STAGE_BAND_BELOW_MIN;
-    if (soc_pct >= cfg->soc_5_pct) {
-        new_band = CHARGE_STAGE_BAND_ABOVE_MAX;
-    } else if (soc_pct >= cfg->soc_4_pct) {
-        new_band = CHARGE_STAGE_BAND_4_5;
-    } else if (soc_pct >= cfg->soc_3_pct) {
-        new_band = CHARGE_STAGE_BAND_3_4;
-    } else if (soc_pct >= cfg->soc_2_pct) {
-        new_band = CHARGE_STAGE_BAND_2_3;
-    } else if (soc_pct >= cfg->soc_1_pct) {
-        new_band = CHARGE_STAGE_BAND_1_2;
-    }
+    ChargeStageBand_t new_band = band_from_thresholds(
+        soc_pct, cfg->soc_1_pct, cfg->soc_2_pct, cfg->soc_3_pct, cfg->soc_4_pct, cfg->soc_5_pct);
 
     /* SOC is monotonic within one user-started cycle.  A decrease never
      * lowers the charge level or increases the current again. */
@@ -672,42 +721,8 @@ static ChargeStageEval_t eval_soc_stage(const ChargeCycleConfig_t *cfg, const BM
         new_band = g_ctrl.max_soc_band;
     }
 
-    /* Apply limits based on the evaluated band */
-    switch (new_band) {
-        case CHARGE_STAGE_BAND_BELOW_MIN:
-            eval.state = CHARGE_STAGE_BELOW_MIN;
-            eval.band = CHARGE_STAGE_BAND_BELOW_MIN;
-            eval.inhibit = 1;
-            eval.current_limit_c = 0.0f;
-            break;
-        case CHARGE_STAGE_BAND_1_2:
-            eval.state = CHARGE_STAGE_IN_WINDOW;
-            eval.band = CHARGE_STAGE_BAND_1_2;
-            eval.current_limit_c = cfg->soc_curr_1_c;
-            break;
-        case CHARGE_STAGE_BAND_2_3:
-            eval.state = CHARGE_STAGE_IN_WINDOW;
-            eval.band = CHARGE_STAGE_BAND_2_3;
-            eval.current_limit_c = cfg->soc_curr_2_c;
-            break;
-        case CHARGE_STAGE_BAND_3_4:
-            eval.state = CHARGE_STAGE_IN_WINDOW;
-            eval.band = CHARGE_STAGE_BAND_3_4;
-            eval.current_limit_c = cfg->soc_curr_3_c;
-            break;
-        case CHARGE_STAGE_BAND_4_5:
-            eval.state = CHARGE_STAGE_IN_WINDOW;
-            eval.band = CHARGE_STAGE_BAND_4_5;
-            eval.current_limit_c = cfg->soc_curr_4_c;
-            break;
-        default:
-            eval.state = CHARGE_STAGE_ABOVE_MAX;
-            eval.band = CHARGE_STAGE_BAND_ABOVE_MAX;
-            eval.inhibit = 1;
-            eval.current_limit_c = 0.0f;
-            break;
-    }
-
+    apply_band_current_limit(new_band, cfg->soc_curr_1_c, cfg->soc_curr_2_c,
+                             cfg->soc_curr_3_c, cfg->soc_curr_4_c, &eval);
     return eval;
 }
 
@@ -862,8 +877,13 @@ static void run_manual_mode(uint32_t now_tick) {
 
     int v_int = (int)(g_ctrl.target_voltage_v * 10.0f);
     int i_int = (int)(g_ctrl.target_current_per_module_a * 10.0f);
-    LOG("CC: Manual V=%d.%dV I=%d.%dA/mod\r\n",
-        v_int / 10, v_int % 10, i_int / 10, i_int % 10);
+    static int last_v_int = -1, last_i_int = -1;
+    if (v_int != last_v_int || i_int != last_i_int) {
+        last_v_int = v_int;
+        last_i_int = i_int;
+        LOG("CC: Manual V=%d.%dV I=%d.%dA/mod\r\n",
+            v_int / 10, v_int % 10, i_int / 10, i_int % 10);
+    }
 
     apply_charge_targets();
 }
@@ -912,15 +932,18 @@ static void run_standalone_mode(uint32_t now_tick) {
 
     int v_int = (int)(g_ctrl.target_voltage_v * 10.0f);
     int i_int = (int)(g_ctrl.target_current_per_module_a * 10.0f);
-    LOG("CC: Standalone V=%d.%dV I=%d.%dA/mod\r\n",
-        v_int / 10, v_int % 10, i_int / 10, i_int % 10);
+    static int last_v_int = -1, last_i_int = -1;
+    if (v_int != last_v_int || i_int != last_i_int) {
+        last_v_int = v_int;
+        last_i_int = i_int;
+        LOG("CC: Standalone V=%d.%dV I=%d.%dA/mod\r\n",
+            v_int / 10, v_int % 10, i_int / 10, i_int % 10);
+    }
 
     apply_charge_targets();
 }
 
 static void run_bms_controlled_mode(uint32_t now_tick) {
-    (void)now_tick;
-
     ChargeCycleConfig_t cfg;
     ChargeCycleConfig_Get(&cfg);
 
@@ -930,7 +953,7 @@ static void run_bms_controlled_mode(uint32_t now_tick) {
     /* Check BMS conditions */
     if (!bms.online) {
         LOG("CC: BMS offline\r\n");
-        set_fault(CHARGE_CTRL_FAULT_BMS_OFFLINE);
+        set_fault(CHARGE_CTRL_FAULT_BMS_OFFLINE, now_tick);
         return;
     }
 
@@ -950,7 +973,7 @@ static void run_bms_controlled_mode(uint32_t now_tick) {
     if (bms.alarm_flags & (BMS_ALARM_OVER_CHG_CURR | BMS_ALARM_HIGH_CELL_VOLT |
                            BMS_ALARM_TEMP_HIGH_CHG)) {
         LOG("CC: BMS alarm active\r\n");
-        set_fault(CHARGE_CTRL_FAULT_BMS_ALARM);
+        set_fault(CHARGE_CTRL_FAULT_BMS_ALARM, now_tick);
         return;
     }
 
@@ -986,7 +1009,7 @@ static void run_bms_controlled_mode(uint32_t now_tick) {
         }
         g_ctrl.target_current_total_a = 0.0f;
         g_ctrl.target_current_per_module_a = 0.0f;
-        transition_to(CHARGE_CTRL_STATE_STOPPING);
+        transition_to(CHARGE_CTRL_STATE_STOPPING, now_tick);
         return;
     }
 
@@ -1068,7 +1091,7 @@ void ChargeController_Process(uint32_t now_tick) {
         } else if (now_tick - g_ctrl.module_mismatch_timer_tick >= 10000) {
             LOG("CC: Module mismatch %u->%u\r\n",
                 (unsigned)g_ctrl.source_module_count, (unsigned)g_ctrl.actual_module_count);
-            set_fault(CHARGE_CTRL_FAULT_MODULE_COUNT_MISMATCH);
+            set_fault(CHARGE_CTRL_FAULT_MODULE_COUNT_MISMATCH, now_tick);
         }
     } else {
         g_ctrl.module_mismatch_timer_tick = 0;
@@ -1081,10 +1104,10 @@ void ChargeController_Process(uint32_t now_tick) {
 
         case CHARGE_CTRL_STATE_READY:
             /* Check preconditions and start */
-            if (check_preconditions_set_fault()) {
-                transition_to(CHARGE_CTRL_STATE_RUNNING);
+            if (check_preconditions_set_fault(now_tick)) {
+                transition_to(CHARGE_CTRL_STATE_RUNNING, now_tick);
             } else {
-                transition_to(CHARGE_CTRL_STATE_FAULT);
+                transition_to(CHARGE_CTRL_STATE_FAULT, now_tick);
             }
             break;
 
@@ -1130,7 +1153,7 @@ void ChargeController_Process(uint32_t now_tick) {
             /* Clear protection timers */
             g_ctrl.protect_jack_v_timer_tick = 0;
             g_ctrl.protect_jack_temp_timer_tick = 0;
-            transition_to(CHARGE_CTRL_STATE_IDLE);
+            transition_to(CHARGE_CTRL_STATE_IDLE, now_tick);
             g_ctrl.owner = CHARGE_CTRL_OWNER_NONE;
             break;
 
@@ -1142,6 +1165,8 @@ void ChargeController_Process(uint32_t now_tick) {
             /* Stay in fault until explicitly cleared */
             break;
     }
+
+    update_relay_decision();
 }
 
 bool ChargeController_CheckPreconditions(uint32_t *fault_flags_out) {
@@ -1152,7 +1177,7 @@ bool ChargeController_CheckPreconditions(uint32_t *fault_flags_out) {
     return (faults == CHARGE_CTRL_FAULT_NONE);
 }
 
-bool ChargeController_Start(ChargeCtrlOwner_t owner, bool manual_mode) {
+bool ChargeController_Start(ChargeCtrlOwner_t owner, bool manual_mode, uint32_t now_tick) {
     if (g_ctrl.state == CHARGE_CTRL_STATE_RUNNING) {
         LOG("CC: Already running\r\n");
         return true;  /* Already running */
@@ -1164,7 +1189,7 @@ bool ChargeController_Start(ChargeCtrlOwner_t owner, bool manual_mode) {
         LOG("CC: Preconditions failed fault=0x%08lX\r\n", (unsigned long)faults);
         g_ctrl.fault_flags = faults;
         g_ctrl.stop_reason = CHARGE_STOP_PRECONDITION;
-        transition_to(CHARGE_CTRL_STATE_FAULT);
+        transition_to(CHARGE_CTRL_STATE_FAULT, now_tick);
         return false;
     }
 
@@ -1193,7 +1218,7 @@ bool ChargeController_Start(ChargeCtrlOwner_t owner, bool manual_mode) {
 
     clear_fault();
 
-    transition_to(CHARGE_CTRL_STATE_READY);
+    transition_to(CHARGE_CTRL_STATE_READY, now_tick);
     return true;
 }
 
@@ -1207,7 +1232,7 @@ bool ChargeController_IsManualMode(void) {
     return g_ctrl.manual_mode;
 }
 
-void ChargeController_Stop(void) {
+void ChargeController_Stop(uint32_t now_tick) {
     if (g_ctrl.state == CHARGE_CTRL_STATE_IDLE) {
         return;
     }
@@ -1218,24 +1243,24 @@ void ChargeController_Stop(void) {
     if (g_ctrl.state == CHARGE_CTRL_STATE_FAULT) {
         /* Clear fault and go to IDLE */
         clear_fault();
-        transition_to(CHARGE_CTRL_STATE_IDLE);
+        transition_to(CHARGE_CTRL_STATE_IDLE, now_tick);
         g_ctrl.owner = CHARGE_CTRL_OWNER_NONE;
     } else {
-        transition_to(CHARGE_CTRL_STATE_STOPPING);
+        transition_to(CHARGE_CTRL_STATE_STOPPING, now_tick);
     }
 }
 
-void ChargeController_EmergencyStop(void) {
+void ChargeController_EmergencyStop(uint32_t now_tick) {
     LOG("CC: EMERGENCY STOP\r\n");
 
     /* Immediate hardware stop */
     CHG_LIB_EmergencyStop();
 
     /* Set fault flag */
-    set_fault(CHARGE_CTRL_FAULT_EMERGENCY_STOP);
+    set_fault(CHARGE_CTRL_FAULT_EMERGENCY_STOP, now_tick);
 
     /* Force to fault state */
-    transition_to(CHARGE_CTRL_STATE_FAULT);
+    transition_to(CHARGE_CTRL_STATE_FAULT, now_tick);
 
     g_ctrl.owner = CHARGE_CTRL_OWNER_NONE;
 }
@@ -1270,6 +1295,7 @@ void ChargeController_GetView(ChargeCtrlView_t *view) {
     view->active_stage_band = g_ctrl.active_stage_band;
     view->active_limit_current_c = g_ctrl.active_limit_current_c;
     view->stop_reason = g_ctrl.stop_reason;
+    view->relay_should_close = g_ctrl.relay_should_close ? 1U : 0U;
 }
 
 

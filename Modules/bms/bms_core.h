@@ -50,7 +50,14 @@ extern "C" {
 #define BMS_MAX_VOLT_MV           4500U   /* Max cell voltage (mV) */
 #define BMS_MAX_TEMP_DEGC         60U     /* Max allowed cell temp (°C) */
 #define BMS_MIN_TEMP_DEGC         (-10)   /* Min allowed cell temp (°C) */
-#define BMS_CHARGE_VOLT_LIMIT_PCT  90U    /* Relay closes at 90% of req voltage */
+/* Relay-close voltage threshold, as a percentage of the controller's target
+ * voltage -- consumed by App/Charge/charge_controller.c's
+ * update_relay_decision(), not by anything in this module. Lives here
+ * (rather than duplicated as a magic number in charge_controller.c) because
+ * it's conceptually "how close to the requested pack voltage is close
+ * enough to trust the connection", the same kind of battery-safety
+ * threshold as BMS_MIN_VOLT_MV/BMS_MAX_VOLT_MV above. */
+#define BMS_CHARGE_VOLT_LIMIT_PCT  90U
 
 /* ============== BMS State ============== */
 
@@ -182,17 +189,18 @@ bool BMS_HasCriticalAlarm(void);
 void BMS_GetView(BMS_View_t *view);
 
 /**
- * @brief  Decide if charging relay should be closed based on BMS state.
- *         Returns true when: BMS online, charge relay closed, voltage >90% req.
+ * @brief  BMS-side half of the relay-close decision: is the BMS itself
+ *         reporting it's safe to connect? Returns true when BMS is online,
+ *         has no critical alarm, and its own charge relay flag (from
+ *         BmsSwSta) is closed.
+ * @note   Does NOT check output voltage -- that's a separate,
+ *         mode-independent condition owned by
+ *         App/Charge/charge_controller.c's update_relay_decision(), which
+ *         also only calls this function at all when charge_source_mode is
+ *         BMS-Controlled (Standalone/no-BMS mode skips it by design, since
+ *         that mode may have no BMS physically installed).
  */
 bool BMS_ShouldCloseChargeRelay(void);
-
-/* ============== Alarm Check API ============== */
-
-/**
- * @brief  Map raw ALM_INFO severity (0..3) to alarm flag
- */
-BMS_AlarmFlag_t BMS_MapAlmSeverity(uint8_t severity, BMS_AlarmFlag_t base_flag);
 
 #ifdef __cplusplus
 }

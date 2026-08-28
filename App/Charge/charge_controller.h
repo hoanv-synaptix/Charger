@@ -106,6 +106,20 @@ typedef struct {
     uint8_t active_stage_band;
     float active_limit_current_c;
     ChargeStopReason_t stop_reason;
+    /** True when the battery relay should be closed. This is a latch, not
+     * a continuous voltage gate: it closes once state is RUNNING and the
+     * worst-case (minimum) online module output voltage reaches
+     * BMS_CHARGE_VOLT_LIMIT_PCT of target_voltage_v, then STAYS closed
+     * through normal voltage/current fluctuation — voltage dropping back
+     * below that threshold does NOT reopen it. Only leaving RUNNING, or —
+     * when charge_source_mode is BMS-Controlled — the BMS itself reporting
+     * unsafe (BMS_ShouldCloseChargeRelay() going false) reopens it; both
+     * are checked every tick even while latched closed. Standalone (no-BMS)
+     * mode never requires a BMS at all. Re-computed every
+     * ChargeController_Process() call — the composition root
+     * (App/System/app_main.c) just mirrors this onto the relay GPIO, it
+     * does not decide the condition itself. */
+    uint8_t relay_should_close;
 } ChargeCtrlView_t;
 
 /* ============== Public API ============== */
@@ -131,9 +145,11 @@ bool ChargeController_CheckPreconditions(uint32_t *fault_flags_out);
 /**
  * @brief Request to start charge cycle
  * @param owner Who initiated the start (PC or DWIN)
+ * @param now_tick Current tick (BSP_GetTick() from the caller -- App/Charge
+ *        is pure policy and must not read the tick itself, AGENTS.md sec 5-6)
  * @return true if start request accepted, false if cannot start
  */
-bool ChargeController_Start(ChargeCtrlOwner_t owner, bool manual_mode);
+bool ChargeController_Start(ChargeCtrlOwner_t owner, bool manual_mode, uint32_t now_tick);
 void ChargeController_SetManualTarget(float voltage, float current);
 bool ChargeController_IsManualMode(void);
 
@@ -148,13 +164,15 @@ void ChargeController_SetJackTempC(float temp_c);
 
 /**
  * @brief Stop charge cycle (controlled stop)
+ * @param now_tick Current tick (BSP_GetTick() from the caller)
  */
-void ChargeController_Stop(void);
+void ChargeController_Stop(uint32_t now_tick);
 
 /**
  * @brief Emergency stop - immediately halt charging
+ * @param now_tick Current tick (BSP_GetTick() from the caller)
  */
-void ChargeController_EmergencyStop(void);
+void ChargeController_EmergencyStop(uint32_t now_tick);
 
 /**
  * @brief Check if charge cycle is currently running
