@@ -313,11 +313,6 @@ void BMS_Process(uint32_t now_tick)
         }
     }
 
-    /* DEBUG: Log timeout calculation */
-    /* DEBUG: only log on state changes, not every call */
-    /* LOG("BMS_Process: elapsed=%lu (timeout=%u) last_rx=%lu now=%lu state=%d\r\n", */
-    /*     elapsed, BMS_OFFLINE_TIMEOUT_MS, g_last_valid_rx_tick, now_tick, (int)g_bms_state); */
-
     /* ---- State Machine ---- */
     if (g_bms_state == BMS_STATE_OFFLINE) {
         /* Transition to ONLINE as soon as any valid frame has been parsed;

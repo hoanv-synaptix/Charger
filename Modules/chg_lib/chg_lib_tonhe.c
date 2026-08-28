@@ -54,6 +54,17 @@
  *   Start modules 1,2,3:
  *     ID: 0x0803FFA0 (Priority=2, PF=0x03, PS=0xFF, SA=0xA0)
  *     Data: 07 00 00 AA 00 00 00 00
+ *
+ * Logging note:
+ *   CHG_LIB_Process()/CHG_LIB_FeedCanFrame() (chg_lib_core.c) hold
+ *   BSP_EnterCritical() around the *entire* driver call, so every function
+ *   in this file reachable from tonhe_process()/tonhe_feed_frame() (i.e.
+ *   process_module(), parse_status(), parse_confirm(), parse_ac_phase(),
+ *   parse_extended()) runs with interrupts disabled. LOG() blocks for up
+ *   to 50ms (Utils/Log/debug_log.c) -- calling it from any of those would
+ *   stall CAN1/CAN2 RX for that long. Do not add LOG() calls in that call
+ *   tree; Maxwell/Lianming follow the same rule (zero LOG() calls in
+ *   either driver, not an oversight).
  */
 
 #include "chg_lib_driver_tonhe.h"
@@ -327,7 +338,6 @@ static void parse_status(const uint8_t *data, uint8_t src_addr, uint32_t now)
     if (mod->view.alarm_flags != CHG_LIB_ALARM_NONE) {
         set_state(mod, CHG_LIB_STATE_FAULT, now);
     } else if (status == TONHE_STATUS_FAULT_OFF) {
-        // LOG("TONHE: Module %u FAULT (status=%02X)\r\n", mod->view.addr, status);
         set_state(mod, CHG_LIB_STATE_FAULT, now);
     } else if (status == TONHE_STATUS_NORMAL_OFF) {
         if (mod->view.state == CHG_LIB_STATE_STOPPING) {
@@ -341,7 +351,7 @@ static void parse_status(const uint8_t *data, uint8_t src_addr, uint32_t now)
         if (!mod->should_run) {
             /* Module still ON but we want it stopped — resend STOP */
             if (mod->view.state != CHG_LIB_STATE_STOPPING && mod->view.state != CHG_LIB_STATE_FAULT) {
-                LOG("TONHE: Module %u still ON (status=%02X), forcing STOP\r\n", mod->view.addr, status);
+                /* No LOG here -- see the file header note on why. */
                 send_specific_start_stop(mod, false);
                 mod->stop_retry_count = 0;
                 mod->stop_tick = now;
@@ -519,7 +529,6 @@ static void process_module(TONHE_Internal_t *mod, uint32_t now)
             }
             send_specific_start_stop(mod, true);
             set_state(mod, CHG_LIB_STATE_STARTING, now);
-            // LOG("TONHE: Module %u IDLE->STARTING (sent start cmd)\r\n", mod->view.addr);
         }
         break;
 
@@ -565,12 +574,14 @@ static void process_module(TONHE_Internal_t *mod, uint32_t now)
                 send_specific_start_stop(mod, false);
                 mod->stop_retry_count++;
                 mod->stop_tick = now;
-                LOG("TONHE: Module %u STOP retry %u\r\n",
-                    mod->view.addr, mod->stop_retry_count);
+                /* No LOG here -- see the file header note on why. */
             } else {
-                /* Module refuses to stop — critical safety fault */
-                LOG("TONHE: Module %u STOP FAILED after %u retries\r\n",
-                    mod->view.addr, TONHE_MAX_RETRY);
+                /* Module refuses to stop — critical safety fault. No LOG
+                 * here either (see file header note) -- the resulting
+                 * CHG_LIB_ALARM_COMM_FAIL/FAULT state is what actually
+                 * needs to reach the PC/DWIN, and both already do via
+                 * DebugProtocol_BuildAllModulesData() / the DWIN fault
+                 * code field, neither of which needs LOG(). */
                 mod->view.alarm_flags |= CHG_LIB_ALARM_COMM_FAIL;
                 set_state(mod, CHG_LIB_STATE_FAULT, now);
             }
@@ -825,26 +836,18 @@ static void tonhe_feed_frame(uint32_t ext_id, const uint8_t *data, uint8_t dlc)
     uint8_t ps = (uint8_t)((ext_id >> 8) & 0xFFU);  /* Destination address */
     uint8_t src_addr = (uint8_t)(ext_id & 0xFFU);
 
-    // LOG("TONHE: feed_frame ext_id=%08lX pf=%02X ps=%02X src=%u dlc=%u modules=%u\r\n",
-    //     ext_id, pf, ps, src_addr, dlc, g_module_count);
-
     /* Filter out frames not from a charger module:
      *   - Priority must be valid (2-7 for charger modules)
      *   - PF >= 240: PS is Group Extension (no destination check)
      *   - PF < 240: PS must be controller address (0xA0) or broadcast (0xFF)
      *   - Source address must be valid module range (1-240) */
     if (priority < 2U || priority > 7U) {
-        // LOG("TONHE: rejected - bad priority %u\r\n", priority);
         return;
     }
     if (src_addr < TONHE_MODULE_MIN_ADDR || src_addr > TONHE_MODULE_MAX_ADDR) {
-        // LOG("TONHE: rejected - bad src_addr %u (range %u-%u)\r\n",
-        //     src_addr, TONHE_MODULE_MIN_ADDR, TONHE_MODULE_MAX_ADDR);
         return;
     }
     if (pf < 240U && ps != TONHE_ADDR_CONTROLLER && ps != TONHE_ADDR_BROADCAST) {
-        // LOG("TONHE: rejected - bad ps %02X (expect %02X or %02X)\r\n",
-        //     ps, TONHE_ADDR_CONTROLLER, TONHE_ADDR_BROADCAST);
         return;
     }
 
