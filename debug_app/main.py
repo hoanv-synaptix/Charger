@@ -772,67 +772,6 @@ class ChargerDebugApp:
         )
         self._build_control_notes(guide)
 
-    def _build_bms_tab(self, parent):
-        """Dedicated BMS information tab"""
-        parent.grid_columnconfigure(0, weight=7, minsize=760)
-        parent.grid_columnconfigure(1, weight=3, minsize=280)
-        parent.grid_rowconfigure(0, weight=1)
-        parent.grid_rowconfigure(1, weight=0)
-
-        left = tk.Frame(parent, bg="#F0F0F0")
-        left.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
-        left.grid_columnconfigure(0, weight=1)
-        left.grid_rowconfigure(0, weight=0)
-        left.grid_rowconfigure(1, weight=1)
-
-        top_group = tk.LabelFrame(left, text="BMS Snapshot", font=("Segoe UI", 9),
-                                  padx=8, pady=6, bg="#F0F0F0")
-        top_group.grid(row=0, column=0, sticky="nsew", pady=(0, 8))
-        top_group.grid_columnconfigure(0, weight=1)
-        top_group.grid_rowconfigure(0, weight=1)
-
-        top = tk.Frame(top_group, bg="#F0F0F0")
-        top.grid(row=0, column=0, sticky="nsew")
-        for col in range(4):
-            top.grid_columnconfigure(col, weight=1, uniform="bms_top")
-        top.grid_rowconfigure(0, weight=1)
-
-        self._build_bms_overview_card(top, 0, columnspan=2)
-        self._build_bms_request_card(top, 2)
-        self._build_bms_relay_card(top, 3)
-
-        bottom_group = tk.LabelFrame(left, text="BMS Metrics", font=("Segoe UI", 9),
-                                     padx=8, pady=6, bg="#F0F0F0")
-        bottom_group.grid(row=1, column=0, sticky="nsew")
-        bottom_group.grid_columnconfigure(0, weight=1)
-        bottom_group.grid_rowconfigure(0, weight=1)
-
-        bottom = tk.Frame(bottom_group, bg="#F0F0F0")
-        bottom.grid(row=0, column=0, sticky="nsew")
-        for col in range(3):
-            bottom.grid_columnconfigure(col, weight=1, uniform="bms_bottom")
-        bottom.grid_rowconfigure(0, weight=1)
-
-        self._build_bms_pack_card(bottom, 0)
-        self._build_bms_cell_card(bottom, 1)
-        self._build_bms_health_card(bottom, 2)
-
-        alarm = tk.LabelFrame(parent, text="BMS Alarm Details", font=("Segoe UI", 9),
-                              padx=8, pady=4, bg="#F0F0F0")
-        alarm.grid(row=0, column=1, sticky="nsew")
-        self._build_bms_alarm_details(alarm)
-
-        footer = tk.LabelFrame(parent, text="BMS Notes", font=("Segoe UI", 9),
-                               padx=8, pady=6, bg="#F0F0F0")
-        footer.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(8, 0))
-        msg = (
-            "Trang BMS hiện bám theo payload DEBUG_RSP_BMS_DATA đang được firmware gửi lên: "
-            "state, online, relay, pack voltage/current, capacity remain, SOC/SOH, "
-            "cell max/min, charge request, alarm flags, last_rx_tick."
-        )
-        tk.Label(footer, text=msg, font=("Segoe UI", 9), bg="#F0F0F0",
-                 justify=tk.LEFT, anchor="w", wraplength=1040).pack(fill=tk.X)
-
     def _build_monitor_tab(self, parent):
         """Monitor tab: charger telemetry, BMS data, alarms, and traffic."""
         page = self._build_scrollable_page(parent, min_width=self._responsive_min_width(1180))
@@ -917,9 +856,9 @@ class ChargerDebugApp:
         top.grid_rowconfigure(0, weight=1)
         top.grid_rowconfigure(1, weight=1)
 
-        self._build_bms_overview_card(top, 0, columnspan=2)
-        self._build_bms_request_card(top, 0)
-        self._build_bms_relay_card(top, 1)
+        self._build_bms_overview_card(top, 0, columnspan=2, row=0)
+        self._build_bms_request_card(top, 0, row=1)
+        self._build_bms_relay_card(top, 1, row=1)
 
         bottom_group = tk.LabelFrame(panel, text="BMS Metrics", font=("Segoe UI", 9, "bold"),
                                      padx=8, pady=6, bg="#FFFFFF")
@@ -1498,14 +1437,14 @@ class ChargerDebugApp:
 
     def _build_card_frame(self, parent, title: str, column: Optional[int] = None,
                           padx: Optional[tuple[int, int]] = None,
-                          columnspan: int = 1) -> tk.Frame:
+                          columnspan: int = 1, row: int = 0) -> tk.Frame:
         """Create a card frame"""
         card = tk.LabelFrame(parent, text=title, font=("Segoe UI", 8),
                              padx=6, pady=4, bg="#F0F0F0")
         if column is None:
             card.pack(fill=tk.BOTH, expand=True)
         else:
-            card.grid(row=0, column=column, columnspan=columnspan, sticky="nsew",
+            card.grid(row=row, column=column, columnspan=columnspan, sticky="nsew",
                       padx=padx if padx is not None else (0 if column == 0 else 6, 0))
         return card
 
@@ -1538,8 +1477,8 @@ class ChargerDebugApp:
             tk.Label(row, text=unit, font=("Segoe UI", 9), fg="gray", bg="#F0F0F0",
                      width=4, anchor="e").grid(row=0, column=2, sticky="e")
 
-    def _build_bms_info_card(self, parent, title: str, column: int, columnspan: int = 1) -> tk.Frame:
-        return self._build_card_frame(parent, title, column=column, columnspan=columnspan)
+    def _build_bms_info_card(self, parent, title: str, column: int, columnspan: int = 1, row: int = 0) -> tk.Frame:
+        return self._build_card_frame(parent, title, column=column, columnspan=columnspan, row=row)
 
     def _make_bms_var(self, key: str, default: str = "---") -> tk.StringVar:
         var = tk.StringVar(value=default)
@@ -1619,22 +1558,18 @@ class ChargerDebugApp:
         self._build_process_row(actual_card, "Charge Current", self._make_process_var("Actual Charge Current"), "A")
         self._build_process_row(actual_card, "Charger Max Temp", self._make_process_var("Charger Max Temp"), "C")
 
-    def _build_bms_overview_card(self, parent, column: int, columnspan: int = 1):
-        card = self._build_bms_info_card(parent, "BMS Overview", column, columnspan=columnspan)
+    def _build_bms_overview_card(self, parent, column: int, columnspan: int = 1, row: int = 0):
+        """Identity/connectivity only -- electrical values live in Battery
+        Pack, SOC/SOH live in Health Summary. Kept single-owner per field
+        so no _make_bms_var() key is ever created twice (see the
+        debug_app BMS Monitor standardization plan for why that mattered:
+        a second create silently orphans the first widget's StringVar)."""
+        card = self._build_bms_info_card(parent, "BMS Overview", column, columnspan=columnspan, row=row)
         content = tk.Frame(card, bg="#F0F0F0")
         content.pack(fill=tk.BOTH, expand=True)
-        content.grid_columnconfigure(0, weight=1, uniform="bms_overview")
-        content.grid_columnconfigure(1, weight=1, uniform="bms_overview")
 
-        left_col = tk.Frame(content, bg="#F0F0F0")
-        left_col.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
-        right_col = tk.Frame(content, bg="#F0F0F0")
-        right_col.grid(row=0, column=1, sticky="nsew", padx=(10, 0))
-
-        for name, unit in (("State", ""), ("Online", ""), ("SOC", "%"), ("SOH", "%")):
-            self._add_bms_row(left_col, name, self._make_bms_var(name), unit)
-        for name, unit in (("Batt Voltage", "V"), ("Batt Current", "A"), ("Cap Remain", "Ah"), ("Last RX Tick", "ms")):
-            self._add_bms_row(right_col, name, self._make_bms_var(name), unit)
+        for name, unit in (("State", ""), ("Online", ""), ("Last RX Tick", "ms")):
+            self._add_bms_row(content, name, self._make_bms_var(name), unit)
 
     def _build_bms_pack_card(self, parent, column: int):
         card = self._build_bms_info_card(parent, "Battery Pack", column)
@@ -1642,9 +1577,9 @@ class ChargerDebugApp:
         for name, unit in rows:
             self._add_bms_row(card, name, self._make_bms_var(name), unit)
 
-    def _build_bms_request_card(self, parent, column: int):
-        card = self._build_bms_info_card(parent, "Charge Request", column)
-        rows = [("Req Voltage", "V"), ("Req Current", "A"), ("State", ""), ("Online", "")]
+    def _build_bms_request_card(self, parent, column: int, row: int = 0):
+        card = self._build_bms_info_card(parent, "Charge Request", column, row=row)
+        rows = [("Req Voltage", "V"), ("Req Current", "A")]
         for name, unit in rows:
             self._add_bms_row(card, name, self._make_bms_var(name), unit)
 
@@ -1659,8 +1594,8 @@ class ChargerDebugApp:
         for name, unit in rows:
             self._add_bms_row(card, name, self._make_bms_var(name), unit)
 
-    def _build_bms_relay_card(self, parent, column: int):
-        card = self._build_bms_info_card(parent, "Relay Status", column)
+    def _build_bms_relay_card(self, parent, column: int, row: int = 0):
+        card = self._build_bms_info_card(parent, "Relay Status", column, row=row)
         for name in ("Charge Relay", "Discharge Relay", "Alarm Count"):
             self._add_bms_row(card, name, self._make_bms_var(name))
 
@@ -2492,10 +2427,25 @@ class ChargerDebugApp:
         try:
             addr = self._read_addr_entry()
 
-            # Check duplicate
-            for mod in self.modules.values():
+            # If this addr+driver is already tracked locally (e.g. a repeat
+            # click, or the connect-time auto-sync -- see _sync_module_addr()
+            # -- already told the MCU about it before this button was ever
+            # pressed), treat it as idempotent: re-select/re-sync the
+            # existing row instead of hard-blocking with a warning dialog.
+            # Blocking here used to leave the operator stuck with an empty,
+            # unselectable module table and no way to reach START, even
+            # though the module was already correctly registered on the MCU.
+            for idx_existing, mod in self.modules.items():
                 if mod.addr == addr and mod.driver == self.driver_id:
-                    messagebox.showwarning("Warning", "Module already exists")
+                    mod.user_added = True
+                    if self.serial and self.serial.is_connected():
+                        self.serial.send(StdCmd.SET_MODULE_ADDR, bytes([addr & 0xFF, 0]))
+                        self._add_traffic("TX", "---", 2, bytes([addr & 0xFF, 0]),
+                                          f"SET_MODULE_ADDR (re-sync): 0x{addr & 0xFF:02X}")
+                    self._update_module_grid()
+                    self._set_selected_module(idx_existing)
+                    self._add_traffic("SYS", f"{addr:03X}", 0, b"",
+                                    f"Module already tracked, re-selected: {DRIVER_NAMES[self.driver_id]} 0x{addr:02X}")
                     return
 
             idx = 0
@@ -3121,7 +3071,25 @@ class ChargerDebugApp:
                 messagebox.showerror("Error", f"Failed to parse charge config: {result}")
 
     def _update_module_from_data(self, data: ModuleData):
-        """Update internal module from protocol data - only for user-added modules"""
+        """Update internal module state from ALL_MODULES/MODULE_DATA telemetry,
+        auto-creating a tracked entry the first time the MCU reports a given
+        addr+driver.
+
+        MCU flash-persisted config (module_type + source_module_count) is the
+        real source of truth for what modules exist -- it auto-registers them
+        at boot independently of the PC app (see ChargeCycleConfig_Set()'s
+        registration side effect / AUDIT_Findings.md B-21/B-23). If the MCU
+        is streaming live telemetry for addr+driver, that module genuinely
+        exists right now, whether or not this app session ever clicked "Add"
+        for it. Marking it user_added=True here (not the dataclass's False
+        default) is what surfaces it on the Control screen table immediately
+        -- confirmed with the user 2026-08-29: previously this silently
+        tracked the module but hid it from the table until a redundant
+        manual "Add" (which could itself NACK as "already exists" against
+        the very module the MCU had already told the app about, leaving the
+        operator stuck with an empty, unselectable table -- see the
+        _add_module() fix immediately above this in git history).
+        """
         # O(1) lookup using dictionary
         key = (data.addr, data.driver_id)
         idx = self._module_lookup.get(key)
@@ -3130,7 +3098,7 @@ class ChargerDebugApp:
         # Auto-create module if not in dictionary
         if mod is None:
             idx = len(self.modules)
-            mod = ChargerModule(addr=data.addr, driver=data.driver_id, module_idx=idx)
+            mod = ChargerModule(addr=data.addr, driver=data.driver_id, module_idx=idx, user_added=True)
             self.modules[idx] = mod
             self._module_lookup[key] = idx
 

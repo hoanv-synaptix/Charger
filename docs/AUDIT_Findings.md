@@ -331,6 +331,30 @@ _Update 2026-08-28: item 3.3's HIL half is no longer blocked — `test/integrati
 
 ---
 
+## 8b. Integration test end-to-end trên hardware thật (2026-08-29)
+
+Theo yêu cầu người dùng: test toàn bộ chu trình thật — PC app (`debug_app`) → USB CDC → MCU → CAN1 (module sạc) + CAN2 (BMS) — với điều kiện chuẩn (user chọn driver/module trên app, set Charge Config, bấm START, chu trình sạc chạy theo đúng thuật toán + config) và các điều kiện fail/bảo vệ (alarm module, alarm BMS, BMS offline, emergency stop).
+
+**Setup**: MCU thật (firmware tại commit `32e96a6`, đã flash) + ZLG USBCAN adapter 2 kênh giả lập đồng thời BMS (CAN2, `BmsSim` mở rộng từ `test/integration_sync_test.py`) và module TonHe (CAN1, `TonheModuleSim` mở rộng, có ramp điện áp thực tế + inject alarm/offline theo yêu cầu qua control file, không cần restart script). Người dùng thao tác trực tiếp trên `debug_app` thật qua COM12 (song song, không tranh cổng vì ZLG là thiết bị USB riêng).
+
+**Phát hiện + fix trong lúc test** (đã commit riêng trước đó — `32e96a6`, các sửa `debug_app/main.py` commit cùng đợt với ghi chú này):
+- `debug_app`'s `_add_module()` chỉ check trùng module theo dict nội bộ `self.modules`, trong khi auto-sync lúc Connect (`_sync_driver()`→`_sync_module_addr()`) đã đăng ký module thật lên MCU nhưng không cập nhật dict/bảng UI → lần "Add" đầu tiên của người dùng luôn bị NACK "Module already exists" dù chưa từng add gì trên UI, chặn cứng không thể START. Fix: (1) `_add_module()` gặp module trùng thì re-select/re-sync thay vì chặn cứng; (2) `_update_module_from_data()` (nhận stream `ALL_MODULES` từ MCU mỗi 1s) giờ đánh dấu module tự phát hiện là `user_added=True` ngay lập tức, hiện thẳng lên bảng Control screen — đúng theo yêu cầu người dùng "MCU có load config module_type từ flash, cần cập nhật nó luôn vào màn control".
+
+**Kết quả test** (tất cả PASS):
+
+| Kịch bản | Kỳ vọng (theo SRS/AGENTS.md) | Kết quả thật |
+|---|---|---|
+| Golden path: chọn driver+module trên app → SET_CHARGE_CFG → START | IDLE→READY→RUNNING, áp/dòng đúng `vmax_v`/band hiện tại | ✅ Module RUNNING, V=58.40V (=`vmax_v`), I theo đúng band cell-voltage đang active |
+| Band walkthrough cell-voltage Level 1→2→3→4→ABOVE_MAX | Derating giảm dần đúng current-limit từng band (1.00C→0.80C→0.50C→0.30C), high-watermark latch không lùi (đã xác nhận với người dùng: chỉ nhiệt độ được lùi theo hysteresis, cell/SOC chỉ tiến) | ✅ Current chuyển đúng 100A→80A→50A→30A theo từng lần đẩy cell-voltage qua ngưỡng; đạt ABOVE_MAX (≥`cell_volt_5_v`) → `cell_full_latched` → STOPPING → IDLE, `stop_reason=CELL_VOLTAGE_REACHED` |
+| Module alarm (short-circuit, TonHe fault_bits bit15) | Module → FAULT ngay; Controller phát hiện module rời "active set" → sau `module_mismatch` timer 10s → FAULT (`CHARGE_CTRL_FAULT_MODULE_COUNT_MISMATCH`) | ✅ Module FAULT ngay ("Short circuit; State fault"), Controller Stopping sau ~10s, Stop Reason "Module mismatch", fault flag `0x00000004` |
+| BMS alarm critical (High Cell Voltage, severity≥2) | Dừng NGAY LẬP TỨC (không đợi timer, khác module alarm vì đây là an toàn pin) — `CHARGE_CTRL_FAULT_BMS_ALARM` | ✅ BMS State FAULT ("High cell voltage"), Controller Stopping tức thì, fault flag `0x00000020` |
+| BMS offline ≥5s | `BMS_STATE_OFFLINE`, cache xoá (FR-BMS-03), Controller FAULT (`CHARGE_CTRL_FAULT_BMS_OFFLINE`); khi BMS phục hồi, không dính latch mãi mãi (BUG-13) | ✅ OFFLINE đúng sau ~5-7s, Battery Pack/Cell Extremes reset về 0, Stop Reason "BMS offline"; sau khi resume, BMS Online=Yes + Alarms=None ngay, không dính latch — xác nhận lại BUG-13 vẫn đứng vững |
+| EMERGENCY_STOP giữa lúc RUNNING | `CHG_LIB_EmergencyStop()` dừng module NGAY trong chu kỳ hiện tại (NFR-03), không qua STOPPING thông thường | ✅ Module nhận lệnh STOP tức thì (quan sát trực tiếp qua CAN1) |
+
+**Đối chiếu schematic thật**: nhân tiện review thuật toán sạc, đã đối chiếu `docs/CHARGER_CTRL_Ver1.0_Schematic_2026-08-23.PDF` (Sheet 7/10, `05.LED_NTC_COM.SchDoc`) cho mạch đo nhiệt độ jack — pull-up thật = 10kΩ 1%, khớp chính xác `R_REF=10000.0f` trong `BSP/bsp_adc.c`. NTC 10K/B=3950 (theo người dùng xác nhận) khớp `NTC_R25`/`NTC_B`. Không có sai lệch phần cứng ↔ firmware.
+
+**Xác nhận nghiệp vụ khác trong lúc review** (không phải bug, ghi lại để tránh audit sau nhầm lẫn): cắt sạc khi **1 cell bất kỳ** (không phải trung bình) chạm trần điện áp là đúng chuẩn an toàn pin Lithium (tránh over-voltage cell lệch cân bằng) — `eval_cell_stage()` dùng `bms->max_cell_volt` đúng thiết kế, không cần sửa.
+
 ## 9. Phụ lục — File tham chiếu & Guard Checklist
 
 ### 9.1 File cần sửa theo Sprint
