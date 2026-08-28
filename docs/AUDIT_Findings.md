@@ -316,6 +316,8 @@ thể kiểm tra response thật đã enqueue mà không cần USB thật.
 | **3.2** | DWIN + Relay + ADC NTC thực (nối `BSP_RS485_Read`→DWIN, `BMS_ShouldCloseChargeRelay`→PB14/15) | P2 | L | FW+HW | 2.2 |
 | **3.3** | Integration & fuzz: HIL BMS, 2 module mock, PC fuzz, power-cycle, 72h soak | P2 | L | QA/FW | S1+S2 |
 
+_Update 2026-08-28: item 3.3's HIL half is no longer blocked — `test/integration_sync_test.py` now runs a real end-to-end smoke test against actual hardware (ZLG USBCAN adapter simulating BMS+TonHe module CAN traffic, driving the real firmware over its real USB CDC debug protocol), replacing the old PCAN-only placeholder that never ran against this project's actual hardware. Verified: real MCU (current Release build flashed via ST-Link) reached RUNNING and returned to IDLE cleanly against the simulated bus. See the file's own docstring for scope (TonHe-only for now, matches the currently-configured hardware; Maxwell/Lianming HIL coverage is not yet built) and setup requirements (ZLG USBCAN vendor driver, `ZLG_USBCAN_DLL_PATH` env var). Still open: multi-module HIL, fuzz, power-cycle, 72h soak (2 mock modules and beyond)._
+
 ---
 
 ## 9. Phụ lục — File tham chiếu & Guard Checklist
