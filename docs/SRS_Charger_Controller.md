@@ -392,7 +392,7 @@ Frame RX được feed tới driver đang active qua `CHG_LIB_FeedCanFrame()`.
 | 0x05F4 | Std | 500ms | CELL_TEMP: max/min/avg (raw = °C+50) + vị trí |
 | 0x07F4 | Std | event | ALM_INFO: 13 alarm × 2 bit (0=none…3=severe) |
 | 0x18F128F4 | Ext | 100ms | BATT_ST2: cap_remain 0.1Ah, rate_cap 0.1Ah, cycles, SOH% |
-| 0x1806E5F4 | Ext | 1000ms | ChgRequest: **u16 BE** V×0.1, **u16 BE** I×0.1, byte4 switch, byte5 mode |
+| 0x1806E5F4 | Ext | 1000ms | ChgRequest: **u16 BE** V×0.1, **u16 BE** I×0.1, byte4 switch, byte5 mode — the one exception to `CAN BMS_BB_PKG V1.0.pdf`'s default little-endian; see `docs/BMS_ChgRequest_addendum.md` for the second source + worked example that confirms it |
 | 0x18F528F4 | Ext | 500ms | BmsSwSta: byte0 bit0 pre-dischg, bit1 dischg, bit2 charge relay |
 | 0x18E028F4+E | Ext | 1000ms | CELL_VOLT_FULL: 4 cell/frame × 8 (32 cell) |
 | 0x18F228F4 | Ext | 1000ms | CELL_TEMP_FULL: relay, shunt, 6 cell |

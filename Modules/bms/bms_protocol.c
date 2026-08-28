@@ -105,7 +105,18 @@ static void parse_batt_st2(const uint8_t *d, BMS_Data_t *bms, uint32_t ext_id)
     out->valid        = true;
 }
 
-/* ---- ChgRequest_INFO: ID=0x1806E5F4, 1000ms ---- */
+/* ---- ChgRequest_INFO: ID=0x1806E5F4, 1000ms ----
+ * BIG-ENDIAN -- the one confirmed exception to docs/CAN BMS_BB_PKG V1.0.pdf's
+ * blanket little-endian default (that PDF's own §5.7 table for this frame
+ * doesn't call out an exception, which looks like a real bug here on a
+ * first read -- it isn't). Confirmed against a second, frame-specific
+ * source document (see docs/BMS_ChgRequest_addendum.md for the full
+ * transcript and worked example: "0x1806E5F4 03 48 00 C8 ..." = 84.0V/20.0A
+ * only parses correctly as big-endian; little-endian gives 1843.5V, which
+ * contradicts that source's own stated example). Do not "fix" this to
+ * get_u16_le() to match the other frames without re-reading that addendum
+ * first -- this was deliberately re-verified against a second source
+ * after review flagged it as a likely mismatch. */
 static void parse_chg_request(const uint8_t *d, BMS_Data_t *bms, uint32_t ext_id)
 {
     BMS_ChgRequest_t *out = &bms->chg_request;
