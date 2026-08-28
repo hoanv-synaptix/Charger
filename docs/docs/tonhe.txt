@@ -1,0 +1,652 @@
+     COMMUNICATION PROTOCOL BETWEEN CHARGING MODULES AND
+
+                                    MONITORS V1.3
+
+1,Range
+
+  The protocol is applied to communication protocol between the main control board
+  of the module type one double charge charger and charging modules.
+
+2,Normative Files
+
+The following documents are essential for the application of this file. All dated normative
+files, only dated versions are applied to this file. All undated normative files, the newest
+version (including all revising documents) are applied to this file.
+GB/T 19596 EV Terms
+GB/T 27930 -2011 Communication Protocol between EV Offboard Conduction Type
+Charger and Battery Management System
+ISO 11898-1:2003 Road vehicle – Control area network (CAN) Part 1: Data
+link layer and physical signaling）
+SAE J1939-11:2006 Commercial vehicle- control area network (CAN) Part                    11:
+Physical layer – 250K bits/s, twisted shielded pair
+SAE J1939-21:2006 Commercial vehicle- control area network (CAN) Part 21:Data
+link layer）
+SAE J1939-73:2006 Commercial vehicle- control area network (CAN) Part 73:
+Application Layer – Diagnostics
+3, Terms and Definitions
+GB/T 19596 Defined and the following terms and definitions apply to this file.
+3.1 Frame
+A series of data bits that form a complete message.
+3.2 CAN data frame
+The ordered bit domain required to form the CAN protocol for transferring data.Start from
+frame(SOF) and end of frame(EOF).
+3.3 Messages
+One or more “CAN data frames” with the same parameter group number.
+3.4 Identifier
+CAN The identity part of the arbitration domain
+3.5 Standard frame
+CAN data frames defined in the bus using 11 bit identifiers
+3.6 Extended frame
+CAN data frames defined in the bus using 29 bit identifiers.
+3.7 Priority
+In the identifiers, a three-bit field sets the arbitration priority of the transport process. The
+highest priority is 0, and the lowest priority is 7.
+3.8     Parameter group (PG)
+The collection of transporting parameters in a message. Parameter groups
+
+include: commands, data, requests, responses, and negative responses and so on.
+
+
+3.9 Parameter group number (PGN)
+A 24-bit value used to uniquely identify a parameter group. PGN include:
+reservation bits, data pages, PDU format domain (8 bits), group extension
+domains (8 bits).
+3.10 Suspect parameter number (SPN)
+The application layer describes the signal by parameters, and assigns a 19-bit value to
+each parameter.
+3.11 Protocol data unit (PDU)
+A specific CAN data frame format
+3.12 Transport protocol
+A part of the data link layer that provides a mechanism for transferring data to a PGN of 9
+bytes or more.
+3.13 Electronic control unit (ECU)
+ECU, namely the on-board computer, consisting of microcomputer and
+peripheral circuit.
+3.14 Diagnostic trouble code（DTC）
+A 4-byte value for identifying fault types, associated failure modes, and
+occurrence times.
+4, General Rules
+4.1 The communication network between the main control and charging modules
+adopts CAN communication protocol.
+
+4.2 This standard data transmission adopts low post format.
+
+5, Physical Layer
+5.1    General Rules
+
+ The physical layer of this standard shall conform to the provisions in ISO 11898-1:2003 、
+ SAE J1939-11:2006. This communication shall adopt the isolated CAN interface. And communication rate
+ adopts125kbit/s.
+
+
+ 6, Data Link Layer(DLL)
+
+ 6.1   Frame Format
+
+
+      The device using this standard should use the 29-bit identifier of the CAN extension
+ frame. The corresponding definition of each bit assignment should conform to the relevant
+ provisions of 5.1 provision in SAE J1939-21:2006.
+
+ 6.2   Protocol Data Unit(PDU)
+      Each CAN data frame contains a single PDU, as shown in sheet 1. PDU
+ consists of seven parts, namely priority, reservation, data page, PDU format,
+ specific PDU, source address and data domain.
+
+
+
+
+                    Sheet 1 Protocol Data Unit (PDU)
+
+           R   DP                                                                   ...
+       P                    PF                   PS                  SA             DATA
+       3   1    1            8                    8                   8             0-64
+
+Remark 1：P is priority: Set from the highest 0 to the lowest 7 .
+
+
+Remark 2：R is reservation：Prepare for future development. This standard is 0.
+
+
+Remark 3：DP i s d a t a p a g e：Used to select the auxiliary page described by the
+
+               parameter group. This standard is 0.
+
+Remark 4：PF is PDU format：Used to confirm PDU format and corresponding
+
+               parameter group No of the data domain.
+
+Remark 5：PS is specific PDU format：PS value depends on PDU format。Adopting
+
+
+ PDU1 format in this standard，PS value is target address.
+
+
+Remark 6：SA is source address：the source address that sends the message.
+
+ 6.3   Protocol Data Unit (PDU) Format
+      This standard adopts PDU1 format defined in 5.3 of SAE J1939-21:2006.
+ 6.4 Parameter Group Number (PGN)
+      The second byte of this standard PGN is PDU format (PF), and both high and low byte
+      bits are 00H.
+ 6.5 IP
+     The standard network address is used to ensure the uniqueness of information identifiers and
+ the source of information. The assigned address is like Sheet 2.
+                                          Sheet 2 IP
+
+                        Device                           Addre
+                                                          0xAO
+                        Main control
+
+                                              1-240（Broadcast address is 0xff）
+                     Charging Module
+ 6.6
+ Information
+ Type
+      The CAN bus technical specification supports five types of information, which are
+ commands, requests, broadcast/response, validation, and group functions.The specific definition
+ should follow the rule of message type of 5.4 in SAE J1939-21:2006.
+7. Application
+ 7.1 This standard application adopts the form of parameter and parameter group definition.
+
+ 7.2 PGN is used to number the parameter group, and each node
+ identified the content of the data packet according to PGN.
+ 7.3 Adopting periodic and event-driven manner to send data.
+
+ 7.4 When defining a new parameter group, try best to keep the parameters of the same function, the
+same or similar refresh frequency, and the parameters belonging to the same subsystem in the same
+parameter. At the same time, a new parameter group should not only make full use of 8 bytes data
+width, trying best to put the related parameters in the same group, but also                   consider the
+extendability, setting aside some parts of bytes or position, so as to modify in the future.
+
+
+ 7.5 When you modify a defined parameter group, you should not modify the definition of a
+ defined byte or bit. The newly added parameters should be related to the original parameters in
+ the parameter group, and the irrelevant parameters should not be added to the defined PGN even
+ if the number of PGN is expected to save.
+7.6   In the process of data transmission, except the special instructions, all are 16hexadecimal.
+8. Message classification
+8.1 Up-link data
+
+Messag      Message description           PGN          Priorit   Data     Messag      Source
+e code                                    (Hex)        y         length   e cycle,    address -
+                                                                 , byte   ms          Destinatio
+                                                                                      n address
+M_C_1       Charging module status        000100       6         8        500+        Charging
+                                          H                               Trigger     module -
+                                                                                      Master
+                                                                                      control
+M_C_2       Confirm the start/stop        000200       2         8        Trigger     Charging
+            and                           H                               mode        module -
+            overvoltage/undervolta                                                    Master
+            ge settings of a specific                                                 control
+            module
+M_C_3       Upload exchange               000B00       6         8        500         Charging
+            information                   H                                           module -
+                                                                                      Master
+                                                                                      control
+                                                                                      Charging
+            Upload extension              009100                          500+        module -
+M_C_4                                                  7         8
+            status/fault information      H                               Trigger     Master
+                                                                                      control
+
+
+
+8.2 Down-link date
+Broadcast mode:
+
+Message Message            PGN          Priority Data            Message cycle, Source
+code    description        (Hex)                 length,         ms             address -
+                                                 byte                           Destination
+                                                                                address
+C_M_1       Module         000300H 2               8             Trigger mode   Master
+            start/stop                                                          control -
+                                                                                Charging
+                                                                                module
+C_M_2       Module         000400H 4               8             Trigger mode   Master
+            parameter                                                           control -
+            setting                                                             Charging
+                                                                                module
+C_M_3       Timing         000500H 6               8             5000 ms        Master
+            command                                                             control -
+                                                                                Charging
+                                                                                module
+C_M_12     Address        009000H 7             8             Trigger mode   Master
+           setting                                                           control -
+           selection                                                         Charging
+                                                                             module
+
+
+For a specific module:
+
+Message Message                   PGN          Priority Data        Message Source
+code    description               (Hex)                 length,     cycle,  address -
+                                                        byte        ms      Destination
+                                                                            address
+C_M_23     Module address         000900H 6              8          Trigger Master
+           setting                                                  mode    control -
+                                                                            Charging
+                                                                            module
+C_M_24     Specific module        000600H 2              8          Trigger Master
+           start/stop and                                           mode    control -
+           voltage/current                                                  Charging
+           value setting                                                    module
+
+
+9. Format and content of the message
+9.1 Up-link data
+9.1.1 Charging module status
+Starting byte   Length Definition of SPN            Remarks
+or bit
+1               1 byte Charging module              0x00: normal OFF status
+                        status                      0x01: ON status
+                                                    0x11: fault OFF status
+2                  2 bytes Output voltage of        0.1V/ bit, 0V offset,
+                           charging module          Data range: 0~1100 V
+4                  2 bytes Output current of        0.01 A/bit, 0A offset;
+                           charging module          Data range: 0~200A
+6                  2 bytes Fault/warning            Bit0: Module input undervoltage
+                           Bit = 0, normal          Bit1: Module input phase loss
+                           Bit = 1, faulty          Bit2: Module input overvoltage
+                                                    Bit3: Module output overvoltage
+                                                    Bit4: Module output overcurrent
+                                                    Bit5: Module temperature high
+                                                    Bit6: Module fan fault
+                                                    Bit7: Module hardware fault
+                                                    Bit8: Bus exception
+                                                    Bit9: SCI communication exception
+                                                    Bit10: Discharge fault
+                                                    Bit11: PFC shutdown due to exception
+                                                    Bit12: Output undervoltage warning
+                                                    Bit13: Output overvoltage warning
+                                                    Bit14: Power limit due to high
+                                                     temperature
+                                                     Bit15: Short circuit fault
+8                 1 byte     PFC fault               Bit0: Input overcurrent fault
+                             Bit = 0, normal         Bit1: Mains frequency fault
+                             Bit = 1, faulty         Bit2: Mains imbalance fault
+                                                     Bit3: DCTz fault
+                                                     Bit4: Address conflict
+                                                     Bit5: Bus bias
+                                                     Bit6: Phase exception fault
+                                                     Bit7: Bus overvoltage fault
+
+
+Notes: 1.When any one of fault status Bit8-Bit13 occurs, in addition to that
+corresponding fault bits will be set, Bit7 will be also set.
+      2.When Bit2 and Bit7 faults among PFC faults occur, in addition to that
+corresponding fault bits will be set , Bit7 module hardware fault among the fault
+statuses will be also set.
+Example of message:
+Message information of No.1 module: shutdown due to fault, output voltage 0V, current
+0A; the specific faults are bus bias, PFC exception, hardware fault.
+0x1801A001              11            00 00           00 00           80 08            10
+                  Shutdown          Voltage 0V      Current 0A    Fault status       Bus bias
+                  due to fault                                      0x0880
+                                              PFC shutdown due to exception, hardware fault
+9.1.2 Confirmation of start/stop and overvoltage/undervoltage settings of a specific
+module
+Be sent when the module receives a specific module start/stop command.
+
+    Starting byte or      Length      Definition     Remarks
+    bit                               of SPN
+    1                     1 byte      Whether        0x00, not received
+                                      the            0x01, received
+                                      command
+                                      is received
+    2                     7 bytes     Standby        0x00
+
+
+Example of message:
+Message information of No.1 module:
+ 0x0802A001                  01                00 00 00 00 00 00 00
+                       Command received
+9.1.3 Uploading of exchange information
+ Starting byte Length          Definition of SPN          Remarks
+ 1             2               A-phase voltage
+ 3             2               B-phase voltage
+ 5             2               C-phase voltage
+ 7             2               Ambient temperature
+
+
+Example of message:
+Message information of No.1 module:
+    0x180BA001        E5 08             E9 08             D7 08              18 00
+                     A-phase           B-phase           C-phase           Ambient
+                     0x08E5            0x08E9            0x08D7          temperature
+                                                                           0x0018
+                      227.7 V           228.1 V           226.3 V            24℃
+
+9.1.4 Uploading of extension status/fault information
+Starting byte    Length Definition of SPN           Remarks
+1                2                                  Bit0: Current equalization
+                 bytes                              Bit1: Mute
+                                                    Bit2: E2 Fault overflow
+                           Module status            Bit3: 0 -DC input source,1 -AC input
+                           Bit = 0 No               source
+                           Bit = 1 Yes              Bit4:0-E2 fault enabled, 1-E2 fault
+                                                    disabled
+                                                    Bit5:0- hot-plug disabled. 1-
+                                                    hot-plug enabled
+
+3                2          Fault/warning          Bit0: Preceding stage wave stop
+                 bytes      Bit = 0 normal         Bit1: Hot-plug fault
+                            Bit = 1 faulty         Bit2: CAN communication timeout
+                                                   Bit3: Reserved
+                                                   Bit4: Relay operation fault
+                                                   Bit5: Reserved
+                                                   Bit6: Internal element
+                                                   overtemperature
+                                                   Bit7: Air inlet overtemperature
+                                                   Bit8: Input power limit
+                                                   Bit9: Power limit due to
+                                                   overtemperature
+                                                   Bit10: Discharge changeover
+                                                   exception
+                                                   Bit11: Abnormal voltage and
+                                                   current balancing
+                                                   Bit12: Heat sink temperature
+                                                   differential protection
+                                                   Bit13: Emergency stop
+                                                   Bit14: The temperature of the air
+                                                   inlet is too low
+                                                   Bit15: Uneven current in front
+                                                   (double vienna parallel)
+
+5                4 bytes   Standby                 Reserved
+
+
+9.2 Down-link date
+9.2.1 Module start/stop
+Starting byte    Length    Definition of SPN      Remarks
+or bit
+1                3 bytes   Module processing      Bit0:
+                           message flag           Module with address of 1
+                                                  0= Do not process the message of
+                                                  this frame.
+                                                  1= Process the message of this
+                                                  frame.
+                                                  Bit1:
+                                                  Module with address of 2
+                                                  0= Do not process the message of
+                                                  this frame.
+                                                  1= Process the message of this
+                                                  frame.
+                                                  Bit2:
+                                                  Module with address of 3
+                                                  0= Do not process the message of
+                                                  this frame.
+                                                  1= Process the message of this
+                                                  frame.
+                                                  …
+4                1 byte    Module start/stop      55H, stop
+                                                  AAH, start
+5                1 byte    Module group           These upper four bits refer to the
+                           number + address       module group number: 0
+                           multiple               indicates that the module group
+                                                  number is 1 by default
+                                                  These lower four bits refer to the
+                                                  address multiple: 1/time, data
+                                                  range: 0x00~0x09
+6                3 bytes   Standby                0x00
+
+
+Notes: 1. If the address multiple is 0, the message processing flag of the module
+indicates the address of the module from 1 to 24.
+     If the address multiple is 1, the message processing flag of the module indicates
+the address of the module from 25 to 48.
+     If the address multiple is 2, the message processing flag of the module indicates
+the address of the module from 49 to 72.
+    ...
+   2. Address algorithm: Assuming that the actual address of the module is n, the
+address multiple is m, and the message processing flag of the module is k,
+if((k &(1 << (n-m*24-1)))== (1 << (n-m*24-1))) //The address to be set is consistent with
+the actual address.
+    {Start/stop}else{addresses are not consistent}
+
+
+Example of message:
+Message issued by the upper computer: Control the start of modules No.1-24 and set
+the group number as 1
+ 0x0803FFA0          FF FF FF             AA                 00             00 00 00
+                     Address              Start        Group number
+                    0xFFFFFF                            1, multiple 1
+                     No. 1-24
+
+
+9.2.2 Module parameter setting
+Starting byte or Length Definition of SPN            Remarks
+bit
+1                3 bytes Module processing           Bit0:
+                          message flag               Module with address of 1
+                                                     0= Do not process the message of
+                                                     this frame.
+                                                     1= Process the message of this
+                                                     frame.
+                                                     Bit1:
+                                                     Module with address of 2
+                                                     0= Do not process the message of
+                                                     this frame.
+                                                     1= Process the message of this
+                                                     frame.
+                                                     Bit2:
+                                                     Module with address of 3
+                                                     0= Do not process the message of
+                                                     this frame.
+                                                     1= Process the message of this
+                                                     frame.
+                                                     …
+4                 1 byte   Module group            These upper four bits refer to the
+                           number + address        module group number:0
+                           multiple                indicates that the module group
+                                                   number is 1 by default
+                                                   These lower four bits refer to the
+                                                   address multiple: 1/time, data
+                                                   range: 0x00~0x09
+5                 2 bytes    Charging voltage      0.1V/ bit, 0V offset,
+                                                   Data range: 0~750V
+7                 2 bytes Charging current         0.01 A/bit, 0A offset;
+                                                   Data range: 0~500 A
+Notes: 1. When the charging voltage issued by the monitor exceeds the maximum
+voltage that can be output by the module, the module will output the maximum voltage;
+when the charging voltage issued by the monitor is lower than the minimum voltage
+output by the module, the module will output the minimum voltage.
+   2. When the charging current issued by the monitor exceeds the maximum current
+that can be output by the module, the module will output the maximum current; when
+the charging current issued by the monitor is lower than the minimum current output by
+the module, the module will output the minimum current.
+
+
+Example of message:
+Message issued by the upper computer: Set the group number of modules No.1-24 as
+1, output voltage 500V, output current 41A
+    0x1004FFA0       FF FF FF            00               88 13            04 10
+                     Address       Group number      Voltage 0x1388 Current 0x1040
+                    0xFFFFFF        1, multiple 1
+                       1-24                               500V              41A
+
+
+9.2.3 Timing command
+  Starting byte or Length       Definition of Rema
+  bit                           SPN           rks
+  1                8 bytes      Standby       0x00
+
+
+Example of message:
+The master control sends a timing command:
+0x1805FFA0       0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00
+
+
+9.2.4 Start/stop of a specific module
+  Starting byte      Length Definition of SPN   Remarks
+  or bit
+  1                1 byte    Module start/stop    55H, stop
+                                                  AAH, start
+  2                1 byte    Charging mode        In the standby mode: 0x00
+                             (standby)
+  3                2 bytes    Charging            0.1V/ bit, 0V offset, data
+                             voltage              range: 0~1000V
+  5                2 bytes   Charging current     0.01 A/bit, 0A offset;
+                                                  Data range: 0~500 A
+  7                2 bytes   Standby              0x00
+
+Example of message:
+Message issued by the upper computer: Control the start of No.1 module, output
+voltage 500V, output current 41A
+0x080601A0         AA             00             88 13           04 10         00 00
+                   Start                         Voltage        Current
+                                                 0x1388         0x1040
+                                                  500V            41A
+
+9.2.5 Module address setting
+  Starting byte or Length Definition of       Remarks
+  bit                        SPN
+  1                1 byte    New address 1/bit, data range 1~240
+                             of module
+  2                7 bytes Standby            0x00
+ Notes: The module address setting will be stored in the EEPROM and will be stored
+on power failure
+
+
+Message issued by the upper computer: set the address of all modules as 2
+0x1809FFA0            02          00 00 00 00 00 00 00
+               New address 2
+
+
+9.2.6 Selection of module address setting
+ Starting byte Length          Definition of SPN      Remarks
+                                                      0: Automatic 1:
+1              1                Reserved
+                                                      Manual
+2              7                Reserved
+Notes: 1. If the module address setting is selected as “Automatic”, it means that the
+address will be automatically assigned when the module is powered on; if the module
+address setting is selected as “Manual”, it means that the address will be set via the
+upper computer; the module is set as “Automatic” by default.
+   2. The module can only receive the module address setting selection command
+when it is powered off.
+
+Message issued by the upper computer: set the address mode of all modules as
+“Manual”.
+0x1C90FFA0            01        00 00 00 00 00 00 00
+                Manual mode
+                                                     Appendix A
+A.1 Data transmission process chart
+A.1.1 Module status transmission process
+
+
+   Master                                 Charging
+   control                                 module
+
+
+             Module charging status   { Cycle T }
+
+             Module charging status   { Cycle T }
+
+             Module charging status   { Cycle T }
+
+             Module charging status
+
+
+
+
+Periodical transmission by charging module
+
+
+   Master                               Charging
+   control                               module
+
+
+
+
+             Module charging status
+
+
+
+
+Automatically sent when the status of charging module is changed
+A.1.2 Module start/stop process (broadcast mode)
+
+  Master                                Charging
+  control                                module
+
+
+
+                 Module start/stop
+
+
+
+
+A.1.3 Module parameter setting process
+   Master                                    Charging
+   control                                    module
+
+
+
+
+             Module parameter setting
+
+
+
+
+A.1.4 Start/stop (address setting/overvoltage/undervoltage setting) process of a
+specific module
+
+
+   Master                                   Charging
+   control                                   module
+
+
+               Start/stop of a specific
+                       module
+
+
+
+
+             Confirm start/stop of a
+               specific module
+
+
+
+
+A.1.5 Timing command
+
+
+  Master                                  Charging
+  control                                  module
+
+             Timing command
+
+
+
+
+             Charging status of
+                 module 1
+             Charging status of
+                 module 2
+             Charging status of
+                module 3
+             Charging status of
+                module n
+A.2 Use case
+
+A.2.1 Charging module status
+Charging status sent by the charging module 1: (400V, 100A, no fault )
+1801a001 0x01 0xa0 0x0f 0x10 0x27 0x00 0x00 0x00
+A.2.2 Module start/stop
+Master control: start modules 1-3
+0803ffa0 0x07 0x00 0x00 0xaa 0x00 0x00 0x00 0x00
+A.2.3 Module parameter setting
+Master control: Parameter setting of modules 1-3 (400V,100A, constant-voltage
+charging)
+1004ffa0 0x07 0x00 0x00 0x00 0xa0 0x0f 0x10 0x27
+A.2.4 Start/stop process of a specific module
+Master control: start module 1
+080601a0 0xaa 0x01 0xa0 0x0f 0x10 0x27 0x00 0x00
+Confirm start/stop of charging module 1
+0802a001 0x01 0x00 0x00 0x00 0x00 0x00 0x00 0x00
+A.2.5 Timing command
+The master control sends a timing command:
+1805ffa0 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00
+

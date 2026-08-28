@@ -1,0 +1,323 @@
+                                                   Type: CAN Protocol                   Application: CAN Communication                               Security Level: Confidential
+    Shenzhen
+    Lianming Power                                 Drafted by: Dai Chang                                   Date: 2022-09-19        Approved by：
+    Supply Co,. Ltd.                               Version: V2.0                                      Digital Power Department – Power Modules
+
+
+                                            Lianming Power – Digital Power Modules
+
+                                                        CAN Communication Protocol (External)
+Revision History
+Date of revision                                 Version                                              Description                                            Reviser
+2021-04-20                                       V1.0                                                 First draft                                            Dai Chang
+2022-09-19                                       V2.0                                                 Add Precautions                                        Tang Jianjun
+
+
+1. Overview
+        This agreement employs CAN specification version 2.0B, utilising a 29-bit identifier and extended frames.
+
+
+
+2. Scope of Application
+     This agreement describes the CAN communication protocol for external use by Shenzhen Lianming Power
+Supply Co., Ltd. It applies to power modules manufactured by Lianming Power Supply, including the 10kW
+series, 12kW series, 20kW series, 30kW series charging modules, and laser power supplies.
+
+
+
+3. Physical Communication Interface
+        Baud rate: 125 kbit/s.
+
+
+4. Frame structure
+        The 29-bit identifier is defined as follows:
+
+   28     27       26   25   24      23     22     21       20       19    18    17     16    15       14     13      12      11     10      9   8       7    6       5   4       3       2    1       0
+
+
+               Byte3                                        Byte2                                                   Byte1                                                 Byte0
+                                                                      Command ID_H                                                                            Module Address
+Command Parsing 1:
+                                                  Module
+   Name                 Command ID                               Data length    Byte0    Byte1                                       Byte2       Byte3        Byte4       Byte5       Byte6        Byte7
+                                                  Address
+    Monitoring
+    Output Settings     (0x1907,C080)>>7         0~60            8              CMD=0    Current(mA)*1000                                                     Voltage(mV)*1000
+
+                                                                                         NZ, NZ: Current and voltage
+                                                                                         settings succeeded
+
+                                                                                         0, NZ: Current failed, voltage succeeded
+   Module return        (0x1807,C080)>>7         1~60            8              CMD=0
+   output                                                                                NZ, 0: Current successful, voltage failed
+
+                                                                                         0, 0: Current and voltage settings failed
+
+    Read module         (0x1907,C080)>>7         1~60            8              CMD=1    /                                           /           /            /           /           /            /
+    information
+
+                                                                                                                                                                                      Status       Status
+   Module return
+                        (v0x1807,C080)>>7        1~60            8              CMD=1                                                Current(A*10)            Voltage(V*10)
+   status
+                                                                                                                                                                                      1            0
+
+                                                                                                                                                                                               0x55
+
+                                                                                                                                                                                               Power on
+   Set Module           (0x1907,C080)>>7         0~60            8              CMD=2    /                                           /           /            /           /           /
+   Power On/Off                                                                                                                                                                                0xAA
+
+                                                                                                                                                                                               Power off
+
+
+   Module Power                                                                          NZ, NZ: Setup succeeded
+   On/Off               (0x1807,C080)>>7         1~60            8              CMD=2
+   Response                                                                              0, 0: Setup failed
+
+
+
+
+                                                                                                 1/5
+
+                                                                     Shenzhen Lianming Power Supply Co,. Ltd.
+                                                 Type: CAN Protocol              Application: CAN Communication                          Security Level: Confidential
+   Shenzhen
+   Lianming Power                                Drafted by: Dai Chang                             Date: 2022-09-19         Approved by:
+   Supply Co,. Ltd.                              Version: V2.0                                  Digital Power Department – Power Modules
+
+Address 0 indicates a broadcast command, which is executed by all modules on the bus. Broadcast commands do not generate
+a response from the modules.
+Addresses 1–60 indicate individual module addresses.The module with the corresponding address returns the response data.
+NZ indicates non-zero data (default 0xFF). In the data field, the high byte is transmitted first, followed by the low byte.
+If a module does not receive a monitoring command within 2 minutes, communication is considered interrupted.
+“/” indicates reserved and shall be filled with 0.
+
+Module status flag bit definitions are as follows:
+
+     Byte7:Bit                  7                   6                   5                  4                     3            2               1               0
+                          1: Output            1: Output       1: Input under-       1: Input                          1: Module
+   Define                                                                                                1: Fan fault                   1: Module fault 1: Module Off
+                          under-voltage        overvoltage     voltage               overvoltage                       constant current
+   Status 0                                                                                              0: Fan normal 0: Module        0: Module       0: Module
+                          0: Output            0: Output       0: Input normal       0: Input
+                                                                                                                                                        Running
+                          normal               normal                                normal                            constant voltage normal
+ Panel indicator          1: Yellow            1: Red Light     1: Red Light         1: Red Light        1: Red Light         1: Yellow               1: Red Light
+ light                    Light On             On               On                   On                  Blinking             Light On                On
+
+
+
+     Byte6:Bit                  7                      6                5                   4                    3                    2                       1                    0
+
+                                                                                                                                                     1: Over-         1: Overcurrent
+   Define the                                                                                                              1: Set shutdown temperature                protection
+   state 1                                                                                                                 0: Set startup  protection                 0: Module
+                                                                                                                                                     0: Module normal normal
+
+                                                                                                                           1：Green Light
+ Panel indicator                                                                                                           Blinking                   1: Red light         1: Red light
+ light                                                                                                                     0 ：Green                   On                   On
+                                                                                                                           Light On
+   Note: For the above alarms, except when the panel indicator Light is Red On,in which case
+   the module will automatically shut down for protection,the module continues to operate
+   normally for other alarms.
+   Command Parsing 2:
+                                                   Module
+   Name                     Command ID                         Data length   Byte0      Byte1    Byte2       Byte3                           Byte4        Byte5   Byte6        Byte7
+                                                   Address
+  Read the monitoring
+                            (0x1901,0080)>>7       1~60        0             Not used
+  set voltage
+   Module returns
+                            (0x1801,0080)>>7       1~60        8                                                                                                      Set voltage（V*10）
+   voltage value
+  Read Monitoring
+                            (0x1901,0880)>>7       1~60        0             Not used
+  Current Limit Setting
+   Module Return                                                             Current limiting
+                            (0x1801,0880)>>7       1~60        8
+   Current Limit                                                             value（A*10）
+  Read Input Voltage        (0x1907,A080)>>7       1~60        8             0x31       /        /           /                               /            /       /            /
+  Value
+
+                                                                                                 Vab/32
+   Module Return
+                            (0x1807,A080)>>7       1~60        8             0x31                                                                Vbc/32               Vca/32
+   Input Voltage
+                                                                                                 (Input single-phase module Vac/32）
+
+  Read Environment
+                            (v0x1900,8080)>>7      1~60        0             Not used
+  Temperature Value
+
+  Module Return                                                                                                                              Environment
+                                                                                                                                             Temperature
+  Environment               (0x1800,8080)>>7       1~60        8
+  Temperature                                                                                                                                （°C*10）
+
+                                                                                                             0x55 Close module
+   Module Current
+   Sharing Control          (0x19C2,1880)>>7       0           6             /          /        /          Autonomous current sharing       /            /
+
+                                                                                                            0xAA Enable module current
+                                                                                                            sharing
+  Module Internal                                                            The module automatically reports current sharing data
+  Current Sharing           (0x1807,8080)>>7       1~60        8
+                                                                             every 400 ms, and no user attention is required.
+
+                                                                                                             0x55 Module Lookup
+  Module Address
+                            (0x19C2,2880)>>7       1~60        8             /          /        /                                           /            /       /            /
+  Lookup                                                                                                     Green light blinking
+                                                                                                             for 10 seconds
+
+
+
+
+                                                                                         2/5
+
+                                                             Shenzhen Lianming Power Supply Co,. Ltd.
+    Shenzhen                  Type: CAN Protocol     Application: CAN Communication     Security Level: Confidential
+    Lianming Power            Drafted by: Dai Chang            Date: 2022-09-19           Approved by:
+    Supply Co,. Ltd.                       V2.0
+                              Version:                       Digital Power Department – Power Modules
+
+
+5. Message Example
+
+  1) . Set broadcast on/off
+           Command ID 1907C080               Data :      2     0      0     0      0      0      0      55
+             Return ID                       Data :
+   Broadcast commands without return
+
+  2) . Set Module 1 Power On/Off
+            Command ID 1907C081              Data :      2     0      0     0      0      0      0      55
+             Return ID   1807C081            Data :      2    FF      0     0      0      0      0       0
+       Set successfully: Byte1 returns FF; failure returns 00
+
+
+
+  3) . Set the output voltage and current for Module 3
+           Command ID 1907C083               Data :      0    01     5F     90    00     01     86     A0
+            Return ID    1807C083            Data :      0    FF      0     0      0      0      0      0
+       Module 3 Output Configuration 100V,100A
+
+       100V = 100*1000 = 100000mV = 0x186A0
+
+       90A = 90*1000 =90000mA = 0x15F90
+
+       Set successfully: Byte1 returns FF; failure
+       returns 00
+
+       4). Read the status information of Module 2
+           Command ID 1907C082               Data :      1     0     0      0      0      0      0      0
+            Return ID    1807C082            Data :      1     0     01     17    03     E8      0      0
+                                                              0x03E8 = 1000/10 ＝ 100V
+       Output voltage value: Byte4~Byte5
+       Output current value: Byte2~Byte3                      0x0117 = 279/10 ＝ 27.9A 00
+       Output status: Byte6~Byte700
+                                                              Operating normally, no alarms
+
+
+
+  5) . Read Monitoring Output Voltage of Module 1
+           Command ID 19010081               Data :
+            Return ID    18010081            Data :      1     0     18     36     0     1E     03     84
+       Output voltage value set for Module 1: Byte6~Byte7           0x0384 = 900/10 = 90V
+
+
+
+  6) . Read Monitoring Output Current Limit of Module 5
+           Command ID 19010885               Data :
+            Return ID    18010885            Data :     01    3D      0     0      0      0     40     2C
+       Output current limit value set for                     0x013D = 317/10 =31.7A
+       Module 5: Byte0~Byte1
+                                                       3/5
+
+                                    Shenzhen Lianming Power Supply Co,. Ltd
+   Shenzhen                   Type: CAN Protocol         Application: CAN Communication          Security Level: Confidential
+   Lianming Power             Drafted by: Dai Chang               Date: 2022-09-19             Approved by:
+   Supply Co,. Ltd.                        V2.0
+                              Version:                          Digital Power Department – Power Modules
+
+
+
+
+ 7) . Read Input Voltage of Module 1
+
+
+          Command ID 1907A081                   Data :    31      0      0      0      0    0        0     0
+            Return ID    1807A081               Data :    31      01    2F     1E     2F    2C      2F     26
+      Input voltage value for Module 1 Vab：
+
+      Byte2~Byte3                0x2F1E = 12062/32 =376.9V
+      Vbc：Byte4~Byte5            0x2F2C = 12076/32 =377.4V
+
+      Vca：Byte6~Byte7            0x2F26 = 12070/32 =377.2V
+
+
+
+ 8) . Read Environment Temperature of Module 1
+          Command ID 19008081                   Data :
+            Return ID    19008081               Data :     0      1F    0B     B5      01   52      03    A1
+Environment temperature: Byte4~Byte5      0x0152 = 338/10 =33.8°C
+
+
+9) . Disable Module Autonomous Current Sharing
+          Command ID 19C21880                   Data :      0      0      0     55      0   0
+           Return ID                            Data :
+      Byte4 = 0x55 disables current sharing, 0xAA enables current sharing;
+
+
+
+ 10) . Module Address Lookup
+          Command ID 19C22882                   Data :      0      0      0     55      0   0        0     0
+           Return ID      19C22882              Data :
+      Locate Module 2. The module at address 2 will flash its green light for 10 seconds.
+
+
+
+
+                                                            4/5
+
+                                       Shenzhen Lianming Power Supply Co,. Ltd.
+        Shenzhen                         Type: CAN Protocol           Application: CAN Communication                Security Level: Confidential
+        Lianming Power                   Drafted by: Dai Chang                    Date: 2022-09-19              Approved by:
+        Supply Co,. Ltd.                                  V2.0
+                                         Version:                              Digital Power Department – Power Modules
+
+
+6. Precautions
+1) The module must not be loaded directly during soft start. The load can only be applied after the module output voltage has been
+established (steady-state output). This can be determined via the module status flag bits (see Table 6-1 and Figure 6-1).
+
+        Byte7:Bit           7               6              5               4               3               2                1              0
+                      1: Output       1: Output                                                     1: Module
+                      under-voltage   overvoltage    1: Input under- 1: Input        1: Fan fault   constant current 1: Module fault 1: Module Off
+    Define State 0                                                   overvoltage     0: Fan
+                      0: Output       0: Output      voltage                                        0: Module        0: Module       0: Module
+                      normal          normal         0: Input normal 0: Input normal normal         constant voltage normal
+                                                                                                                                     Running
+
+    Panel indicator                                                                   1: Red
+                      1: Yellow        1: Red          1: Red          1: Red         light          1: Yellow         1: Red
+    light             light On         light On        light On        light On                      light On          light On
+                                                                                      Blinking
+                                                                        Table 6-1
+
+
+
+
+                                                                        Figure 6-1
+2) The module output current setpoint should be increased in a stepwise manner. For example,if the required
+current is 100 A, the initial setpoint can be 10 A, and then increased in 10% load current, i.e., 10 A, 20 A,…,
+90 A, 100 A. The recommended current ramp-up time is ≥1 second.
+
+
+
+
+                                                                           5/5
+
+                                                    Shenzhen Lianming Power Supply Co,. Ltd.
+
