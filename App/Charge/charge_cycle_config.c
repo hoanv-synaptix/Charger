@@ -176,7 +176,19 @@ bool ChargeCycleConfig_Set(const ChargeCycleConfig_t *config)
         CHG_LIB_SelectDriver(drv_id);
         CHG_LIB_Init();
         for (uint8_t i = 0; i < config->source_module_count; i++) {
-            CHG_LIB_AddModule((uint8_t)(i + 1), 0);
+            int8_t idx = CHG_LIB_AddModule((uint8_t)(i + 1), 0);
+            /* Seed the module's rated current from config immediately, so
+             * the very first current-limit command (sent as part of the
+             * start sequence, before the module has necessarily answered
+             * any poll yet) uses the real rating instead of transiently
+             * falling back to a hardcoded default. Drivers also read the
+             * module's own self-reported rated current over CAN once
+             * online (e.g. Maxwell register 0x0012) and prefer that once
+             * available -- this call only covers the brief window before
+             * that first response arrives. */
+            if (idx >= 0 && config->module_i_max_a > 0.0f) {
+                CHG_LIB_SetModuleConfig((uint8_t)idx, config->module_i_max_a);
+            }
         }
     }
 
