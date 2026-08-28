@@ -5,6 +5,7 @@ Charger Debug Application - Pixel-Perfect WinForms Layout
 
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
+import os
 import struct
 import time
 import csv
@@ -133,7 +134,8 @@ class ChargerModule:
 class ChargerDebugApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Charger Debug App - UI v3 BMS")
+        self.root.title("PKG Battery - Charger Debug App - UI v3 BMS")
+        self._apply_brand_icon()
         self.root.update_idletasks()
         self.screen_width = self.root.winfo_screenwidth()
         self.screen_height = self.root.winfo_screenheight()
@@ -362,6 +364,26 @@ class ChargerDebugApp:
         finally:
             self.root.after(16, self._gui_update_loop)  # ~60fps max — coalescing prevents overload
 
+    def _apply_brand_icon(self):
+        """Set the window/taskbar icon to the PKG Battery mark.
+
+        Loads several sizes (Windows picks whichever fits the context --
+        taskbar, alt-tab, title bar) via iconphoto(). Keeps a reference on
+        self so the PhotoImage objects aren't garbage-collected out from
+        under Tk (a classic Tkinter footgun -- images with no surviving
+        Python reference just silently stop rendering). Best-effort: a
+        missing/unreadable asset must never block the app from starting.
+        """
+        try:
+            assets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
+            self._brand_icon_images = [
+                tk.PhotoImage(file=os.path.join(assets_dir, f"pkg_icon_{size}.png"))
+                for size in (16, 32, 48, 64, 128, 256)
+            ]
+            self.root.iconphoto(True, *self._brand_icon_images)
+        except Exception:
+            pass  # No icon is a cosmetic miss, not worth failing startup over.
+
     def _configure_styles(self):
         style = ttk.Style()
         try:
@@ -554,10 +576,10 @@ class ChargerDebugApp:
         if 0 <= index < len(pages):
             pages[index].tkraise()
         titles = (
-            "Charger Debug App - UI v3 BMS - Control Page",
-            "Charger Debug App - UI v3 BMS - Monitor Page",
-            "Charger Debug App - UI v3 BMS - Charge Config Page",
-            "Charger Debug App - UI v3 BMS - Charge Graph Page",
+            "PKG Battery - Charger Debug App - UI v3 BMS - Control Page",
+            "PKG Battery - Charger Debug App - UI v3 BMS - Monitor Page",
+            "PKG Battery - Charger Debug App - UI v3 BMS - Charge Config Page",
+            "PKG Battery - Charger Debug App - UI v3 BMS - Charge Graph Page",
         )
         self.root.title(titles[index])
         self._update_tab_buttons(index)

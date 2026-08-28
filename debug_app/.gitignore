@@ -4,3 +4,9 @@ __pycache__/
 build/
 dist/
 *.spec
+# Exception: these 2 specs are hand-edited (icon=) and tracked deliberately --
+# a PyInstaller regen from main.py (rather than from the .spec) silently
+# wiped that edit once already in practice, so keeping them in git is what
+# makes that recoverable instead of a repeat surprise.
+!ChargerDebugApp.spec
+!ChargerDebugApp_new.spec
