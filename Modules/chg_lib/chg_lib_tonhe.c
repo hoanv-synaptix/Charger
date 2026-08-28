@@ -337,7 +337,22 @@ static void parse_status(const uint8_t *data, uint8_t src_addr, uint32_t now)
      * Matches Lianming's unconditional alarm-flags-first pattern. */
     if (mod->view.alarm_flags != CHG_LIB_ALARM_NONE) {
         set_state(mod, CHG_LIB_STATE_FAULT, now);
-    } else if (status == TONHE_STATUS_FAULT_OFF) {
+        return;
+    }
+
+    if (mod->view.state == CHG_LIB_STATE_FAULT) {
+        /* BUGFIX B-08: this read is clean, but the status-byte-driven
+         * transitions below would otherwise leave FAULT on the very
+         * first clean read -- bypassing process_module()'s 5-read
+         * debounce entirely, since that debounce only guards the
+         * *polling* path, not this broadcast-RX path (matches the same
+         * fix in chg_lib_lianming.c's apply_status()). Stay in FAULT and
+         * let process_module()'s FAULT case perform the actual recovery
+         * transition once 5 consecutive clean reads have accumulated. */
+        return;
+    }
+
+    if (status == TONHE_STATUS_FAULT_OFF) {
         set_state(mod, CHG_LIB_STATE_FAULT, now);
     } else if (status == TONHE_STATUS_NORMAL_OFF) {
         if (mod->view.state == CHG_LIB_STATE_STOPPING) {
@@ -464,13 +479,24 @@ static void set_state(TONHE_Internal_t *mod, CHG_LIB_State_t st, uint32_t now)
         case CHG_LIB_STATE_STARTING:
         case CHG_LIB_STATE_STOPPING:
         case CHG_LIB_STATE_RUNNING:
-        case CHG_LIB_STATE_FAULT:
         case CHG_LIB_STATE_WARNING:
             mod->view.running = (st == CHG_LIB_STATE_RUNNING || st == CHG_LIB_STATE_WARNING);
-            mod->view.online = (mod->view.last_rx_tick != 0 && 
+            mod->view.online = (mod->view.last_rx_tick != 0 &&
                                (now - mod->view.last_rx_tick) <= TONHE_OFFLINE_TIMEOUT_MS);
             break;
-            
+
+        case CHG_LIB_STATE_FAULT:
+            mod->view.running = false;
+            mod->view.online = (mod->view.last_rx_tick != 0 &&
+                               (now - mod->view.last_rx_tick) <= TONHE_OFFLINE_TIMEOUT_MS);
+            /* BUGFIX B-08: same 5-clean-reads debounce as
+             * OFFLINE->RECOVERING -- see chg_lib_maxwell.c's matching
+             * comment for the full rationale. (recovery_start_rx_count
+             * would otherwise stay 0 from the unconditional reset above,
+             * a few lines up.) */
+            mod->recovery_start_rx_count = mod->view.stats.rx_count;
+            break;
+
         case CHG_LIB_STATE_OFFLINE:
         case CHG_LIB_STATE_RECOVERING:
             mod->view.online = false;
@@ -610,17 +636,27 @@ static void process_module(TONHE_Internal_t *mod, uint32_t now)
         break;
 
     case CHG_LIB_STATE_FAULT:
-        /* Try to recover when alarm clears - send start when cleared */
+        /* Try to recover when alarm clears - send start when cleared.
+         * BUGFIX B-08: require 5 CONSECUTIVE clean reads since the alarm
+         * bits last cleared (same debounce as OFFLINE->RECOVERING).
+         * Broadcast frames received while still faulted also increment
+         * rx_count, so the streak start must be re-anchored on every
+         * dirty read, or the first clean read after a long fault would
+         * satisfy >=5 immediately. */
         if (mod->view.alarm_flags == CHG_LIB_ALARM_NONE) {
-            if (mod->should_run) {
-                if (mod->pending_param) {
-                    send_param_set(mod);
+            if ((mod->view.stats.rx_count - mod->recovery_start_rx_count) >= 5) {
+                if (mod->should_run) {
+                    if (mod->pending_param) {
+                        send_param_set(mod);
+                    }
+                    send_specific_start_stop(mod, true);
+                    set_state(mod, CHG_LIB_STATE_STARTING, now);
+                } else {
+                    set_state(mod, CHG_LIB_STATE_IDLE, now);
                 }
-                send_specific_start_stop(mod, true);
-                set_state(mod, CHG_LIB_STATE_STARTING, now);
-            } else {
-                set_state(mod, CHG_LIB_STATE_IDLE, now);
             }
+        } else {
+            mod->recovery_start_rx_count = mod->view.stats.rx_count;
         }
         break;
     default: /* Should not happen */ break;

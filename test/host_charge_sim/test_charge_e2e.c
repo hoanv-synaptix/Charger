@@ -301,6 +301,61 @@ static bool test_driver_module_fault(uint8_t module_type, const char *name)
     return true;
 }
 
+/* Regression test for B-08 (reclassified): FAULT recovery used to clear on
+ * a single clean read -- weaker confirmation than OFFLINE->RECOVERING's
+ * 5-consecutive-read debounce for a mere comm gap, backwards for a real
+ * hardware fault. Confirms the module stays FAULT through the first few
+ * clean reads after the fault condition clears, and only leaves FAULT
+ * once 5 have accumulated. */
+static bool test_driver_fault_recovery_debounce(uint8_t module_type, const char *name)
+{
+    printf("Running test_%s_fault_recovery_debounce...\n", name);
+    ASSERT(setup_scenario(module_type, NULL), "setup failed");
+    set_healthy_bms(400.0f, 50);
+    ASSERT(warmup_and_start(1500U, 4000U), "module never reached RUNNING");
+
+    switch (module_type) {
+        case CHARGE_MODULE_TYPE_MAXWELL:
+            g_sim_module.maxwell_alarm_raw = (1U << 28); /* MXR_ALARM_SHORT_CIRCUIT */
+            break;
+        case CHARGE_MODULE_TYPE_LIANMING:
+            g_sim_module.lianming_status_raw = (1U << 4); /* input overvoltage */
+            break;
+        default:
+            g_sim_module.tonhe_fault_bits = (1U << 5); /* over-temperature */
+            break;
+    }
+    drive_ms(1200U);
+
+    CHG_LIB_ModuleView_t mv;
+    ASSERT(CHG_LIB_GetModuleView(0, &mv), "module view unavailable");
+    ASSERT(mv.state == CHG_LIB_STATE_FAULT, "module should be in FAULT after injected alarm bit");
+
+    /* Clear the fault condition in the simulator, then check just after
+     * the first couple of clean reads: must still be FAULT, not yet
+     * trusted as recovered. */
+    g_sim_module.maxwell_alarm_raw = 0;
+    g_sim_module.lianming_status_raw = 0;
+    g_sim_module.tonhe_fault_bits = 0;
+    g_sim_module.tonhe_pfc_bits = 0;
+    drive_ms(60U); /* ~2-3 read/broadcast cycles at the 20ms drive step */
+
+    ASSERT(CHG_LIB_GetModuleView(0, &mv), "module view unavailable");
+    ASSERT(mv.state == CHG_LIB_STATE_FAULT,
+           "must NOT recover after only 1-2 clean reads -- that's the pre-fix bug");
+
+    /* Drive enough further time to accumulate 5+ clean reads and confirm
+     * it does eventually recover. */
+    drive_ms(1000U);
+    ASSERT(CHG_LIB_GetModuleView(0, &mv), "module view unavailable");
+    ASSERT(mv.state != CHG_LIB_STATE_FAULT,
+           "should recover once 5 clean reads have accumulated since FAULT entry");
+    ASSERT(mv.alarm_flags == CHG_LIB_ALARM_NONE, "alarm_flags should be clear after recovery");
+
+    printf("[PASS] test_%s_fault_recovery_debounce\n", name);
+    return true;
+}
+
 /* ================================================================== */
 /* Relay decision (ChargeCtrlView_t.relay_should_close) -- see           */
 /* update_relay_decision() in App/Charge/charge_controller.c             */
@@ -579,13 +634,16 @@ int main(void)
     pass &= test_driver_happy_path(CHARGE_MODULE_TYPE_TONHE, "tonhe");
     pass &= test_driver_stage_derating(CHARGE_MODULE_TYPE_TONHE, "tonhe");
     pass &= test_driver_module_fault(CHARGE_MODULE_TYPE_TONHE, "tonhe");
+    pass &= test_driver_fault_recovery_debounce(CHARGE_MODULE_TYPE_TONHE, "tonhe");
     pass &= test_tonhe_fault_matrix();
 
     pass &= test_driver_happy_path(CHARGE_MODULE_TYPE_LIANMING, "lianming");
     pass &= test_driver_module_fault(CHARGE_MODULE_TYPE_LIANMING, "lianming");
+    pass &= test_driver_fault_recovery_debounce(CHARGE_MODULE_TYPE_LIANMING, "lianming");
 
     pass &= test_driver_happy_path(CHARGE_MODULE_TYPE_MAXWELL, "maxwell");
     pass &= test_driver_module_fault(CHARGE_MODULE_TYPE_MAXWELL, "maxwell");
+    pass &= test_driver_fault_recovery_debounce(CHARGE_MODULE_TYPE_MAXWELL, "maxwell");
     pass &= test_rated_current_seeded_from_config();
 
     pass &= test_bms_offline();

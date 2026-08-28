@@ -223,11 +223,20 @@ static void set_state(LM_Module_t *mod, CHG_LIB_State_t state, uint32_t now)
         case CHG_LIB_STATE_IDLE:
         case CHG_LIB_STATE_STARTING:
         case CHG_LIB_STATE_STOPPING:
-        case CHG_LIB_STATE_FAULT:
         case CHG_LIB_STATE_WARNING:
             mod->view.running = (state == CHG_LIB_STATE_WARNING);
             mod->view.online = (mod->view.last_rx_tick != 0 &&
                               (now - mod->view.last_rx_tick) <= LM_OFFLINE_TIMEOUT_MS);
+            break;
+
+        case CHG_LIB_STATE_FAULT:
+            mod->view.running = false;
+            mod->view.online = (mod->view.last_rx_tick != 0 &&
+                              (now - mod->view.last_rx_tick) <= LM_OFFLINE_TIMEOUT_MS);
+            /* BUGFIX B-08: same 5-clean-reads debounce as
+             * OFFLINE->RECOVERING -- see chg_lib_maxwell.c's matching
+             * comment for the full rationale. */
+            mod->recovery_start_rx_count = mod->view.stats.rx_count;
             break;
 
         case CHG_LIB_STATE_RUNNING:
@@ -465,6 +474,22 @@ static void apply_status(uint8_t idx, const uint8_t *data, uint32_t now)
         return;
     }
 
+    if (mod->view.state == CHG_LIB_STATE_FAULT) {
+        /* BUGFIX B-08: this read is clean, but sync_state_from_flags()
+         * below would otherwise leave FAULT on the very first clean read
+         * -- bypassing process_module()'s 5-read debounce entirely, since
+         * that debounce only guards the *polling* path, not this RX
+         * callback path. Require the same 5 consecutive clean reads here
+         * (same field/threshold as OFFLINE->RECOVERING) before trusting
+         * the fault has cleared. */
+        mod->view.last_rx_tick = now;
+        if ((mod->view.stats.rx_count - mod->recovery_start_rx_count) < 5) {
+            return;
+        }
+        set_state(mod, mod->should_run ? CHG_LIB_STATE_STARTING : CHG_LIB_STATE_IDLE, now);
+        return;
+    }
+
     if (mod->view.state == CHG_LIB_STATE_OFFLINE || mod->view.state == CHG_LIB_STATE_RECOVERING) {
  mod->view.stats.recovery_count++;
         set_state(mod, mod->should_run ? CHG_LIB_STATE_STARTING : CHG_LIB_STATE_IDLE, now);
@@ -569,8 +594,17 @@ static void process_module(uint8_t idx, uint32_t now)
 
     case CHG_LIB_STATE_FAULT:
         lm_read_status(idx, now);
+        /* BUGFIX B-08: require 5 CONSECUTIVE clean reads since the alarm
+         * bits last cleared, same debounce as OFFLINE->RECOVERING. Reads
+         * taken while still faulted also increment rx_count, so the
+         * streak start must be re-anchored on every dirty read, or the
+         * first clean read after a long fault would satisfy >=5 at once. */
         if (mod->view.alarm_flags == CHG_LIB_ALARM_NONE) {
-            set_state(mod, mod->should_run ? CHG_LIB_STATE_STARTING : CHG_LIB_STATE_IDLE, now);
+            if ((mod->view.stats.rx_count - mod->recovery_start_rx_count) >= 5) {
+                set_state(mod, mod->should_run ? CHG_LIB_STATE_STARTING : CHG_LIB_STATE_IDLE, now);
+            }
+        } else {
+            mod->recovery_start_rx_count = mod->view.stats.rx_count;
         }
         break;
     default: /* Should not happen */ break;

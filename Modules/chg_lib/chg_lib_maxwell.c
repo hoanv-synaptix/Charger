@@ -271,11 +271,24 @@ static void set_state(MXR_Internal_t *m, CHG_LIB_State_t new_state, uint32_t now
         case CHG_LIB_STATE_IDLE:
         case CHG_LIB_STATE_STARTING:
         case CHG_LIB_STATE_STOPPING:
-        case CHG_LIB_STATE_FAULT:
         case CHG_LIB_STATE_WARNING:
             m->view.running = (new_state == CHG_LIB_STATE_WARNING); /* WARNING counts as running internally to maintain active count */
             m->view.online = (m->view.last_rx_tick != 0 &&
                               (now - m->view.last_rx_tick) <= MXR_OFFLINE_TIMEOUT_MS);
+            break;
+
+        case CHG_LIB_STATE_FAULT:
+            m->view.running = false;
+            m->view.online = (m->view.last_rx_tick != 0 &&
+                              (now - m->view.last_rx_tick) <= MXR_OFFLINE_TIMEOUT_MS);
+            /* BUGFIX B-08: a real hardware fault (over-voltage, short
+             * circuit, ...) used to clear on a single clean ALARM_STATUS
+             * read -- a weaker confirmation than OFFLINE->RECOVERING's
+             * 5-consecutive-read debounce for a mere comm gap, backwards
+             * for a safety-relevant condition. Reuse the same debounce:
+             * snapshot here, FAULT's own recovery check below now
+             * requires 5 clean reads too before restarting the module. */
+            m->recovery_start_rx_count = m->view.stats.rx_count;
             break;
 
         case CHG_LIB_STATE_RUNNING:
@@ -559,8 +572,19 @@ static void process_module(MXR_Internal_t *m, uint32_t now)
 
  case CHG_LIB_STATE_FAULT:
  send_read(m, CHG_LIB_REG_ALARM_STATUS);
+ /* BUGFIX B-08: require 5 CONSECUTIVE clean reads since the alarm bits
+  * last cleared, same debounce as OFFLINE->RECOVERING, before trusting
+  * the fault has cleared and restarting the module. rx_count keeps
+  * incrementing on every response received while still faulted, so the
+  * streak start must be re-anchored on every dirty read -- otherwise
+  * reads taken *while* the alarm was still set inflate the count and
+  * the very first clean read satisfies the >=5 check immediately. */
  if (m->view.alarm_flags == CHG_LIB_ALARM_NONE) {
- set_state(m, m->setpoint.should_run ? CHG_LIB_STATE_STARTING : CHG_LIB_STATE_IDLE, now);
+     if ((m->view.stats.rx_count - m->recovery_start_rx_count) >= 5) {
+         set_state(m, m->setpoint.should_run ? CHG_LIB_STATE_STARTING : CHG_LIB_STATE_IDLE, now);
+     }
+ } else {
+     m->recovery_start_rx_count = m->view.stats.rx_count;
  }
  break;
  default: /* Should not happen */ break;
