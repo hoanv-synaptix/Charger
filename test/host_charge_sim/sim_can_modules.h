@@ -77,6 +77,19 @@ typedef struct {
      * Mirrors sim_bms.h/.c's `transmitting` flag. Defaults false (memset
      * via sim_module_reset()). */
     bool     silent;
+
+    /* By default the simulator derives `current` itself each tick
+     * (rated_current*0.5 while actually_on, else 0) -- realistic enough
+     * for tests that only care about on/off, but it clobbers any value a
+     * test sets directly, which matters for tests exercising a real
+     * ramp-down (e.g. relay-open-current-gating: module told to stop, but
+     * output current takes some ticks to actually reach zero). Set true
+     * to have the simulator leave `current` alone and just broadcast
+     * whatever the test last set it to (both sim_tonhe_tick()'s periodic
+     * re-derive and sim_tonhe_transmit()'s immediate zero-on-STOP honor
+     * this). Only the TonHe path honors it currently -- Maxwell/Lianming
+     * still auto-derive. Defaults false (memset via sim_module_reset()). */
+    bool     current_override;
 } SimModuleState_t;
 
 /* Most scenarios only need one simulated module -- see plan's scenario

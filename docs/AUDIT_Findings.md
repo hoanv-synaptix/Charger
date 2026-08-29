@@ -423,6 +423,38 @@ Sau fix §8e (ngưỡng 90% so với `BmsView.batt_voltage`), người dùng tes
 
 **Bài học quy trình**: cả host-sim lẫn live HIL simulator cần một scenario riêng test đúng "BMS chỉ đóng relay nội bộ SAU khi thấy `chg_sw=1`" (thay vì hardcode `true`) nếu sau này có nhu cầu verify lại loop tương tự cho tín hiệu CAN khác — ghi chú lại đây để không lặp lại lỗ hổng kiểm thử tương tự.
 
+## 8g. Relay: ramp áp 2 giai đoạn khi đóng + chờ dòng về 0 mới mở (2026-08-29)
+
+Tiếp tục thảo luận sau §8f, người dùng đặt 2 câu hỏi thiết kế mới cho `update_relay_decision()`:
+
+**1. Ramp áp 2 giai đoạn khi đóng relay** — hiện tại module được lệnh nhắm thẳng tới target CUỐI (`cfg.vmax_v`) ngay từ khi RUNNING, bất kể relay đóng/mở. Người dùng đề xuất: trong lúc relay chưa đóng, giới hạn setpoint module ở mức điện áp pin thật (Stage-1); chỉ khi đủ điều kiện ≥90% (relay đã arm) mới bơm setpoint lên target thật (Stage-2) — tránh việc module bị lệnh nhắm tới điện áp cao hơn nhiều trong khi vẫn còn hở mạch (rủi ro overshoot ở converter cộng hưởng LLC chạy nhẹ tải/không tải). Trao đổi thêm về mức Stage-1 (đúng 90% hay 100% điện áp pin) và có cần delay ổn định sau khi đóng relay không — kết luận: **Stage-1 = 100% điện áp pin** (không phải đúng 90%, vì bộ CV thường hội tụ tiệm cận từ dưới lên, đặt đúng ngưỡng so sánh có thể không bao giờ *vượt qua* được điều kiện `>=`); **không cần delay nhân tạo** — độ trễ đóng cơ khí + nảy tiếp điểm của relay thật đã tự nhiên đóng vai trò buffer, thêm delay đoán mò là vi phạm nguyên tắc "không đoán timing khi chưa có datasheet" (`CLAUDE.md` §6).
+
+**2. Chỉ mở relay khi dòng module về 0** — mở relay ngay khi điều kiện dừng/lỗi kích hoạt (như trước giờ) có rủi ro hồ quang điện/hàn dính tiếp điểm nếu vẫn còn dòng sạc thật chạy qua (DC không có điểm dòng-qua-0 tự nhiên như AC). Người dùng xác nhận: chờ dòng module (đọc qua CAN) về gần 0 mới mở, có timeout (không chờ vô hạn nếu mất kết nối/cảm biến kẹt), **EMERGENCY_STOP thì mở ngay** — bỏ qua chờ dòng ("lúc đó là khẩn cấp rồi"). Số liệu xác nhận: ngưỡng dòng gần-0 = **1.0A** (dư margin so với nhiễu CAN quantization 0.01A/bit, nhỏ so với dòng định mức module 50-100A), timeout = **3000ms** (giá trị khởi điểm, cần xác nhận lại bằng đo thực tế, giống các mốc timing khác của dự án chưa chốt — RS485 TX timeout, POWER_EN delay).
+
+**Phát hiện phụ trong lúc thiết kế**: `bms_critical_alarm_mask()` (`bms_core.c`) gồm `HIGH_PACK_VOLT` và `TEMP_LOW_CHG`, nhưng `run_bms_controlled_mode()`'s check riêng để dừng controller (chuyển FAULT, dừng module) lại thiếu 2 bit này — nghĩa là nếu chỉ 1 trong 2 alarm đó kích hoạt, `BMS_ShouldCloseChargeRelay()` muốn relay mở nhưng controller vẫn ở RUNNING (module vẫn chủ động chạy dòng đầy) — không ai lệnh dừng module cả. Với thiết kế "chờ dòng về 0" mới, case này sẽ luôn timeout rồi vẫn phải mở dưới tải — mất hết ý nghĩa fix. Đã sửa luôn: thêm 2 bit thiếu vào check của `run_bms_controlled_mode()`, khớp đúng `bms_critical_alarm_mask()`.
+
+**Implementation** (`App/Charge/charge_controller.c`):
+- Thêm hằng số `RELAY_OPEN_CURRENT_THRESHOLD_A=1.0f`, `RELAY_OPEN_TIMEOUT_MS=3000U`.
+- Thêm field `g_ctrl.relay_open_pending`/`relay_open_pending_tick` — track trạng thái "đang chờ dòng về 0 trước khi mở".
+- `update_relay_decision(uint32_t now_tick)` đổi signature (nhận `now_tick`), tách rõ `controller_wants_relay`/`bms_safe`/`fault_condition`/`is_emergency`; khi có `fault_condition`: nếu chưa từng latch closed → mở ngay (chưa từng có tải); nếu emergency → mở ngay; ngược lại vào trạng thái "chờ" — giữ `relay_should_close=true`, kiểm tra dòng lớn nhất trong các module `enabled` (không lọc theo `online`/state, vì module vừa mất kết nối giữa chừng không nên coi như đã về 0A — timeout mới là cái chặn trường hợp đó) mỗi tick, mở khi dòng < ngưỡng HOẶC hết timeout (log cảnh báo nếu mở do timeout).
+- Thêm hàm dùng chung `compute_voltage_ref()` (tách từ logic ngưỡng 90% có sẵn) — trả điện áp pin BMS (mode BMS-Controlled) hoặc `vmax_v` (Standalone).
+- `run_bms_controlled_mode()`: `target_voltage_v = relay_latched_closed ? cfg.vmax_v : compute_voltage_ref(&cfg)` — chuyển giai đoạn tự động, tận dụng cơ chế "chỉ gửi CAN khi target đổi" có sẵn của `apply_charge_targets()` (không cần thêm plumbing). Do thứ tự thực thi trong tick (mode-handler chạy trước, `update_relay_decision()` chạy sau cùng), việc chuyển Stage-1→Stage-2 tự nhiên có độ trễ 1 tick (~20ms) — đúng ý "không cần delay nhân tạo" nhưng vẫn không đổi target ngay tức thời cùng lúc quyết định relay.
+- `run_bms_controlled_mode()`'s critical-alarm check: thêm `BMS_ALARM_HIGH_PACK_VOLT | BMS_ALARM_TEMP_LOW_CHG`.
+
+**Hạ tầng test bổ sung** (`test/host_charge_sim/`): phát hiện trong lúc viết test rằng simulator TonHe (`sim_can_modules.c`) tự động ghi đè `current` mỗi tick theo `actually_on`/`rated_current` (và zero hoá ngay khi nhận lệnh STOP), không tôn trọng giá trị test tự set — khác với `voltage` vốn hoàn toàn tự do cho test kiểm soát. Thêm field `current_override` (`SimModuleState_t`, giống pattern `silent` đã có) — khi bật, simulator giữ nguyên `current` theo giá trị test set, không tự tính lại; chỉ path TonHe tôn trọng field này hiện tại (Maxwell/Lianming chưa cần, không có test nào dùng).
+
+**Test mới/sửa** (`test/host_charge_sim/test_charge_e2e.c`):
+- `test_driver_happy_path`, `test_relay_bms_mode`: cập nhật assertion `target_voltage_v` — kỳ vọng Stage-1 (điện áp pin) trước khi latch, Stage-2 (`vmax_v`) sau khi latch.
+- `test_relay_arms_off_bms_voltage_not_target`: sanity-check đổi từ `cv.target_voltage_v` (giờ đã staged) sang `cfg.vmax_v` trực tiếp.
+- `test_relay_stays_closed_until_current_settles` (mới): dòng cao (20A) → Stop → relay vẫn đóng; dòng về thấp (0.5A) → relay mở.
+- `test_relay_opens_on_timeout_if_current_never_settles` (mới): dòng cao mãi không đổi → relay vẫn đóng tới gần 3000ms → mở đúng sau khi timeout.
+- `test_relay_opens_immediately_on_emergency_stop` (mới): EmergencyStop với dòng cao (20A) → relay mở ngay lập tức, không chờ.
+- `test_bms_high_pack_volt_alarm_stops_module` (mới): alarm `HIGH_PACK_VOLT` severity=3 → controller FAULT (trước đây sẽ không, do thiếu bit trong mask).
+
+**Verify**: bracket rõ ràng — build với `charge_controller.c`/`bms_core.c` ở HEAD trước fix (`b60e34d`) → toàn bộ test liên quan (staging, current-gated-open x2, alarm-mask) FAIL đúng dòng assert tương ứng; build với fix đầy đủ → PASS toàn bộ 28/28. Verification loop đầy đủ (`-fsyntax-only` `charge_controller.c`+`bms_core.c`, `check_architecture.py`, `check_ioc.py`, `test_logic.c`, Release build RAM 13.96%/FLASH 53.54%) đều sạch.
+
+**Chưa test được**: toàn bộ thay đổi này CHƯA verify trên hardware thật (chỉ host-sim) — do thời gian buổi làm việc, chưa flash lại board. Cần bạn flash + test lại: (1) quan sát điện áp module lúc chưa đóng relay khớp với điện áp pin BMS báo (không phải target xa), nhảy lên target thật ngay khi relay đóng; (2) bấm Stop lúc module còn dòng thật, xác nhận relay giữ đóng tới khi dòng về gần 0 mới mở (quan sát qua Monitor tab); (3) Emergency Stop vẫn mở tức thời như cũ.
+
 ## 9. Phụ lục — File tham chiếu & Guard Checklist
 
 ### 9.1 File cần sửa theo Sprint

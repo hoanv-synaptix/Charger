@@ -24,6 +24,16 @@
 #define CHARGE_CTRL_MODULE_VOLTAGE_MAX_AGE_MS       2000U
 #define CHARGE_CTRL_STANDALONE_VMAX_CONFIRM_MS      1000U
 
+/* Relay open-gating (2026-08-29): don't break a DC relay under load --
+ * see update_relay_decision()'s docstring for the full rationale. Current
+ * threshold is well above CAN quantization noise (TonHe's
+ * TONHE_CURRENT_SCALE is 0.01A/bit) and small relative to typical 50-100A
+ * module ratings. Timeout is a starting default, not yet validated against
+ * real hardware ramp-down timing -- same caveat as this project's other
+ * open timing constants (RS485 TX timeout, POWER_EN delay). */
+#define RELAY_OPEN_CURRENT_THRESHOLD_A               1.0f
+#define RELAY_OPEN_TIMEOUT_MS                        3000U
+
 /* ============== Private State ============== */
 
 static struct {
@@ -103,6 +113,13 @@ static struct {
     bool relay_should_close;
     bool relay_latched_closed;
 
+    /* 2026-08-29: don't drop relay_should_close the instant a fault/stop
+     * is seen while latched closed -- wait for module current to settle
+     * near zero (or time out) first, to avoid breaking a DC relay under
+     * load. See update_relay_decision(). */
+    bool relay_open_pending;
+    uint32_t relay_open_pending_tick;
+
     /* Tracks the allow_charge value last sent to the BMS via
      * BMS_SendCtrlInfo() -- see update_bms_charge_allow(). Lets that
      * function send only on change instead of every tick. */
@@ -130,7 +147,8 @@ typedef struct {
 
 static void set_fault(uint32_t flags, uint32_t now);
 static void clear_fault(void);
-static void update_relay_decision(void);
+static void update_relay_decision(uint32_t now_tick);
+static float compute_voltage_ref(const ChargeCycleConfig_t *cfg);
 static void update_bms_charge_allow(void);
 static void transition_to(ChargeCtrlState_t new_state, uint32_t now);
 static uint8_t get_active_module_count(void);
@@ -214,6 +232,30 @@ static uint8_t get_active_module_count(void) {
 }
 
 /**
+ * @brief Reference voltage for both the relay-arm 90% threshold and the
+ *        Stage-1 (pre-relay-close) module setpoint -- see
+ *        update_relay_decision() and the target_voltage_v assignment in
+ *        run_bms_controlled_mode()/run_standalone_mode().
+ * @note  BMS-Controlled mode: BmsView.batt_voltage (the pack's real,
+ *        current terminal voltage, sensed by the BMS directly --
+ *        independent of this relay's own state). Falls back to
+ *        cfg->vmax_v if the BMS hasn't reported a usable voltage yet.
+ *        Standalone (no-BMS) mode: always cfg->vmax_v -- no BMS reference
+ *        exists in this mode by definition.
+ */
+static float compute_voltage_ref(const ChargeCycleConfig_t *cfg) {
+    float voltage_ref = cfg->vmax_v;
+    if (cfg->charge_source_mode == CHARGE_SOURCE_BMS_CONTROLLED) {
+        BMS_View_t bms_view;
+        BMS_GetView(&bms_view);
+        if (bms_view.batt_voltage > 0.0f) {
+            voltage_ref = bms_view.batt_voltage;
+        }
+    }
+    return voltage_ref;
+}
+
+/**
  * @brief Decide whether the battery relay should be closed this tick.
  * @note  This is a latch, not a continuous gate: reaching the >=90% voltage
  *        threshold CLOSES the relay, but once closed it stays closed
@@ -271,29 +313,94 @@ static uint8_t get_active_module_count(void) {
  *        The latch resets to "not yet armed" the instant state leaves
  *        RUNNING, so the next RUNNING session must earn >=90% again from
  *        scratch.
+ *
+ *        Opening is NOT immediate once latched closed (2026-08-29,
+ *        user-confirmed): breaking a DC relay while real charging current
+ *        is still flowing risks arcing/contact welding (DC has no natural
+ *        current zero-crossing the way AC does). When a fault/stop
+ *        condition is seen while latched closed, relay_should_close stays
+ *        true (module stop is already commanded elsewhere -- see
+ *        run_bms_controlled_mode()'s critical-alarm check and the
+ *        STOPPING/FAULT state handlers' stop_charging() calls, both of
+ *        which fire independently of this function) until either the
+ *        worst-case (max) module current reads below
+ *        RELAY_OPEN_CURRENT_THRESHOLD_A, or RELAY_OPEN_TIMEOUT_MS elapses
+ *        (bounds the wait if a module goes silent mid-ramp-down instead of
+ *        genuinely reaching zero). EMERGENCY_STOP is the one exception --
+ *        it opens immediately regardless of current, per explicit product
+ *        decision: at that point speed matters more than the arc risk.
+ *        If the relay was never latched closed this RUNNING session, there
+ *        was never a load to begin with, so it opens immediately too --
+ *        nothing to wait for.
  */
-static void update_relay_decision(void) {
-    if (g_ctrl.state != CHARGE_CTRL_STATE_RUNNING) {
-        g_ctrl.relay_latched_closed = false;
-        g_ctrl.relay_should_close = false;
-        return;
-    }
+static void update_relay_decision(uint32_t now_tick) {
+    bool controller_wants_relay = (g_ctrl.state == CHARGE_CTRL_STATE_RUNNING);
 
     ChargeCycleConfig_t cfg;
     ChargeCycleConfig_Get(&cfg);
     bool bms_safe = true;
-    if (cfg.charge_source_mode == CHARGE_SOURCE_BMS_CONTROLLED) {
+    if (controller_wants_relay && cfg.charge_source_mode == CHARGE_SOURCE_BMS_CONTROLLED) {
         bms_safe = BMS_ShouldCloseChargeRelay();
     }
 
-    if (!bms_safe) {
-        /* Live BMS-reported fault while RUNNING: open now and drop the
-         * latch -- it must earn its way back to >=90% before re-closing,
-         * same as any fresh RUNNING session. */
-        g_ctrl.relay_latched_closed = false;
-        g_ctrl.relay_should_close = false;
+    bool fault_condition = !controller_wants_relay || !bms_safe;
+    bool is_emergency = (g_ctrl.fault_flags & CHARGE_CTRL_FAULT_EMERGENCY_STOP) != 0U;
+
+    if (fault_condition) {
+        if (!g_ctrl.relay_latched_closed) {
+            /* Never armed this session -- no load was ever bridged, open
+             * immediately, nothing to wait for. */
+            g_ctrl.relay_should_close = false;
+            g_ctrl.relay_open_pending = false;
+            return;
+        }
+
+        if (is_emergency) {
+            /* User-confirmed: emergency overrides the current-settle wait. */
+            g_ctrl.relay_latched_closed = false;
+            g_ctrl.relay_should_close = false;
+            g_ctrl.relay_open_pending = false;
+            return;
+        }
+
+        if (!g_ctrl.relay_open_pending) {
+            g_ctrl.relay_open_pending = true;
+            g_ctrl.relay_open_pending_tick = now_tick;
+        }
+
+        float max_current = -1.0f;
+        CHG_LIB_ModuleView_t cur_view;
+        uint8_t total = CHG_LIB_GetModuleCount();
+        for (uint8_t i = 0; i < total; i++) {
+            if (!CHG_LIB_GetModuleView(i, &cur_view)) continue;
+            if (!cur_view.enabled) continue;
+            /* No online/state filter here (unlike the arm-side voltage
+             * loop) -- a module that goes silent mid-ramp-down should not
+             * be assumed to have reached 0A just because comms dropped;
+             * RELAY_OPEN_TIMEOUT_MS is what bounds that case instead. */
+            if (cur_view.current > max_current) {
+                max_current = cur_view.current;
+            }
+        }
+
+        bool current_settled = (max_current >= 0.0f && max_current < RELAY_OPEN_CURRENT_THRESHOLD_A);
+        bool timed_out = (now_tick - g_ctrl.relay_open_pending_tick) >= RELAY_OPEN_TIMEOUT_MS;
+
+        if (current_settled || timed_out) {
+            if (timed_out && !current_settled) {
+                int i_int = (int)(max_current * 10.0f);
+                LOG("CC: relay open timeout, current still %d.%dA\r\n", i_int / 10, i_int % 10);
+            }
+            g_ctrl.relay_latched_closed = false;
+            g_ctrl.relay_should_close = false;
+            g_ctrl.relay_open_pending = false;
+        } else {
+            g_ctrl.relay_should_close = true; /* keep closed while draining down */
+        }
         return;
     }
+
+    g_ctrl.relay_open_pending = false;
 
     if (g_ctrl.relay_latched_closed) {
         /* Already earned it this session: stay closed regardless of
@@ -309,17 +416,7 @@ static void update_relay_decision(void) {
         return;
     }
 
-    /* Reference voltage for the 90% threshold -- see docstring above.
-     * BMS-Controlled: the pack's real current voltage (independent of
-     * this relay). Standalone: no BMS to read, keep target_voltage_v. */
-    float voltage_ref = g_ctrl.target_voltage_v;
-    if (cfg.charge_source_mode == CHARGE_SOURCE_BMS_CONTROLLED) {
-        BMS_View_t bms_view;
-        BMS_GetView(&bms_view);
-        if (bms_view.batt_voltage > 0.0f) {
-            voltage_ref = bms_view.batt_voltage;
-        }
-    }
+    float voltage_ref = compute_voltage_ref(&cfg);
 
     float min_voltage = -1.0f;
     CHG_LIB_ModuleView_t view;
@@ -1084,9 +1181,17 @@ static void run_bms_controlled_mode(uint32_t now_tick) {
         g_ctrl.bms_stale_warned = false;
     }
 
-    /* Check critical BMS alarms */
+    /* Check critical BMS alarms. BUGFIX 2026-08-29: this mask used to omit
+     * BMS_ALARM_HIGH_PACK_VOLT and BMS_ALARM_TEMP_LOW_CHG, both of which
+     * ARE in bms_critical_alarm_mask() (Modules/bms/bms_core.c) and so
+     * already fail BMS_ShouldCloseChargeRelay() -- meaning either alarm
+     * alone would make update_relay_decision() want the relay open while
+     * the controller state stayed RUNNING (module still actively
+     * sourcing current, nothing here telling it to stop). Kept in sync
+     * with bms_critical_alarm_mask() by listing the same bits. */
     if (bms.alarm_flags & (BMS_ALARM_OVER_CHG_CURR | BMS_ALARM_HIGH_CELL_VOLT |
-                           BMS_ALARM_TEMP_HIGH_CHG)) {
+                           BMS_ALARM_TEMP_HIGH_CHG | BMS_ALARM_HIGH_PACK_VOLT |
+                           BMS_ALARM_TEMP_LOW_CHG)) {
         LOG("CC: BMS alarm active\r\n");
         set_fault(CHARGE_CTRL_FAULT_BMS_ALARM, now_tick);
         return;
@@ -1101,8 +1206,19 @@ static void run_bms_controlled_mode(uint32_t now_tick) {
      * charge algorithm from the locally-configured ChargeCycleConfig_t
      * (vmax_v / imax_c / stage bands), never by the BMS's own
      * ChgRequest_INFO (bms.chg_volt_request/bms.chg_curr_request are parsed
-     * and available in BMS_View_t, but deliberately unused here). */
-    g_ctrl.target_voltage_v = cfg.vmax_v;
+     * and available in BMS_View_t, but deliberately unused here).
+     *
+     * 2026-08-29, user-confirmed: while the relay hasn't armed yet
+     * (relay_latched_closed still false), cap the commanded setpoint at
+     * compute_voltage_ref() (the BMS's real pack voltage) instead of
+     * jumping straight to the final vmax_v -- avoids commanding the
+     * module toward a possibly much higher voltage while it's still
+     * genuinely unloaded (relay open). Once relay_latched_closed flips
+     * true, the real target takes over; apply_charge_targets() already
+     * only sends a new CAN setpoint when target_voltage_v actually
+     * changes, so this transition costs exactly one extra TX, not a
+     * per-tick spam. */
+    g_ctrl.target_voltage_v = g_ctrl.relay_latched_closed ? cfg.vmax_v : compute_voltage_ref(&cfg);
 
     /* Clamp voltage to hardware limits */
     if (g_ctrl.target_voltage_v > cfg.module_u_max_v) {
@@ -1305,7 +1421,7 @@ void ChargeController_Process(uint32_t now_tick) {
             break;
     }
 
-    update_relay_decision();
+    update_relay_decision(now_tick);
     update_bms_charge_allow();
 }
 

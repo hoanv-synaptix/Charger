@@ -327,7 +327,9 @@ static bool sim_tonhe_transmit(uint32_t ext_id, const uint8_t *data, uint8_t dlc
         g_sim_module.actually_on = (data[0] == TONHE_CMD_START);
         if (!g_sim_module.actually_on) {
             g_sim_module.voltage = 0.0f;
-            g_sim_module.current = 0.0f;
+            if (!g_sim_module.current_override) {
+                g_sim_module.current = 0.0f;
+            }
         } else if (g_sim_module.voltage <= 0.0f) {
             g_sim_module.voltage = 1.0f;
         }
@@ -348,10 +350,12 @@ static bool sim_tonhe_transmit(uint32_t ext_id, const uint8_t *data, uint8_t dlc
 static void sim_tonhe_tick(uint32_t now_tick)
 {
     (void)now_tick;
-    if (g_sim_module.actually_on) {
-        g_sim_module.current = g_sim_module.rated_current * 0.5f;
-    } else {
-        g_sim_module.current = 0.0f;
+    if (!g_sim_module.current_override) {
+        if (g_sim_module.actually_on) {
+            g_sim_module.current = g_sim_module.rated_current * 0.5f;
+        } else {
+            g_sim_module.current = 0.0f;
+        }
     }
 
     uint8_t status = g_sim_module.actually_on ? TONHE_STATUS_ON : TONHE_STATUS_NORMAL_OFF;

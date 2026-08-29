@@ -218,7 +218,16 @@ static bool test_driver_happy_path(uint8_t module_type, const char *name)
     ChargeController_GetView(&cv);
     ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "controller should be RUNNING");
     ASSERT(cv.target_voltage_v > 0.0f, "target voltage should be set");
-    ASSERT(fabsf(cv.target_voltage_v - cfg.vmax_v) < 0.01f, "target voltage should equal vmax_v (no BMS override)");
+    /* BUGFIX 2026-08-29: target_voltage_v is Stage-1 (BMS pack voltage,
+     * 400V from set_healthy_bms() above) until the relay latches closed --
+     * this scenario never ramps module voltage to arm it, so it stays at
+     * Stage-1, not cfg.vmax_v (500V). See update_relay_decision()'s
+     * docstring and the target_voltage_v assignment in
+     * run_bms_controlled_mode(). Still not derived from the BMS's own
+     * ChgRequest_INFO (bms.chg_volt_request) -- that's a separate,
+     * still-true guarantee (SRS TBD-04). */
+    ASSERT(fabsf(cv.target_voltage_v - 400.0f) < 0.01f,
+           "target voltage should be Stage-1 (BMS pack voltage) before the relay arms, not vmax_v");
 
     BMS_View_t bv;
     BMS_GetView(&bv);
@@ -391,6 +400,12 @@ static bool test_relay_bms_mode(void)
     drive_ms(200U);
     ChargeController_GetView(&cv);
     ASSERT(cv.relay_should_close == 0, "relay must stay open below 90% of BMS pack voltage");
+    /* BUGFIX 2026-08-29: while not yet latched, the module must be
+     * *commanded* toward the BMS pack voltage (Stage-1), not the far final
+     * target (500V, per build_default_cfg's vmax_v) -- see the
+     * target_voltage_v assignment in run_bms_controlled_mode(). */
+    ASSERT(fabsf(cv.target_voltage_v - bms_ref) < 0.01f,
+           "target_voltage_v must be Stage-1 (BMS pack voltage), not the far final target, before the relay arms");
 
     /* >=90% of BMS pack voltage, BMS healthy (bms_relay_allow default true
      * from sim_bms_reset): relay closes (arms the latch). */
@@ -398,6 +413,13 @@ static bool test_relay_bms_mode(void)
     drive_ms(200U);
     ChargeController_GetView(&cv);
     ASSERT(cv.relay_should_close == 1, "relay should close once voltage >=90% of BMS pack voltage and BMS reports safe");
+    /* One more tick so run_bms_controlled_mode() re-evaluates
+     * target_voltage_v against the now-latched relay (1-tick lag by
+     * design -- see run_bms_controlled_mode()'s comment). */
+    drive_ms(20U);
+    ChargeController_GetView(&cv);
+    ASSERT(fabsf(cv.target_voltage_v - 500.0f) < 0.01f,
+           "target_voltage_v must jump to the real final target (Stage-2) once the relay has latched closed");
 
     /* Voltage sags back below 90% (e.g. CV-phase current taper) -- this is
      * explicitly NOT a fault once latched, relay must stay closed. */
@@ -424,6 +446,134 @@ static bool test_relay_bms_mode(void)
     return true;
 }
 
+/* Shared setup for the current-gated-open tests below: get to RUNNING with
+ * the relay latched closed, same recipe as test_relay_bms_mode's happy
+ * path. Returns the BMS pack voltage used (bms_ref) so callers can reuse
+ * it if needed; asserts internally via the caller's ASSERT macro context
+ * is not possible from a helper, so callers must check the return. */
+static bool setup_relay_closed_bms_mode(void)
+{
+    if (!setup_scenario(CHARGE_MODULE_TYPE_TONHE, NULL)) return false;
+    set_healthy_bms(400.0f, 50);
+    if (!warmup_and_start(1500U, 4000U)) return false;
+    g_sim_module.voltage = 400.0f * 0.95f; /* >=90% of the 400V pack */
+    drive_ms(200U);
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    return cv.relay_should_close == 1;
+}
+
+/* Regression test: relay must not open the instant a fault/stop is seen
+ * while latched closed -- breaking a DC relay under real charging current
+ * risks arcing/contact welding (no natural current zero-crossing, unlike
+ * AC). User-confirmed 2026-08-29: wait for the module's own CAN-reported
+ * current to settle near zero before actually opening. */
+static bool test_relay_stays_closed_until_current_settles(void)
+{
+    printf("Running test_relay_stays_closed_until_current_settles...\n");
+    ASSERT(setup_relay_closed_bms_mode(), "relay never latched closed in setup");
+
+    g_sim_module.current_override = true; /* stop the simulator auto-zeroing current on Stop */
+    g_sim_module.current = 20.0f; /* still charging hard */
+    ChargeController_Stop(mock_tick);
+    drive_ms(200U);
+
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state != CHARGE_CTRL_STATE_RUNNING, "controller should have left RUNNING");
+    ASSERT(cv.relay_should_close == 1, "relay must stay closed while module current is still high (20A)");
+
+    g_sim_module.current = 0.5f; /* below RELAY_OPEN_CURRENT_THRESHOLD_A (1.0A) */
+    drive_ms(60U); /* a couple ticks for the fresh reading to be picked up */
+    ChargeController_GetView(&cv);
+    ASSERT(cv.relay_should_close == 0, "relay must open once module current has settled near zero");
+
+    printf("[PASS] test_relay_stays_closed_until_current_settles\n");
+    return true;
+}
+
+/* Regression test: if the module's current reading never settles (e.g.
+ * comms dropped mid-ramp-down, or a stuck sensor), the relay must not be
+ * wedged closed forever -- RELAY_OPEN_TIMEOUT_MS bounds the wait. */
+static bool test_relay_opens_on_timeout_if_current_never_settles(void)
+{
+    printf("Running test_relay_opens_on_timeout_if_current_never_settles...\n");
+    ASSERT(setup_relay_closed_bms_mode(), "relay never latched closed in setup");
+
+    g_sim_module.current_override = true; /* stop the simulator auto-zeroing current on Stop */
+    g_sim_module.current = 20.0f;
+    ChargeController_Stop(mock_tick);
+    drive_ms(200U);
+
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.relay_should_close == 1, "relay must still be closed right after Stop (current still high)");
+
+    /* Current deliberately never drops -- only the timeout should open it. */
+    drive_ms(2600U); /* short of RELAY_OPEN_TIMEOUT_MS (3000ms) from the Stop */
+    ChargeController_GetView(&cv);
+    ASSERT(cv.relay_should_close == 1, "relay must still be closed just before the timeout elapses");
+
+    drive_ms(600U); /* now past 3000ms total since Stop */
+    ChargeController_GetView(&cv);
+    ASSERT(cv.relay_should_close == 0, "relay must open once RELAY_OPEN_TIMEOUT_MS elapses, even with current still high");
+
+    printf("[PASS] test_relay_opens_on_timeout_if_current_never_settles\n");
+    return true;
+}
+
+/* Regression test: EMERGENCY_STOP is the one exception to the
+ * current-gated-open wait -- user-confirmed 2026-08-29 ("lúc đó là khẩn
+ * cấp rồi"): open immediately regardless of current, speed over arc risk. */
+static bool test_relay_opens_immediately_on_emergency_stop(void)
+{
+    printf("Running test_relay_opens_immediately_on_emergency_stop...\n");
+    ASSERT(setup_relay_closed_bms_mode(), "relay never latched closed in setup");
+
+    g_sim_module.current_override = true; /* stop the simulator auto-zeroing current on Stop */
+    g_sim_module.current = 20.0f; /* still charging hard */
+    ChargeController_EmergencyStop(mock_tick);
+    drive_ms(20U); /* a single tick is enough -- must not wait */
+
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_FAULT, "controller should be in FAULT after EmergencyStop");
+    ASSERT(cv.relay_should_close == 0, "EMERGENCY_STOP must open the relay immediately, even with current still high");
+
+    printf("[PASS] test_relay_opens_immediately_on_emergency_stop\n");
+    return true;
+}
+
+/* Regression test: bms_critical_alarm_mask() (Modules/bms/bms_core.c)
+ * includes BMS_ALARM_HIGH_PACK_VOLT and BMS_ALARM_TEMP_LOW_CHG, both of
+ * which therefore already fail BMS_ShouldCloseChargeRelay() -- but
+ * run_bms_controlled_mode()'s own critical-alarm check used to omit both,
+ * so the controller would stay RUNNING (module still actively sourcing
+ * current) while the relay independently wanted to open. Fixed by
+ * matching the two masks. */
+static bool test_bms_high_pack_volt_alarm_stops_module(void)
+{
+    printf("Running test_bms_high_pack_volt_alarm_stops_module...\n");
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_TONHE, NULL), "setup failed");
+    set_healthy_bms(400.0f, 50);
+    ASSERT(warmup_and_start(1500U, 4000U), "module never reached RUNNING");
+
+    g_sim_bms.high_pack_volt = 3; /* severe -- only >=2 counts per map_alarm_field() */
+    drive_ms(1000U);
+
+    BMS_View_t bv;
+    BMS_GetView(&bv);
+    ASSERT(bv.alarm_flags & BMS_ALARM_HIGH_PACK_VOLT, "BMS_ALARM_HIGH_PACK_VOLT should be set");
+
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_FAULT, "controller should FAULT on HIGH_PACK_VOLT now that the mask matches bms_critical_alarm_mask()");
+    ASSERT(cv.stop_reason == CHARGE_STOP_BMS_ALARM, "stop reason should be BMS_ALARM");
+
+    printf("[PASS] test_bms_high_pack_volt_alarm_stops_module\n");
+    return true;
+}
+
 /* Regression test for B-24 (docs/AUDIT_Findings.md sec 5.2): a deeply
  * discharged pack has target_voltage_v (500V, the *final* charge setpoint)
  * far above the pack's actual current voltage (300V, from the BMS). The
@@ -440,16 +590,21 @@ static bool test_relay_bms_mode(void)
 static bool test_relay_arms_off_bms_voltage_not_target(void)
 {
     printf("Running test_relay_arms_off_bms_voltage_not_target...\n");
-    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_TONHE, NULL), "setup failed");
+    ChargeCycleConfig_t cfg;
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_TONHE, &cfg), "setup failed");
     set_healthy_bms(300.0f, 20); /* deeply discharged pack, 300V */
     ASSERT(warmup_and_start(1500U, 4000U), "module never reached RUNNING");
 
-    ChargeCtrlView_t cv;
-    ChargeController_GetView(&cv);
-    ASSERT(cv.target_voltage_v > 350.0f, "target should be well above the pack's current voltage (sanity on the fixture)");
+    /* Sanity on the fixture: the config's *final* target is far above the
+     * pack's current voltage. Check cfg.vmax_v directly, not
+     * cv.target_voltage_v -- the latter is now Stage-1 (pack voltage)
+     * until the relay arms, by design (see update_relay_decision()'s
+     * docstring), so it would read ~300V here, not the final target. */
+    ASSERT(cfg.vmax_v > 350.0f, "target should be well above the pack's current voltage (sanity on the fixture)");
 
     g_sim_module.voltage = 280.0f; /* >=90% of 300V pack, but nowhere near 90% of ~500V target */
     drive_ms(200U);
+    ChargeCtrlView_t cv;
     ChargeController_GetView(&cv);
     ASSERT(cv.relay_should_close == 1, "relay must close off 90% of BMS pack voltage even though module is far below 90% of target_voltage_v");
 
@@ -932,10 +1087,14 @@ int main(void)
     pass &= test_bms_offline();
     pass &= test_bms_offline_then_recovers();
     pass &= test_bms_critical_alarm();
+    pass &= test_bms_high_pack_volt_alarm_stops_module();
     pass &= test_bms_stale_but_online();
 
     pass &= test_relay_bms_mode();
     pass &= test_relay_arms_off_bms_voltage_not_target();
+    pass &= test_relay_stays_closed_until_current_settles();
+    pass &= test_relay_opens_on_timeout_if_current_never_settles();
+    pass &= test_relay_opens_immediately_on_emergency_stop();
     pass &= test_bms_ctrl_info_allow_charge_wired();
     pass &= test_relay_standalone_mode();
 
