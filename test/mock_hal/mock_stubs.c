@@ -19,11 +19,51 @@ void LOG(const char *fmt, ...)
 void LOG_Banner(void) {}
 void LOG_TxCpltCallback(void) {}
 
+/* Spy on the last-transmitted frame per extended CAN ID, across both
+ * buses -- lets a test assert on frame *content* (e.g. Ctrl_INFO's chg_sw
+ * byte) without a full CAN-bus model. Small, fixed-size table; only the
+ * IDs a test actually looks up need a slot. Zeroed at process start same
+ * as any other global -- tests that care should reset the fields they
+ * check before driving, same discipline as the sim_bms/sim_can_modules
+ * globals. */
+#define MOCK_CAN_SPY_SLOTS 4
+typedef struct { uint32_t ext_id; uint8_t data[8]; uint8_t dlc; bool seen; } MockCanSpySlot_t;
+static MockCanSpySlot_t g_can_spy[MOCK_CAN_SPY_SLOTS];
+
 bool BSP_CAN_Transmit(uint8_t bus, const BSP_CAN_Frame_t *frame)
 {
     (void)bus;
-    (void)frame;
-    return true;
+    for (int i = 0; i < MOCK_CAN_SPY_SLOTS; i++) {
+        if (g_can_spy[i].seen && g_can_spy[i].ext_id == frame->ext_id) {
+            memcpy(g_can_spy[i].data, frame->data, 8);
+            g_can_spy[i].dlc = frame->dlc;
+            return true;
+        }
+    }
+    for (int i = 0; i < MOCK_CAN_SPY_SLOTS; i++) {
+        if (!g_can_spy[i].seen) {
+            g_can_spy[i].ext_id = frame->ext_id;
+            memcpy(g_can_spy[i].data, frame->data, 8);
+            g_can_spy[i].dlc = frame->dlc;
+            g_can_spy[i].seen = true;
+            return true;
+        }
+    }
+    return true; /* spy table full -- silently drop tracking, TX still "succeeds" */
+}
+
+/* Returns true and fills *data_out (8 bytes) if a frame with this ext_id
+ * has been transmitted at least once via BSP_CAN_Transmit(); false if
+ * never seen. */
+bool MockCan_GetLastTx(uint32_t ext_id, uint8_t data_out[8])
+{
+    for (int i = 0; i < MOCK_CAN_SPY_SLOTS; i++) {
+        if (g_can_spy[i].seen && g_can_spy[i].ext_id == ext_id) {
+            memcpy(data_out, g_can_spy[i].data, 8);
+            return true;
+        }
+    }
+    return false;
 }
 
 /* BSP/bsp_can.c's real CAN TX/RX counters -- pc_debug_protocol.c's

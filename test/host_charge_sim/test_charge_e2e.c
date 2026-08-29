@@ -32,6 +32,12 @@ void BSP_Delay(uint32_t delay_ms) { (void)delay_ms; }
 void BSP_EnterCritical(void) {}
 void BSP_ExitCritical(void) {}
 
+/* Spy declared in test/mock_hal/mock_stubs.c's BSP_CAN_Transmit() -- lets a
+ * test assert on transmitted CAN frame *content*, not just that a TX
+ * happened. */
+extern bool MockCan_GetLastTx(uint32_t ext_id, uint8_t data_out[8]);
+#include "bms_protocol.h" /* BMS_ID_CTRL_INFO */
+
 #define ASSERT(cond, msg) \
     do { \
         if (!(cond)) { \
@@ -405,6 +411,47 @@ static bool test_relay_bms_mode(void)
     ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "a false BMS relay-allow flag alone must not fault the whole cycle");
 
     printf("[PASS] test_relay_bms_mode\n");
+    return true;
+}
+
+/* Regression test: BMS_SendCtrlInfo() (Modules/bms/bms_core.c) existed to
+ * set g_charge_ctrl.allow_charge but had no caller anywhere in the
+ * firmware -- Ctrl_INFO kept transmitting every 500ms on schedule
+ * (FR-BMS-06) but with chg_sw always 0, even while actively RUNNING. A
+ * real BMS gating its own internal charge relay on that byte would never
+ * report charge_relay_closed=true, blocking update_relay_decision()'s
+ * BMS_ShouldCloseChargeRelay() check regardless of module voltage.
+ * Confirmed via real HIL run 2026-08-29: module voltage already >90% of
+ * target, relay still never closed. Fixed by charge_controller.c's new
+ * update_bms_charge_allow(), called every tick alongside
+ * update_relay_decision(): sends allow_charge=true only while state is
+ * RUNNING (user-confirmed choice), false otherwise. */
+static bool test_bms_ctrl_info_allow_charge_wired(void)
+{
+    printf("Running test_bms_ctrl_info_allow_charge_wired...\n");
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_TONHE, NULL), "setup failed");
+    set_healthy_bms(400.0f, 50);
+
+    uint8_t data[8];
+    ASSERT(warmup_and_start(1500U, 4000U), "module never reached RUNNING");
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "controller should be RUNNING by now");
+    /* update_bms_charge_allow() is edge-triggered -- the very next
+     * ChargeController_Process() tick after entering RUNNING sends it. */
+    drive_ms(40U);
+    ASSERT(MockCan_GetLastTx(BMS_ID_CTRL_INFO, data), "Ctrl_INFO must have been sent");
+    ASSERT(data[0] == 0x01U, "MaskCode bit0 (charge) must be set while RUNNING");
+    ASSERT(data[1] == 0x01U, "chg_sw must be 1 while RUNNING -- this is the bug: it used to always be 0");
+
+    ChargeController_Stop(mock_tick);
+    drive_ms(200U); /* STOPPING -> IDLE */
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_IDLE, "should have settled to IDLE after Stop");
+    ASSERT(MockCan_GetLastTx(BMS_ID_CTRL_INFO, data), "Ctrl_INFO must have been sent");
+    ASSERT(data[1] == 0U, "chg_sw must drop back to 0 once no longer RUNNING");
+
+    printf("[PASS] test_bms_ctrl_info_allow_charge_wired\n");
     return true;
 }
 
@@ -845,6 +892,7 @@ int main(void)
     pass &= test_bms_stale_but_online();
 
     pass &= test_relay_bms_mode();
+    pass &= test_bms_ctrl_info_allow_charge_wired();
     pass &= test_relay_standalone_mode();
 
     pass &= test_multi_module_timing_budget();

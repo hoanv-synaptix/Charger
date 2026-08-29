@@ -102,6 +102,11 @@ static struct {
      * again. */
     bool relay_should_close;
     bool relay_latched_closed;
+
+    /* Tracks the allow_charge value last sent to the BMS via
+     * BMS_SendCtrlInfo() -- see update_bms_charge_allow(). Lets that
+     * function send only on change instead of every tick. */
+    bool bms_charge_allow_sent;
 } g_ctrl = {0};
 
 /* ============== Stage Evaluation Types ============== */
@@ -126,6 +131,7 @@ typedef struct {
 static void set_fault(uint32_t flags, uint32_t now);
 static void clear_fault(void);
 static void update_relay_decision(void);
+static void update_bms_charge_allow(void);
 static void transition_to(ChargeCtrlState_t new_state, uint32_t now);
 static uint8_t get_active_module_count(void);
 static bool check_preconditions_set_fault(uint32_t now);
@@ -296,6 +302,38 @@ static void update_relay_decision(void) {
 
     g_ctrl.relay_latched_closed = true;
     g_ctrl.relay_should_close = true;
+}
+
+/**
+ * @brief Tell the BMS whether we want to charge (Ctrl_INFO chg_sw), so its
+ *        own internal charge relay can close.
+ * @note  BUGFIX 2026-08-29: BMS_SendCtrlInfo() (Modules/bms/bms_core.c)
+ *        existed to set this but had no caller anywhere in the firmware --
+ *        g_charge_ctrl.allow_charge stayed false forever (zero-init,
+ *        never written), so the periodic 500ms Ctrl_INFO transmission
+ *        (FR-BMS-06, transmit_ctrl_info() in bms_core.c) kept firing on
+ *        schedule but with chg_sw always 0, even while actively RUNNING.
+ *        A BMS that gates its own internal charge relay on this signal
+ *        would then never report charge_relay_closed=true, so
+ *        update_relay_decision()'s BMS_ShouldCloseChargeRelay() check
+ *        would block the MCU's own relay forever -- independent of, and
+ *        regardless of, module output voltage. Confirmed against a real
+ *        HIL run: module voltage already >90% of target, relay still
+ *        never closed.
+ *        allow_charge=true only while actually RUNNING (not READY/
+ *        STOPPING/FAULT) -- user-confirmed choice, the safest reading of
+ *        "we are in a real charge cycle right now". Edge-triggered (only
+ *        calls BMS_SendCtrlInfo() when the desired value changes) so this
+ *        doesn't add an extra 20ms-tick CAN TX on top of Ctrl_INFO's
+ *        existing periodic cadence -- same reasoning as BUG-05's fix to
+ *        apply_charge_targets(). */
+static void update_bms_charge_allow(void) {
+    bool want_allow = (g_ctrl.state == CHARGE_CTRL_STATE_RUNNING);
+    if (want_allow != g_ctrl.bms_charge_allow_sent) {
+        g_ctrl.bms_charge_allow_sent = want_allow;
+        BMS_ChargeCtrl_t ctrl = { .allow_charge = want_allow, .allow_discharge = false };
+        BMS_SendCtrlInfo(&ctrl);
+    }
 }
 
 /**
@@ -1229,6 +1267,7 @@ void ChargeController_Process(uint32_t now_tick) {
     }
 
     update_relay_decision();
+    update_bms_charge_allow();
 }
 
 bool ChargeController_CheckPreconditions(uint32_t *fault_flags_out) {
