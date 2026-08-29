@@ -235,11 +235,30 @@ static uint8_t get_active_module_count(void) {
  *        once latched -- by design, per product decision.
  *
  *        To (re-)arm the latch (only evaluated while not already latched
- *        closed): target_voltage_v is a real (positive) setpoint, and the
- *        worst-case (minimum) output voltage across all active (enabled,
- *        online, not OFFLINE/FAULT) modules has reached
- *        BMS_CHARGE_VOLT_LIMIT_PCT of target_voltage_v -- i.e. every module
- *        must be up, not just one of several in a multi-module stack.
+ *        closed): the worst-case (minimum) output voltage across all
+ *        active (enabled, online, not OFFLINE/FAULT) modules must reach
+ *        BMS_CHARGE_VOLT_LIMIT_PCT of a *reference* voltage -- i.e. every
+ *        module must be up, not just one of several in a multi-module
+ *        stack. The reference is:
+ *          - BMS-Controlled mode: BmsView.batt_voltage (the pack's real,
+ *            current terminal voltage, sensed by the BMS directly --
+ *            independent of this relay's own state). BUGFIX 2026-08-29:
+ *            this used to be target_voltage_v (the *final* charge
+ *            setpoint) instead -- physically wrong for a pre-charge/
+ *            inrush check (you want the charger's output close to the
+ *            *battery's current* voltage before bridging them, not close
+ *            to where the battery will end up after a full charge cycle;
+ *            requiring 90% of a possibly much higher target needlessly
+ *            overshoots the module before the relay ever closes) and,
+ *            per real HIL testing, created a chicken-and-egg deadlock
+ *            when the charger only has a load once this relay closes:
+ *            some modules refuse to ramp output voltage at all while
+ *            genuinely unloaded, so 90%-of-target could never be reached
+ *            in the first place. batt_voltage is already known safe to
+ *            use here -- BMS_ShouldCloseChargeRelay() above already
+ *            required the BMS online with fresh data.
+ *          - Standalone (no-BMS) mode: still target_voltage_v -- no BMS
+ *            reference exists in this mode by definition.
  *
  *        The latch resets to "not yet armed" the instant state leaves
  *        RUNNING, so the next RUNNING session must earn >=90% again from
@@ -282,6 +301,18 @@ static void update_relay_decision(void) {
         return;
     }
 
+    /* Reference voltage for the 90% threshold -- see docstring above.
+     * BMS-Controlled: the pack's real current voltage (independent of
+     * this relay). Standalone: no BMS to read, keep target_voltage_v. */
+    float voltage_ref = g_ctrl.target_voltage_v;
+    if (cfg.charge_source_mode == CHARGE_SOURCE_BMS_CONTROLLED) {
+        BMS_View_t bms_view;
+        BMS_GetView(&bms_view);
+        if (bms_view.batt_voltage > 0.0f) {
+            voltage_ref = bms_view.batt_voltage;
+        }
+    }
+
     float min_voltage = -1.0f;
     CHG_LIB_ModuleView_t view;
     uint8_t total = CHG_LIB_GetModuleCount();
@@ -296,7 +327,7 @@ static void update_relay_decision(void) {
     if (min_voltage < 0.0f) {
         return; /* no active module reporting voltage */
     }
-    if (min_voltage < (g_ctrl.target_voltage_v * ((float)BMS_CHARGE_VOLT_LIMIT_PCT / 100.0f))) {
+    if (min_voltage < (voltage_ref * ((float)BMS_CHARGE_VOLT_LIMIT_PCT / 100.0f))) {
         return;
     }
 

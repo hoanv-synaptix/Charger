@@ -376,26 +376,32 @@ static bool test_relay_bms_mode(void)
 
     ChargeCtrlView_t cv;
     ChargeController_GetView(&cv);
-    float target = cv.target_voltage_v;
-    ASSERT(target > 0.0f, "target voltage should be set");
+    ASSERT(cv.target_voltage_v > 0.0f, "target voltage should be set");
 
-    /* Below 90% target: relay must stay open even though the controller is
-     * RUNNING and the BMS is otherwise healthy. */
-    g_sim_module.voltage = target * 0.80f;
+    /* BUGFIX 2026-08-29: the 90% arming threshold now compares module
+     * voltage against the BMS's real pack voltage (BmsView.batt_voltage),
+     * not the final charge target -- see update_relay_decision()'s
+     * docstring. set_healthy_bms(400.0f, ...) above means the reference
+     * here is 400V, independent of whatever target_voltage_v is. */
+    const float bms_ref = 400.0f;
+
+    /* Below 90% of BMS pack voltage: relay must stay open even though the
+     * controller is RUNNING and the BMS is otherwise healthy. */
+    g_sim_module.voltage = bms_ref * 0.80f;
     drive_ms(200U);
     ChargeController_GetView(&cv);
-    ASSERT(cv.relay_should_close == 0, "relay must stay open below 90% target voltage");
+    ASSERT(cv.relay_should_close == 0, "relay must stay open below 90% of BMS pack voltage");
 
-    /* >=90% target, BMS healthy (bms_relay_allow default true from
-     * sim_bms_reset): relay closes (arms the latch). */
-    g_sim_module.voltage = target * 0.95f;
+    /* >=90% of BMS pack voltage, BMS healthy (bms_relay_allow default true
+     * from sim_bms_reset): relay closes (arms the latch). */
+    g_sim_module.voltage = bms_ref * 0.95f;
     drive_ms(200U);
     ChargeController_GetView(&cv);
-    ASSERT(cv.relay_should_close == 1, "relay should close once voltage >=90% and BMS reports safe");
+    ASSERT(cv.relay_should_close == 1, "relay should close once voltage >=90% of BMS pack voltage and BMS reports safe");
 
     /* Voltage sags back below 90% (e.g. CV-phase current taper) -- this is
      * explicitly NOT a fault once latched, relay must stay closed. */
-    g_sim_module.voltage = target * 0.70f;
+    g_sim_module.voltage = bms_ref * 0.70f;
     drive_ms(200U);
     ChargeController_GetView(&cv);
     ASSERT(cv.relay_should_close == 1, "relay must stay closed when voltage sags after latching -- not a re-open trigger");
@@ -411,6 +417,39 @@ static bool test_relay_bms_mode(void)
     ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "a false BMS relay-allow flag alone must not fault the whole cycle");
 
     printf("[PASS] test_relay_bms_mode\n");
+    return true;
+}
+
+/* Regression test for B-24 (docs/AUDIT_Findings.md sec 5.2): a deeply
+ * discharged pack has target_voltage_v (500V, the *final* charge setpoint)
+ * far above the pack's actual current voltage (300V, from the BMS). The
+ * module realistically only gets partway there (280V) before this check
+ * runs -- under the old target-relative threshold (90% of 500V = 450V)
+ * the relay would never arm; under the new BMS-relative threshold (90% of
+ * 300V = 270V) it must, since 280V clears it. Also proves the module
+ * voltage no longer needs to overshoot anywhere near the final target
+ * before the relay can close (the actual root of B-24's suspected
+ * chicken-and-egg deadlock: some modules won't ramp output voltage at all
+ * while genuinely unloaded, so target-relative 90% could be unreachable
+ * before the relay -- which is the only source of a real load -- ever
+ * closes). */
+static bool test_relay_arms_off_bms_voltage_not_target(void)
+{
+    printf("Running test_relay_arms_off_bms_voltage_not_target...\n");
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_TONHE, NULL), "setup failed");
+    set_healthy_bms(300.0f, 20); /* deeply discharged pack, 300V */
+    ASSERT(warmup_and_start(1500U, 4000U), "module never reached RUNNING");
+
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.target_voltage_v > 350.0f, "target should be well above the pack's current voltage (sanity on the fixture)");
+
+    g_sim_module.voltage = 280.0f; /* >=90% of 300V pack, but nowhere near 90% of ~500V target */
+    drive_ms(200U);
+    ChargeController_GetView(&cv);
+    ASSERT(cv.relay_should_close == 1, "relay must close off 90% of BMS pack voltage even though module is far below 90% of target_voltage_v");
+
+    printf("[PASS] test_relay_arms_off_bms_voltage_not_target\n");
     return true;
 }
 
@@ -892,6 +931,7 @@ int main(void)
     pass &= test_bms_stale_but_online();
 
     pass &= test_relay_bms_mode();
+    pass &= test_relay_arms_off_bms_voltage_not_target();
     pass &= test_bms_ctrl_info_allow_charge_wired();
     pass &= test_relay_standalone_mode();
 
