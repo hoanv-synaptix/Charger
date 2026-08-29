@@ -46,13 +46,13 @@ static uint32_t last_process_tick = 0;
 static uint32_t last_led_tick     = 0;
 static uint32_t last_dwin_tick    = 0;
 static uint32_t last_main_log     = 0;
-/* Button debounce */
+/* Button debounce -- single toggle button (BUTTON_1/PA15), see App_Loop()
+ * "(2) Button handling" for the state-decides-direction logic. BUTTON_2
+ * (PD2) is no longer read here -- confirmed with user 2026-08-29, hardware
+ * only needs 1 button. */
 static uint32_t btn_start_last    = 0;
-static uint32_t btn_stop_last     = 0;
 static uint8_t  btn_start_prev    = 0;
-static uint8_t  btn_stop_prev     = 0;
 static uint8_t  btn_start_db      = 0;
-static uint8_t  btn_stop_db       = 0;
 
 /* ============== LED control ============== */
 
@@ -64,7 +64,6 @@ static void led_fault_off(void){ BSP_LED_Off(BSP_LED_FAULT); }
 /* ============== Button read ============== */
 
 static uint8_t read_btn_start(void) { return BSP_BTN_IsPressed(BSP_BTN_START) ? 1 : 0; }
-static uint8_t read_btn_stop(void)  { return BSP_BTN_IsPressed(BSP_BTN_STOP) ? 1 : 0; }
 
 /* ============== DWIN fault code translation ============== */
 
@@ -263,10 +262,23 @@ void App_Loop(void)
         DWIN_ParseRX(rs485_buf, rs485_len);
     }
 
-    /* (2) Button handling with debounce */
+    /* (2) Button handling with debounce -- single toggle button (BUTTON_1/
+     * PA15): one press-release cycle either starts or stops the charge
+     * cycle, decided by the controller's own state at the moment of the
+     * debounced rising edge, not by which physical button was pressed.
+     * Confirmed with user 2026-08-29: hardware only needs 1 button for
+     * this (BUTTON_2/PD2 dropped from this flow, BSP_BTN_STOP left intact
+     * in bsp_gpio.c/.h in case it's repurposed later).
+     *   IDLE / READY -> Start.
+     *   RUNNING      -> Stop.
+     *   FAULT        -> Stop (ChargeController_Stop() already clears
+     *                   fault back to IDLE when called from FAULT --
+     *                   charge_controller.c -- so a press here reads as
+     *                   "acknowledge and reset").
+     *   STOPPING     -> ignored; transient state, no single safe action,
+     *                   let it settle to IDLE first. */
     {
         uint8_t start_raw = read_btn_start();
-        uint8_t stop_raw  = read_btn_stop();
 
         if (start_raw != btn_start_db) {
             btn_start_db = start_raw;
@@ -276,22 +288,24 @@ void App_Loop(void)
             if (btn_start_db != btn_start_prev) {
                 btn_start_prev = btn_start_db;
                 if (btn_start_prev) {
-                    LOG("App_Loop: START button pressed -> starting charge cycle\r\n");
-                    ChargeController_Start(CHARGE_CTRL_OWNER_DWIN, false, now);
-                }
-            }
-        }
-
-        if (stop_raw != btn_stop_db) {
-            btn_stop_db = stop_raw;
-            btn_stop_last = now;
-        }
-        if ((now - btn_stop_last) > APP_BTN_DEBOUNCE_MS) {
-            if (btn_stop_db != btn_stop_prev) {
-                btn_stop_prev = btn_stop_db;
-                if (btn_stop_prev) {
-                    LOG("App_Loop: STOP button pressed -> stopping charge cycle\r\n");
-                    ChargeController_Stop(now);
+                    ChargeCtrlView_t btn_view;
+                    ChargeController_GetView(&btn_view);
+                    switch (btn_view.state) {
+                        case CHARGE_CTRL_STATE_IDLE:
+                        case CHARGE_CTRL_STATE_READY:
+                            LOG("App_Loop: button pressed (IDLE/READY) -> starting charge cycle\r\n");
+                            ChargeController_Start(CHARGE_CTRL_OWNER_DWIN, false, now);
+                            break;
+                        case CHARGE_CTRL_STATE_RUNNING:
+                        case CHARGE_CTRL_STATE_FAULT:
+                            LOG("App_Loop: button pressed (RUNNING/FAULT) -> stopping charge cycle\r\n");
+                            ChargeController_Stop(now);
+                            break;
+                        case CHARGE_CTRL_STATE_STOPPING:
+                        default:
+                            /* Transient -- ignore this press, let it settle. */
+                            break;
+                    }
                 }
             }
         }
