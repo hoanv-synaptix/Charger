@@ -509,21 +509,27 @@ void BMS_GetView(BMS_View_t *view)
 
 bool BMS_ShouldCloseChargeRelay(void)
 {
+    /* BUGFIX 2026-08-29: this used to also require snap.charge_relay_closed
+     * (BmsSwSta's charge_sta bit, the BMS's own self-reported internal
+     * charge-relay status) to be true. Confirmed on real hardware: even
+     * after ChargeController's update_bms_charge_allow() correctly sends
+     * Ctrl_INFO chg_sw=1 (per FR-BMS-06) the whole time RUNNING, this BMS
+     * unit's charge_sta bit stayed Open indefinitely -- it does not close
+     * its own relay in response to our request in this deployment, so
+     * gating our relay on it permanently blocked charging regardless of
+     * module/pack voltage. We do not control the BMS's own internal relay
+     * in practice; charge_relay_closed stays in BMS_View_t for display/
+     * monitoring only (debug_app's Monitor tab), it is not a precondition
+     * here anymore. Note: this gate was never actually exercised by any
+     * simulator before this fix either -- both test/host_charge_sim/
+     * sim_bms.c and the live HIL simulator's bms_relay_allow default to
+     * a fixed `true`, independent of what chg_sw we send, so no test had
+     * ever proven this bit would follow our request. */
     if (!BMS_IsOnline()) {
         return false;
     }
 
     if (BMS_HasCriticalAlarm()) {
-        return false;
-    }
-
-    BMS_View_t snap;
-    BSP_EnterCritical();
-    snap = *(BMS_View_t *)&g_bms_view;
-    BSP_ExitCritical();
-
-    /* Charge relay in BMS must be closed */
-    if (!snap.charge_relay_closed) {
         return false;
     }
 

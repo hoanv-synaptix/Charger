@@ -403,6 +403,26 @@ Mới: min_voltage(module) < BmsView.batt_voltage × 90% →  chưa đóng relay
 
 Verification loop đầy đủ (`-fsyntax-only`, `check_architecture.py`, `check_ioc.py`, `test_logic.c`, Release build RAM 13.95%/FLASH 53.21%) đều sạch.
 
+## 8f. B-24 vẫn không đóng sau fix §8e -- bỏ hẳn gate `charge_relay_closed` (2026-08-29)
+
+Sau fix §8e (ngưỡng 90% so với `BmsView.batt_voltage`), người dùng test lại trên hardware thật, xác nhận qua ảnh chụp Monitor tab thật: điện áp module (52.80V) đã vượt 90% điện áp pack BMS báo (53.20V, ~99.2%) — điều kiện điện áp **đã thỏa** — nhưng relay MCU vẫn không đóng. Field **Charge Relay** trên panel BMS Overview hiện **Open**, đứng yên kể cả để chạy lâu.
+
+**Root cause**: `BMS_ShouldCloseChargeRelay()` (`bms_core.c`) còn 1 điều kiện thứ 3 chưa đụng tới: đòi `snap.charge_relay_closed` (bit `charge_sta` BMS tự báo qua `BmsSwSta`) phải = true. Dù đã fix `BMS_SendCtrlInfo()` (§8d) gửi đúng `chg_sw=1` suốt lúc RUNNING, bit này trên BMS thật **không bao giờ tự đóng** — xác nhận: **mình không thực sự điều khiển được relay nội bộ của BMS trong triển khai thực tế này**, nó tự quyết theo logic riêng, không theo lệnh `chg_sw`.
+
+**Phát hiện thêm khi rà lại mô phỏng theo yêu cầu người dùng** ("hôm qua mô phỏng có vẻ chúng ta đã điều khiển relay bms, check lại"): cả 2 nơi mô phỏng trước giờ đều **hardcode** field này thành `true` mặc định, hoàn toàn độc lập với `chg_sw` firmware gửi đi:
+- `test/host_charge_sim/sim_bms.c:26`: `b->bms_relay_allow = true;` (mặc định "BMS khỏe mạnh", chỉ đổi khi 1 test cụ thể tự set `false` để test path lỗi).
+- `live_test_sim.py`/`integration_sync_test.py`'s `BmsSim.send_bms_sw_sta()`: đọc từ `control.json`'s `bms_relay_allow`, cũng là field cố định set tay.
+
+→ Không có test/mô phỏng nào trước giờ THẬT SỰ kiểm chứng "gửi `chg_sw=1` có khiến bit `charge_sta` bật lên hay không" — luôn pass vì giả lập "dễ tính", tạo cảm giác sai là loop này đã đóng kín. Hardware thật lần này mới lộ ra: không hề đóng kín.
+
+**Fix, xác nhận trực tiếp với người dùng** ("chúng ta sẽ điều khiển relay trên mạch mà k cần liên quan đến relay bms nữa"): bỏ hẳn điều kiện `charge_relay_closed` khỏi `BMS_ShouldCloseChargeRelay()`, chỉ còn giữ `BMS_IsOnline()` và `BMS_HasCriticalAlarm()`. Field `charge_relay_closed` vẫn giữ nguyên trong `BMS_View_t` (chỉ để hiển thị/theo dõi trên Monitor tab của `debug_app`), không còn dùng để gate quyết định đóng relay của MCU nữa.
+
+**File sửa**: `Modules/bms/bms_core.c` (`BMS_ShouldCloseChargeRelay()`), `App/Charge/charge_controller.c` (cập nhật doc-comment `update_relay_decision()`), `test/host_charge_sim/test_charge_e2e.c` (`test_relay_bms_mode`'s đoạn test cuối đổi từ "relay phải mở khi `bms_relay_allow=false`" sang "relay phải KHÔNG bị ảnh hưởng bởi field này nữa").
+
+**Test**: Bracket rõ ràng — build với `bms_core.c` ở trạng thái trước fix (commit `ccc8bc9`) → `test_relay_bms_mode` FAIL đúng dòng assert mới; build với fix → PASS toàn bộ 24/24. Verification loop đầy đủ (`-fsyntax-only` cả `bms_core.c` lẫn `charge_controller.c`, `check_architecture.py`, `check_ioc.py`, `test_logic.c`, Release build RAM 13.95%/FLASH 53.20%) đều sạch.
+
+**Bài học quy trình**: cả host-sim lẫn live HIL simulator cần một scenario riêng test đúng "BMS chỉ đóng relay nội bộ SAU khi thấy `chg_sw=1`" (thay vì hardcode `true`) nếu sau này có nhu cầu verify lại loop tương tự cho tín hiệu CAN khác — ghi chú lại đây để không lặp lại lỗ hổng kiểm thử tương tự.
+
 ## 9. Phụ lục — File tham chiếu & Guard Checklist
 
 ### 9.1 File cần sửa theo Sprint

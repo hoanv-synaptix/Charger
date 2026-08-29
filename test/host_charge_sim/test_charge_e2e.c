@@ -407,13 +407,17 @@ static bool test_relay_bms_mode(void)
     ASSERT(cv.relay_should_close == 1, "relay must stay closed when voltage sags after latching -- not a re-open trigger");
     ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "still RUNNING, this is normal charging behaviour");
 
-    /* BMS's own relay-allow flag (BmsSwSta) goes false while voltage is low
-     * (post-sag) and the controller is otherwise still RUNNING -- this IS a
-     * fault and must open the relay even though it's latched closed. */
+    /* BUGFIX 2026-08-29: BMS's own relay-allow flag (BmsSwSta charge_sta,
+     * mirrored here by g_sim_bms.bms_relay_allow) is no longer a gating
+     * condition -- BMS_ShouldCloseChargeRelay() dropped this check
+     * (confirmed on real hardware: this BMS unit never closes its own
+     * relay in response to our Ctrl_INFO request, so requiring it would
+     * permanently block ours). Flipping it false must have NO effect on
+     * our relay now. */
     g_sim_bms.bms_relay_allow = false;
     drive_ms(700U); /* BmsSwSta resend interval is 500ms */
     ChargeController_GetView(&cv);
-    ASSERT(cv.relay_should_close == 0, "relay must open when BMS reports its relay-allow flag false, even while latched");
+    ASSERT(cv.relay_should_close == 1, "BMS's own relay-allow flag must no longer gate our relay -- we don't control it in practice");
     ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "a false BMS relay-allow flag alone must not fault the whole cycle");
 
     printf("[PASS] test_relay_bms_mode\n");

@@ -224,13 +224,21 @@ static uint8_t get_active_module_count(void) {
  *             applies in every charge_source_mode.
  *          2. Only when charge_source_mode is BMS-Controlled: the BMS
  *             itself stops confirming it's safe (BMS_ShouldCloseChargeRelay()
- *             goes false -- offline, critical alarm, or its own relay-allow
- *             flag). Checked every tick even while latched closed, since a
- *             live BMS-reported fault mid-charge must open the relay
- *             immediately. Standalone (no-BMS) mode never checks this: the
- *             system may have no BMS physically installed in that mode, so
- *             requiring BMS_IsOnline() would mean the relay could never
- *             close at all.
+ *             goes false -- offline or critical alarm). Checked every
+ *             tick even while latched closed, since a live BMS-reported
+ *             fault mid-charge must open the relay immediately.
+ *             BUGFIX 2026-08-29: BMS_ShouldCloseChargeRelay() used to
+ *             also require the BMS's own self-reported internal
+ *             charge-relay status (BmsSwSta charge_sta bit) to read
+ *             closed -- removed, confirmed on real hardware that this
+ *             BMS unit never closes its own relay in response to our
+ *             Ctrl_INFO request, permanently blocking ours regardless of
+ *             voltage; we do not actually control the BMS's own relay in
+ *             this deployment (see bms_core.c). Standalone (no-BMS) mode
+ *             never checks any of this: the system may have no BMS
+ *             physically installed in that mode, so requiring
+ *             BMS_IsOnline() would mean the relay could never close at
+ *             all.
  *        Falling back below 90% target voltage is explicitly NOT a fault
  *        once latched -- by design, per product decision.
  *
