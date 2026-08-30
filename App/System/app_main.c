@@ -76,7 +76,7 @@ static uint8_t read_btn_start(void) { return BSP_BTN_IsPressed(BSP_BTN_START) ? 
  * Policy lives here in the composition root, not in Modules/hmi (which does
  * pure framing). The dashboard centre element is one status-box Variable
  * Icon (VP_SYS_STATUS_ICON, 6 states) plus one button-label Variable Icon
- * (VP_SYS_BTN_MODE, 4 modes). Neither is a safety interlock -- the relay /
+ * (VP_SYS_BUTTON, 4 modes). Neither is a safety interlock -- the relay /
  * charge-control logic reads fault_flags/state directly. */
 
 static uint16_t dwin_status_from_state(const ChargeCtrlView_t *cc,
@@ -131,26 +131,44 @@ static uint16_t dwin_btn_mode_from_status(uint16_t status_icon)
     }
 }
 
-/* Shared by the physical BUTTON_1/PA15 handler and the DWIN action button:
- * one press either starts, stops or acknowledges, decided by controller
- * state -- NOT by which surface the press came from. See the PA15 comment
- * block in App_Loop for the per-state rationale. */
-static void app_action_button(ChargeCtrlState_t state, uint32_t now)
+/* Current DWIN status (0..5) -- the single source of truth for what the
+ * button means, since it distinguishes COMPLETE (IDLE + target reached)
+ * from a plain IDLE/READY. */
+static uint16_t dwin_current_status(void)
 {
-    switch (state) {
-        case CHARGE_CTRL_STATE_IDLE:
-        case CHARGE_CTRL_STATE_READY:
-            LOG("App: action button (IDLE/READY) -> start charge cycle\r\n");
+    ChargeCtrlView_t v;
+    CHG_LIB_SystemSummary_t s;
+    ChargeController_GetView(&v);
+    CHG_LIB_GetSystemSummary(&s);
+    return dwin_status_from_state(&v, &s);
+}
+
+/* Shared by the physical BUTTON_1/PA15 handler and the DWIN screen button:
+ * one press starts / stops / acknowledges, decided by the state the button
+ * is currently showing -- NOT by which surface the press came from. */
+static void app_action_button(uint16_t dwin_status, uint32_t now)
+{
+    switch (dwin_status) {
+        case DWIN_STATUS_READY:
+            LOG("App: button (READY) -> start charge cycle\r\n");
             ChargeController_Start(CHARGE_CTRL_OWNER_DWIN, false, now);
             break;
-        case CHARGE_CTRL_STATE_RUNNING:
-        case CHARGE_CTRL_STATE_FAULT:
-            LOG("App: action button (RUNNING/FAULT) -> stop charge cycle\r\n");
+        case DWIN_STATUS_STARTING:
+        case DWIN_STATUS_CHARGING:
+            LOG("App: button (STARTING/CHARGING) -> stop charge cycle\r\n");
             ChargeController_Stop(now);
             break;
-        case CHARGE_CTRL_STATE_STOPPING:
+        case DWIN_STATUS_ERROR:
+            LOG("App: button (ERROR) -> clear fault\r\n");
+            ChargeController_Stop(now);   /* from FAULT: clears fault -> IDLE */
+            break;
+        case DWIN_STATUS_COMPLETE:
+            LOG("App: button (COMPLETE) -> acknowledge, back to READY\r\n");
+            ChargeController_AcknowledgeCompletion();
+            break;
+        case DWIN_STATUS_OFFLINE:
         default:
-            /* Transient -- ignore, let it settle to IDLE first. */
+            /* button is DISABLED / transient -- ignore */
             break;
     }
 }
@@ -311,20 +329,13 @@ void App_Loop(void)
     }
 
     /* (2) Button handling with debounce -- single toggle button (BUTTON_1/
-     * PA15): one press-release cycle either starts or stops the charge
-     * cycle, decided by the controller's own state at the moment of the
-     * debounced rising edge, not by which physical button was pressed.
+     * PA15): one press-release cycle acts on the debounced rising edge,
+     * decided by the status the button is currently showing (see
+     * app_action_button()), not by which physical button was pressed.
+     * Shares that logic with the DWIN screen button (DWIN_OnActionButton).
      * Confirmed with user 2026-08-29: hardware only needs 1 button for
      * this (BUTTON_2/PD2 dropped from this flow, BSP_BTN_STOP left intact
-     * in bsp_gpio.c/.h in case it's repurposed later).
-     *   IDLE / READY -> Start.
-     *   RUNNING      -> Stop.
-     *   FAULT        -> Stop (ChargeController_Stop() already clears
-     *                   fault back to IDLE when called from FAULT --
-     *                   charge_controller.c -- so a press here reads as
-     *                   "acknowledge and reset").
-     *   STOPPING     -> ignored; transient state, no single safe action,
-     *                   let it settle to IDLE first. */
+     * in bsp_gpio.c/.h in case it's repurposed later). */
     {
         uint8_t start_raw = read_btn_start();
 
@@ -336,9 +347,7 @@ void App_Loop(void)
             if (btn_start_db != btn_start_prev) {
                 btn_start_prev = btn_start_db;
                 if (btn_start_prev) {
-                    ChargeCtrlView_t btn_view;
-                    ChargeController_GetView(&btn_view);
-                    app_action_button(btn_view.state, now);
+                    app_action_button(dwin_current_status(), now);
                 }
             }
         }
@@ -467,15 +476,23 @@ void App_Loop(void)
     MX_IWDG_Refresh();
 }
 
-/* The DGUS action button is a single fixed-value Return-Key-Code control, so
- * `keyval` only tells us the button was pressed -- app_action_button() then
- * decides start/stop/reset from ChargeController state, exactly like the
- * physical PA15 button. */
+/* The DGUS button uploads a fixed keycode on VP 0x1043; `keyval` only means
+ * "pressed". app_action_button() decides what to do from the status the
+ * button is currently showing, same as the physical PA15 button.
+ * The panel's upload also overwrote 0x1043 with the keycode, so re-write the
+ * correct label icon afterwards (the periodic diff-write in DWIN_UpdateData
+ * would not if the press did not change state -- e.g. a rejected Start). */
 void DWIN_OnActionButton(uint16_t keyval)
 {
-    ChargeCtrlView_t v;
-    ChargeController_GetView(&v);
-    LOG("DWIN: action button keyval=%u (state=%d)\r\n",
-        (unsigned)keyval, (int)v.state);
-    app_action_button(v.state, BSP_GetTick());
+    uint32_t now = BSP_GetTick();
+    uint16_t status = dwin_current_status();
+
+    LOG("DWIN: button press (keyval=%u status=%u)\r\n",
+        (unsigned)keyval, (unsigned)status);
+    app_action_button(status, now);
+
+    {
+        uint16_t btn = dwin_btn_mode_from_status(dwin_current_status());
+        DWIN_SendWords(VP_SYS_BUTTON, &btn, 1);
+    }
 }

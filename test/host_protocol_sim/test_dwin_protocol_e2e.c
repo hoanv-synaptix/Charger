@@ -169,22 +169,22 @@ static bool test_set_page_diff_suppressed(void)
     return true;
 }
 
-static bool test_parse_rx_dispatches_and_clears(void)
+static bool test_parse_rx_dispatches(void)
 {
-    printf("Running test_parse_rx_dispatches_and_clears...\n");
+    printf("Running test_parse_rx_dispatches...\n");
     reset_capture();
 
     uint8_t f[9];
-    build_touch_frame(f, VP_SYS_ACTION_BTN, 1);
+    build_touch_frame(f, VP_SYS_BUTTON, 1);
     DWIN_ParseRX(f, sizeof(f));
 
     ASSERT(g_action_count == 1, "one valid touch frame -> one dispatch");
     ASSERT(g_last_keyval == 1, "keyval passed through");
-    ASSERT(g_tx_count == 1, "parser writes 0 back to clear VP_SYS_ACTION_BTN");
-    ASSERT((((uint16_t)g_tx[0][4] << 8) | g_tx[0][5]) == VP_SYS_ACTION_BTN, "clear targets 0x1042");
-    ASSERT(g_tx[0][6] == 0x00 && g_tx[0][7] == 0x00, "clear value is 0");
+    /* The parser itself sends nothing -- the app-side override restores the
+     * button-label icon (not exercised by this test's weak override). */
+    ASSERT(g_tx_count == 0, "parser emits no frame of its own");
 
-    printf("[PASS] test_parse_rx_dispatches_and_clears\n");
+    printf("[PASS] test_parse_rx_dispatches\n");
     return true;
 }
 
@@ -194,7 +194,7 @@ static bool test_parse_rx_byte_by_byte(void)
     reset_capture();
 
     uint8_t f[9];
-    build_touch_frame(f, VP_SYS_ACTION_BTN, 2);
+    build_touch_frame(f, VP_SYS_BUTTON, 2);
     for (uint16_t i = 0; i < sizeof(f); i++) {
         DWIN_ParseRX(&f[i], 1);
     }
@@ -212,7 +212,7 @@ static bool test_parse_rx_ignores_zero_and_other_vp(void)
     reset_capture();
 
     uint8_t f[9];
-    build_touch_frame(f, VP_SYS_ACTION_BTN, 0); /* keyval 0 = nothing pressed */
+    build_touch_frame(f, VP_SYS_BUTTON, 0); /* keyval 0 = nothing pressed */
     DWIN_ParseRX(f, sizeof(f));
     ASSERT(g_action_count == 0 && g_tx_count == 0, "keyval 0 -> no dispatch, no clear");
 
@@ -230,7 +230,7 @@ static bool test_parse_rx_resyncs_on_stray_header1(void)
     reset_capture();
 
     uint8_t good[9];
-    build_touch_frame(good, VP_SYS_ACTION_BTN, 3);
+    build_touch_frame(good, VP_SYS_BUTTON, 3);
 
     uint8_t stream[16];
     uint16_t n = 0;
@@ -257,7 +257,7 @@ static bool test_parse_rx_rejects_oversized_length(void)
     DWIN_ParseRX(bad, sizeof(bad));
 
     uint8_t good[9];
-    build_touch_frame(good, VP_SYS_ACTION_BTN, 4);
+    build_touch_frame(good, VP_SYS_BUTTON, 4);
     DWIN_ParseRX(good, sizeof(good));
 
     ASSERT(g_action_count == 1, "parser recovers after an oversized LEN, not wedged");
@@ -323,7 +323,7 @@ static bool test_update_data_scatter(void)
         else if (vp == VP_AC_PHASE_L1)    seen |= 1u << 3;
         else if (vp == VP_TEMP_BATTERY)   seen |= 1u << 4;
         else if (vp == VP_SOC_VALUE)      seen |= 1u << 5;
-        else if (vp == VP_SYS_BTN_MODE)   seen |= 1u << 6;
+        else if (vp == VP_SYS_BUTTON)   seen |= 1u << 6;
         else if (vp == VP_SET_UPTIME)     seen |= 1u << 7;
     }
     ASSERT(seen == 0xFF, "forced refresh re-sends all 8 field groups");
@@ -353,7 +353,7 @@ int main(void)
     pass &= test_send_words_multi();
     pass &= test_send_string_pads_field();
     pass &= test_set_page_diff_suppressed();
-    pass &= test_parse_rx_dispatches_and_clears();
+    pass &= test_parse_rx_dispatches();
     pass &= test_parse_rx_byte_by_byte();
     pass &= test_parse_rx_ignores_zero_and_other_vp();
     pass &= test_parse_rx_resyncs_on_stray_header1();

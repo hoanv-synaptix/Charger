@@ -256,11 +256,11 @@ Quy ước độ ưu tiên: **M** = Must, **S** = Should, **C** = Could.
 
 | ID | Yêu cầu | ƯP |
 |---|---|---|
-| FR-HMI-01 | Giao thức DGUS-II (không CRC), header `A5 5A` (⚠ chuẩn DGUS là `5A A5` — dự án đổi theo yêu cầu 2026-08-30, xem `DWIN_HEADER_1/2`): `DWIN_SendWords()` ghi N word big-endian tới VP liên tiếp; `DWIN_SendString()` ghi field cố định pad 0x00; parse frame 0x83 nút nhấn VP `0x1042` → `DWIN_OnActionButton()` + ghi 0 clear | S |
+| FR-HMI-01 | Giao thức DGUS-II (không CRC), header `A5 5A` (⚠ chuẩn DGUS là `5A A5` — dự án đổi theo yêu cầu 2026-08-30, xem `DWIN_HEADER_1/2`): `DWIN_SendWords()` ghi N word big-endian tới VP liên tiếp; `DWIN_SendString()` ghi field cố định pad 0x00; parse frame 0x83 upload VP `0x1043` (bất kỳ giá trị ≠ 0) → `DWIN_OnActionButton()` | S |
 | FR-HMI-02 | RX ring-buffer ISR, drain `BSP_RS485_Read()`; re-arm sau lỗi UART; `DWIN_ParseRX()` state-machine byte-wise có resync | M |
 | FR-HMI-03 | Update dữ liệu HMI trong main loop 50ms: scatter 8 nhóm field (DC/battery/AC/temp/SOC+status/btn/uptime), diff-suppressed; chuỗi định danh + trang DASH gửi 1 lần sau khi panel boot | M |
-| FR-HMI-04 | Nút action DWIN (VP `0x1042`, 1 keycode cố định) → `app_action_button()` quyết Start/Stop/Reset theo state controller (owner=DWIN), giống nút PA15 | S |
-| FR-HMI-05 | `VP_SYS_STATUS_ICON 0x1041` (0..5) + `VP_SYS_BTN_MODE 0x1043` (0..3) do `dwin_status_from_state()` / `dwin_btn_mode_from_status()` dẫn xuất | S |
+| FR-HMI-04 | Nút DWIN = VP `0x1043` 2 chiều (keycode cố định). `app_action_button(dwin_status)` (dùng chung với nút PA15): READY→Start, STARTING/CHARGING→Stop, ERROR→Stop (xoá fault), **COMPLETE→`ChargeController_AcknowledgeCompletion()`** (về READY, không sạc lại), OFFLINE→bỏ qua. Sau khi xử lý, MCU ghi lại nhãn nút vào `0x1043` | S |
+| FR-HMI-05 | `VP_SYS_STATUS_ICON 0x1041` (0..5) + nhãn nút `VP_SYS_BUTTON 0x1043` (0..3) do `dwin_status_from_state()` / `dwin_btn_mode_from_status()` dẫn xuất; `0x1042` không dùng | S |
 | FR-HMI-06 | Bảng Alarm (VP `0x1200+`) — Phase 2, cần module event-log | C (chưa làm) |
 | FR-HMI-07 | RTC (`VP_SYS_RTC_SET 0x009C`): panel tự giữ giờ; `DWIN_SetRTC()` có sẵn nhưng chưa gọi (chờ `BSP_RTC`) | C (chưa làm) |
 
@@ -421,8 +421,8 @@ Frame RX được feed tới driver đang active qua `CHG_LIB_FeedCanFrame()`.
   | `0x1030/1/2` | temp battery / charge / jack | i16 signed 0.1°C (270 = 27.0; NTC rớt → 0) |
   | `0x1040` | SOC | u16 0–100% |
   | `0x1041` | status icon | 0 READY 1 STARTING 2 CHARGING 3 COMPLETE 4 ERROR 5 OFFLINE |
-  | `0x1042` | nút action (DWIN→MCU) | Return-Key-Code; MCU ghi 0 clear |
-  | `0x1043` | button mode icon | 0 START 1 STOP 2 RESET 3 DISABLED |
+  | `0x1042` | *không dùng* | (nút đã chuyển sang 0x1043) |
+  | `0x1043` | nút (2 chiều) | MCU→panel: nhãn 0 START 1 STOP 2 RESET 3 DISABLED · panel→MCU: keycode khi nhấn |
   | `0x1100/1108/1110` | HW ver / FW ver / Device ID | ASCII 8 VP / 16 ký tự |
   | `0x1118` | uptime | u32 (0x1118–19) giây |
   | `0x009C` | RTC set | *chưa dùng — panel tự giữ giờ* |

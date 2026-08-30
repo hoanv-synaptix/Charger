@@ -97,8 +97,9 @@ void DWIN_ForceFullRefresh(void);
 
 /**
  * @brief Feed raw RS485 RX bytes (whatever BSP_RS485_Read() returned).
- *        Parses 0x83 frames; on a non-zero VP_SYS_ACTION_BTN value it calls
- *        DWIN_OnActionButton() then writes 0 back to clear the VP.
+ *        Parses 0x83 frames; a non-zero upload of VP_SYS_BUTTON (0x1043)
+ *        is a button press -> DWIN_OnActionButton(). The override re-writes
+ *        the button-label icon on that VP, so no clear frame is sent here.
  */
 void DWIN_ParseRX(const uint8_t *buf, uint16_t len);
 
