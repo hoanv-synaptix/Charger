@@ -699,6 +699,56 @@ static bool test_relay_standalone_mode(void)
     return true;
 }
 
+/* ChargeController_AcknowledgeCompletion(): after a normal standalone finish
+ * (Vmax reached -> IDLE, stop_reason = VOLTAGE_REACHED), the HMI RESET press
+ * must clear only the completion marker -- state stays IDLE, and it is a
+ * no-op while still RUNNING. */
+static bool test_acknowledge_completion(void)
+{
+    printf("Running test_acknowledge_completion...\n");
+    ChargeCycleConfig_t cfg;
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_TONHE, &cfg), "setup failed");
+    cfg.charge_source_mode = CHARGE_SOURCE_STANDALONE_NO_BMS;
+    ASSERT(ChargeCycleConfig_Set(&cfg), "failed to reconfigure standalone mode");
+    g_sim_bms.transmitting = false;
+
+    ASSERT(warmup_and_start(1500U, 4000U), "module never reached RUNNING");
+
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "should be RUNNING");
+    float target = cv.target_voltage_v;
+
+    /* No-op while RUNNING. */
+    ChargeController_AcknowledgeCompletion();
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "ack must be a no-op while RUNNING");
+
+    /* Drive module voltage above Vmax and hold past the confirm window +
+     * one more Process() so STOPPING -> IDLE. */
+    g_sim_module.voltage = target * 1.05f;
+    drive_ms(1000U + 500U + 200U);
+
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_IDLE, "should be IDLE after Vmax reached");
+    ASSERT(cv.stop_reason == CHARGE_STOP_VOLTAGE_REACHED,
+           "stop_reason should be VOLTAGE_REACHED (the COMPLETE marker)");
+
+    /* Operator presses RESET on the "complete" screen. */
+    ChargeController_AcknowledgeCompletion();
+    ChargeController_GetView(&cv);
+    ASSERT(cv.stop_reason == CHARGE_STOP_NONE, "ack must clear the completion marker");
+    ASSERT(cv.state == CHARGE_CTRL_STATE_IDLE, "ack must not change state");
+
+    /* Idempotent / no-op when there is nothing to acknowledge. */
+    ChargeController_AcknowledgeCompletion();
+    ChargeController_GetView(&cv);
+    ASSERT(cv.stop_reason == CHARGE_STOP_NONE, "second ack is a harmless no-op");
+
+    printf("[PASS] test_acknowledge_completion\n");
+    return true;
+}
+
 /* Regression test for B-10: CHG_LIB_Process() used to service one module
  * per call via a round-robin index, so N modules took roughly N times as
  * long to reach RUNNING as a single module would (e.g. a 50ms retry
@@ -1097,6 +1147,7 @@ int main(void)
     pass &= test_relay_opens_immediately_on_emergency_stop();
     pass &= test_bms_ctrl_info_allow_charge_wired();
     pass &= test_relay_standalone_mode();
+    pass &= test_acknowledge_completion();
 
     pass &= test_multi_module_timing_budget();
 

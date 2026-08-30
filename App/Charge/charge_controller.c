@@ -1525,6 +1525,27 @@ bool ChargeController_IsRunning(void) {
     return (g_ctrl.state == CHARGE_CTRL_STATE_RUNNING);
 }
 
+void ChargeController_AcknowledgeCompletion(void) {
+    /* Only meaningful once a normal finish has parked us at IDLE. Clearing
+     * the stop_reason marker is purely informational -- relay/fault/state
+     * are untouched -- so the HMI (dwin_status_from_state) and the PC view
+     * stop reporting COMPLETE and the button reverts to START. */
+    if (g_ctrl.state != CHARGE_CTRL_STATE_IDLE) {
+        return;
+    }
+    switch (g_ctrl.stop_reason) {
+        case CHARGE_STOP_VOLTAGE_REACHED:
+        case CHARGE_STOP_CELL_VOLTAGE_REACHED:
+        case CHARGE_STOP_SOC_REACHED:
+            /* owner is already NONE here (STOPPING->IDLE cleared it). */
+            g_ctrl.stop_reason = CHARGE_STOP_NONE;
+            LOG("CC: completion acknowledged -> READY\r\n");
+            break;
+        default:
+            break;
+    }
+}
+
 void ChargeController_GetView(ChargeCtrlView_t *view) {
     view->state = g_ctrl.state;
     view->running = ChargeController_IsRunning();

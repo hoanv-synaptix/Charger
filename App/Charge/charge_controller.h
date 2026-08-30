@@ -181,6 +181,17 @@ void ChargeController_EmergencyStop(uint32_t now_tick);
 bool ChargeController_IsRunning(void);
 
 /**
+ * @brief Operator dismissed the "charge complete" indication (HMI RESET
+ *        button while the screen shows COMPLETE). Clears the completion
+ *        marker (stop_reason) so the HMI/PC stop reporting COMPLETE and the
+ *        button falls back to START -- WITHOUT starting a new cycle.
+ * @note  Only acts when state is IDLE and stop_reason is one of the
+ *        "target reached" values; a no-op otherwise. Does not touch the
+ *        relay, fault flags, state or owner.
+ */
+void ChargeController_AcknowledgeCompletion(void);
+
+/**
  * @brief Get controller status view
  * @param view Pointer to view structure to fill
  */
