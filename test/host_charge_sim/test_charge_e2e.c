@@ -749,6 +749,105 @@ static bool test_acknowledge_completion(void)
     return true;
 }
 
+/* Setpoint ramp-up: the commanded current rises gradually toward the target
+ * (CHARGE_CTRL_CURRENT_RAMP_A_PER_S), it is not a step. Observed via
+ * GetView().applied_current_per_module_a (the sim reports a scripted module
+ * current regardless of the limit, so applied_* is the signal). */
+static bool test_current_ramp_up(void)
+{
+    printf("Running test_current_ramp_up...\n");
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_TONHE, NULL), "setup failed");
+    set_healthy_bms(400.0f, 50);
+    ASSERT(warmup_and_start(1500U, 4000U), "module never reached RUNNING");
+
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    float target_i = cv.target_current_per_module_a;
+    ASSERT(target_i > 40.0f, "scenario needs a meaningful target (~100A)");
+    ASSERT(cv.applied_current_per_module_a < 5.0f,
+           "current ramp starts from ~0, not a jump to target");
+
+    drive_ms(1000U);
+    ChargeController_GetView(&cv);
+    float i1 = cv.applied_current_per_module_a;
+    ASSERT(i1 > 12.0f && i1 < 28.0f, "after 1s: ~20 A/s ramp rate");
+    ASSERT(i1 < target_i - 5.0f, "still below target mid-ramp");
+
+    drive_ms(8000U);
+    ChargeController_GetView(&cv);
+    ASSERT(fabsf(cv.applied_current_per_module_a - target_i) < 1.0f,
+           "ramp reaches the full target");
+
+    printf("[PASS] test_current_ramp_up\n");
+    return true;
+}
+
+/* Voltage ramp: after the relay latches, the commanded voltage rises from
+ * the pack/Stage-1 voltage toward vmax_v gradually
+ * (CHARGE_CTRL_VOLTAGE_RAMP_V_PER_S), not a step. */
+static bool test_voltage_ramp_up(void)
+{
+    printf("Running test_voltage_ramp_up...\n");
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_MAXWELL, NULL), "setup failed");
+    set_healthy_bms(400.0f, 50);          /* pack 400V, cfg vmax 500V */
+    ASSERT(warmup_and_start(1500U, 4000U), "module never reached RUNNING");
+
+    /* Let the relay arm (sim module snaps to the commanded 400V). */
+    drive_ms(500U);
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.relay_should_close, "relay should have latched at ~90% pack V");
+    ASSERT(cv.target_voltage_v > 490.0f, "post-latch target is vmax_v (~500V)");
+    ASSERT(cv.applied_voltage_v < 460.0f,
+           "commanded voltage has NOT jumped straight to vmax");
+
+    float v0 = cv.applied_voltage_v;
+    drive_ms(2000U);
+    ChargeController_GetView(&cv);
+    float v1 = cv.applied_voltage_v;
+    ASSERT(v1 > v0 + 5.0f && v1 < cv.target_voltage_v,
+           "voltage climbs in steps toward vmax, ~5 V/s");
+
+    drive_ms(25000U);
+    ChargeController_GetView(&cv);
+    ASSERT(fabsf(cv.applied_voltage_v - cv.target_voltage_v) < 1.0f,
+           "voltage ramp reaches vmax");
+
+    printf("[PASS] test_voltage_ramp_up\n");
+    return true;
+}
+
+/* A DECREASE in the target (derating / lower manual setpoint) is applied
+ * immediately -- the ramp only rate-limits the rise. */
+static bool test_ramp_down_immediate(void)
+{
+    printf("Running test_ramp_down_immediate...\n");
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_TONHE, NULL), "setup failed");
+    set_healthy_bms(400.0f, 50);
+
+    drive_ms(1500U);
+    ChargeController_SetManualTarget(400.0f, 100.0f);
+    ASSERT(ChargeController_Start(CHARGE_CTRL_OWNER_PC, true, mock_tick),
+           "manual start refused");
+    drive_ms(600U);   /* reach RUNNING */
+
+    drive_ms(3000U);  /* current ramps ~0 -> ~60A */
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.applied_current_per_module_a > 40.0f &&
+           cv.applied_current_per_module_a < 90.0f, "mid-ramp, ~60A");
+
+    /* Operator lowers the manual current. */
+    ChargeController_SetManualTarget(400.0f, 25.0f);
+    drive_step(20U);  /* one control cycle */
+    ChargeController_GetView(&cv);
+    ASSERT(fabsf(cv.applied_current_per_module_a - 25.0f) < 3.0f,
+           "decrease takes effect within one cycle, not rate-limited");
+
+    printf("[PASS] test_ramp_down_immediate\n");
+    return true;
+}
+
 /* Regression test for B-10: CHG_LIB_Process() used to service one module
  * per call via a round-robin index, so N modules took roughly N times as
  * long to reach RUNNING as a single module would (e.g. a 50ms retry
@@ -1016,6 +1115,11 @@ static bool test_rated_current_seeded_from_config(void)
 
     ASSERT(warmup_and_start(1500U, 4000U), "module never reached RUNNING");
 
+    /* The current setpoint now ramps 0 -> target at CHARGE_CTRL_CURRENT_RAMP_
+     * A_PER_S; drive past a full 100A / 20A-per-s ramp (+margin) so the
+     * final commanded ratio is the config value, not a mid-ramp fraction. */
+    drive_ms(8000U);
+
     ChargeCtrlView_t cv;
     ChargeController_GetView(&cv);
     float expected_ratio = cv.target_current_per_module_a / cfg.module_i_max_a;
@@ -1148,6 +1252,9 @@ int main(void)
     pass &= test_bms_ctrl_info_allow_charge_wired();
     pass &= test_relay_standalone_mode();
     pass &= test_acknowledge_completion();
+    pass &= test_current_ramp_up();
+    pass &= test_voltage_ramp_up();
+    pass &= test_ramp_down_immediate();
 
     pass &= test_multi_module_timing_budget();
 

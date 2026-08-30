@@ -34,6 +34,21 @@
 #define RELAY_OPEN_CURRENT_THRESHOLD_A               1.0f
 #define RELAY_OPEN_TIMEOUT_MS                        3000U
 
+/* Setpoint ramp-up (2026-08-30): rate-limit the RISE of the commanded
+ * voltage/current toward the target, to soften the current onset at relay
+ * closure and protect the connector/cable/contactor. Applies to all charge
+ * modes (user-confirmed). Decreases (derating, protective clamp) are always
+ * immediate; emergency/fault ramp-down is handled by stop_charging() /
+ * update_relay_decision(), not the ramp. Rates are STARTING VALUES pending a
+ * clamp-meter/scope check on the real DC bus -- same "open timing constant"
+ * caveat as RELAY_OPEN_TIMEOUT_MS / RS485 TX timeout / POWER_EN delay
+ * (CLAUDE.md sec 6). Not the module's job: TonHe V1.3 (and the other vendor
+ * protocols) specify no ramp rate; the module runs its own internal
+ * soft-start. */
+#define CHARGE_CTRL_RAMP_STEP_MS                     100U
+#define CHARGE_CTRL_VOLTAGE_RAMP_V_PER_S             5.0f
+#define CHARGE_CTRL_CURRENT_RAMP_A_PER_S             20.0f  /* per module */
+
 /* ============== Private State ============== */
 
 static struct {
@@ -97,6 +112,9 @@ static struct {
     /* Standalone voltage-completion confirmation timer */
     uint32_t standalone_vmax_reached_tick;
 
+    /* Setpoint ramp: last tick a ramp step was taken (see apply_charge_targets). */
+    uint32_t ramp_tick;
+
     /* Jack/connector temperature, in degrees C, supplied by the composition
      * root (App_Loop) once per control cycle via ChargeController_SetJackTempC().
      * Pure charging policy must not read BSP_ADC directly (AGENTS.md sec 5-6). */
@@ -153,7 +171,7 @@ static void update_bms_charge_allow(void);
 static void transition_to(ChargeCtrlState_t new_state, uint32_t now);
 static uint8_t get_active_module_count(void);
 static bool check_preconditions_set_fault(uint32_t now);
-static void apply_charge_targets(void);
+static void apply_charge_targets(uint32_t now_tick);
 static void stop_charging(void);
 
 /* Stage evaluation */
@@ -531,29 +549,76 @@ static bool check_preconditions_set_fault(uint32_t now) {
     return true;
 }
 
-static void apply_charge_targets(void) {
+/* Move `cur` toward `tgt`: a RISE is capped at `max_up` per call, a DROP is
+ * applied immediately. */
+static float ramp_value(float cur, float tgt, float max_up) {
+    if (tgt <= cur) {
+        return tgt;
+    }
+    float next = cur + max_up;
+    return (next < tgt) ? next : tgt;
+}
+
+static void apply_charge_targets(uint32_t now_tick) {
     bool should_run = (g_ctrl.target_current_total_a > 0.0f && !g_ctrl.inhibit);
 
     if (should_run && !g_ctrl.last_running) {
-        /* Force apply on start */
-        CHG_LIB_SetVoltageAll(g_ctrl.target_voltage_v);
-        CHG_LIB_SetCurrentLimitAll(g_ctrl.target_current_per_module_a);
+        /* Charge start. Snap the voltage to target -- pre-latch this is the
+         * pack/Stage-1 voltage (BMS mode) or vmax (standalone/manual), and
+         * the module is unloaded (relay open), so a snap is safe and lets
+         * the relay arm normally. Start the CURRENT ramp from zero: that is
+         * the inrush-critical one, and while the relay is still open no
+         * current flows regardless, so the ramp is "pre-charged" and softens
+         * the onset once the relay latches. */
+        g_ctrl.applied_voltage_v = g_ctrl.target_voltage_v;
+        g_ctrl.applied_current_per_module_a = 0.0f;
+        g_ctrl.ramp_tick = now_tick;
+
+        CHG_LIB_SetVoltageAll(g_ctrl.applied_voltage_v);
+        CHG_LIB_SetCurrentLimitAll(0.0f);
         CHG_LIB_StartAll();
-        
+
         int v_int = (int)(g_ctrl.target_voltage_v * 10.0f);
         int i_int = (int)(g_ctrl.target_current_per_module_a * 10.0f);
-        LOG("CC: Start V=%d.%dV I=%d.%dA/mod\r\n",
+        LOG("CC: Start V=%d.%dV I=%d.%dA/mod (ramping)\r\n",
             v_int / 10, v_int % 10, i_int / 10, i_int % 10);
     } else if (should_run) {
-        /* Only send if changed */
-        if (g_ctrl.target_voltage_v != g_ctrl.applied_voltage_v) {
-            CHG_LIB_SetVoltageAll(g_ctrl.target_voltage_v);
+        /* A DROP in target (soft derating / protective clamp) takes effect
+         * immediately -- must not wait up to RAMP_STEP_MS. Hard faults use a
+         * separate path (stop_charging). */
+        if (g_ctrl.target_voltage_v < g_ctrl.applied_voltage_v) {
+            g_ctrl.applied_voltage_v = g_ctrl.target_voltage_v;
+            CHG_LIB_SetVoltageAll(g_ctrl.applied_voltage_v);
         }
-        if (g_ctrl.target_current_per_module_a != g_ctrl.applied_current_per_module_a) {
-            CHG_LIB_SetCurrentLimitAll(g_ctrl.target_current_per_module_a);
+        if (g_ctrl.target_current_per_module_a < g_ctrl.applied_current_per_module_a) {
+            g_ctrl.applied_current_per_module_a = g_ctrl.target_current_per_module_a;
+            CHG_LIB_SetCurrentLimitAll(g_ctrl.applied_current_per_module_a);
+        }
+
+        /* Rate-limited RISE, one step per RAMP_STEP_MS (bounds CAN traffic). */
+        if ((now_tick - g_ctrl.ramp_tick) >= CHARGE_CTRL_RAMP_STEP_MS) {
+            g_ctrl.ramp_tick = now_tick;
+
+            float step_s = (float)CHARGE_CTRL_RAMP_STEP_MS / 1000.0f;
+            float new_v = ramp_value(g_ctrl.applied_voltage_v, g_ctrl.target_voltage_v,
+                                     CHARGE_CTRL_VOLTAGE_RAMP_V_PER_S * step_s);
+            float new_i = ramp_value(g_ctrl.applied_current_per_module_a,
+                                     g_ctrl.target_current_per_module_a,
+                                     CHARGE_CTRL_CURRENT_RAMP_A_PER_S * step_s);
+
+            if (new_v != g_ctrl.applied_voltage_v) {
+                g_ctrl.applied_voltage_v = new_v;
+                CHG_LIB_SetVoltageAll(new_v);
+            }
+            if (new_i != g_ctrl.applied_current_per_module_a) {
+                g_ctrl.applied_current_per_module_a = new_i;
+                CHG_LIB_SetCurrentLimitAll(new_i);
+            }
         }
     } else if (!should_run && g_ctrl.last_running) {
         CHG_LIB_StopAll();
+        g_ctrl.applied_voltage_v = 0.0f;
+        g_ctrl.applied_current_per_module_a = 0.0f;
         if (g_ctrl.inhibit) {
             g_ctrl.stop_reason = CHARGE_STOP_STAGE_INHIBIT;
         }
@@ -561,8 +626,6 @@ static void apply_charge_targets(void) {
             g_ctrl.inhibit, g_ctrl.derating);
     }
 
-    g_ctrl.applied_voltage_v = g_ctrl.target_voltage_v;
-    g_ctrl.applied_current_per_module_a = g_ctrl.target_current_per_module_a;
     g_ctrl.last_running = should_run;
 }
 
@@ -574,6 +637,7 @@ static void stop_charging(void) {
     g_ctrl.applied_voltage_v = 0.0f;
     g_ctrl.applied_current_per_module_a = 0.0f;
     g_ctrl.standalone_vmax_reached_tick = 0;
+    g_ctrl.ramp_tick = 0;
     g_ctrl.last_running = 0;
 }
 
@@ -1063,8 +1127,6 @@ static void apply_jack_temp_derating(const ChargeCycleConfig_t *cfg, uint32_t no
  *        derating/staging is skipped.
  */
 static void run_manual_mode(uint32_t now_tick) {
-    (void)now_tick;
-
     ChargeCycleConfig_t cfg;
     ChargeCycleConfig_Get(&cfg);
 
@@ -1097,12 +1159,10 @@ static void run_manual_mode(uint32_t now_tick) {
             v_int / 10, v_int % 10, i_int / 10, i_int % 10);
     }
 
-    apply_charge_targets();
+    apply_charge_targets(now_tick);
 }
 
 static void run_standalone_mode(uint32_t now_tick) {
-    (void)now_tick;
-
     ChargeCycleConfig_t cfg;
     ChargeCycleConfig_Get(&cfg);
 
@@ -1152,7 +1212,7 @@ static void run_standalone_mode(uint32_t now_tick) {
             v_int / 10, v_int % 10, i_int / 10, i_int % 10);
     }
 
-    apply_charge_targets();
+    apply_charge_targets(now_tick);
 }
 
 static void run_bms_controlled_mode(uint32_t now_tick) {
@@ -1307,7 +1367,7 @@ static void run_bms_controlled_mode(uint32_t now_tick) {
 
     /* Note: No upward clamp to module_i_min_a */
 
-    apply_charge_targets();
+    apply_charge_targets(now_tick);
 }
 
 /* ============== Public API ============== */
