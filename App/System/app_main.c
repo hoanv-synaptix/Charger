@@ -39,6 +39,7 @@
 
 #include <string.h>
 #include <math.h>
+#include <stdio.h>
 
 /* ============== Private state ============== */
 
@@ -53,6 +54,9 @@ static uint32_t last_main_log     = 0;
 static uint32_t btn_start_last    = 0;
 static uint8_t  btn_start_prev    = 0;
 static uint8_t  btn_start_db      = 0;
+/* One-shot: identity strings + initial page pushed to the DWIN panel once
+ * it has had time to boot (the panel comes up slower than the MCU). */
+static bool     dwin_boot_sent    = false;
 
 /* ============== LED control ============== */
 
@@ -65,51 +69,88 @@ static void led_fault_off(void){ BSP_LED_Off(BSP_LED_FAULT); }
 
 static uint8_t read_btn_start(void) { return BSP_BTN_IsPressed(BSP_BTN_START) ? 1 : 0; }
 
-/* ============== DWIN fault code translation ============== */
+/* ============== DWIN state <-> screen icon mapping ==============
+ *
+ * Policy lives here in the composition root, not in Modules/hmi (which does
+ * pure framing). The dashboard centre element is one status-box Variable
+ * Icon (VP_SYS_STATUS_ICON, 6 states) plus one button-label Variable Icon
+ * (VP_SYS_BTN_MODE, 4 modes). Neither is a safety interlock -- the relay /
+ * charge-control logic reads fault_flags/state directly. */
 
-/**
- * @brief Translate the internal fault_flags bitmask into DWIN_FaultCode_e
- * @note  BUGFIX: this used to be `dwin_data.fault_code = cc_view.fault_flags`
- *        directly -- but fault_flags (charge_controller.h) is a uint32_t
- *        bitmask that can OR multiple CHARGE_CTRL_FAULT_* bits together
- *        (e.g. BMS_OFFLINE=(1<<3)=8, EMERGENCY_STOP=(1<<11)=2048), while
- *        DWIN_FaultCode_e (dwin_protocol.h) is a small sequential code
- *        0-7 matching one icon slot on the touchscreen ("Tương ứng với Bit
- *        Variable Icon ID trên DWIN 0.ICO"). Sending the raw bitmask meant
- *        the operator's fault icon showed a meaningless/wrong value during
- *        an actual fault.
- *        This mapping is a best-effort UX priority order (most
- *        safety-critical first), not a safety interlock itself -- the
- *        relay/charge-control logic reads fault_flags directly and is
- *        unaffected by this table. Revisit the exact bit->code grouping
- *        with whoever owns the DWIN icon set (ui/DWIN_SET/) if it doesn't
- *        match the intended on-screen meaning. */
-static uint16_t dwin_fault_code_from_flags(uint32_t flags)
+static uint16_t dwin_status_from_state(const ChargeCtrlView_t *cc,
+                                      const CHG_LIB_SystemSummary_t *sum)
 {
-    if (flags == 0U) {
-        return FAULT_NONE;
+    /* Fault first: any active fault flag or the FAULT state -> ERROR. */
+    if (cc->state == CHARGE_CTRL_STATE_FAULT ||
+        cc->fault_flags != CHARGE_CTRL_FAULT_NONE) {
+        return DWIN_STATUS_ERROR;
     }
-    if (flags & CHARGE_CTRL_FAULT_EMERGENCY_STOP) {
-        return FAULT_HARDWARE;
+
+    switch (cc->state) {
+        case CHARGE_CTRL_STATE_RUNNING:
+            /* relay latched closed == real current is flowing */
+            return cc->relay_should_close ? DWIN_STATUS_CHARGING
+                                          : DWIN_STATUS_STARTING;
+        case CHARGE_CTRL_STATE_READY:
+            return DWIN_STATUS_STARTING;
+        case CHARGE_CTRL_STATE_STOPPING:
+            return DWIN_STATUS_CHARGING; /* transient, keep showing activity */
+        case CHARGE_CTRL_STATE_IDLE:
+        default:
+            break;
     }
-    if (flags & CHARGE_CTRL_FAULT_BMS_OFFLINE) {
-        return FAULT_BMS_OFFLINE;
+
+    /* IDLE: distinguish "finished a cycle" from "nothing to do" / "no HW". */
+    if (cc->stop_reason == CHARGE_STOP_VOLTAGE_REACHED ||
+        cc->stop_reason == CHARGE_STOP_CELL_VOLTAGE_REACHED ||
+        cc->stop_reason == CHARGE_STOP_SOC_REACHED) {
+        return DWIN_STATUS_COMPLETE;
     }
-    if (flags & (CHARGE_CTRL_FAULT_BMS_ALARM | CHARGE_CTRL_FAULT_PROTECT_JACK_V)) {
-        return FAULT_OVER_VOLT;
+    if (sum->modules_online == 0U) {
+        return DWIN_STATUS_OFFLINE;
     }
-    if (flags & CHARGE_CTRL_FAULT_PROTECT_JACK_TEMP) {
-        return FAULT_OVER_TEMP;
+    return DWIN_STATUS_READY;
+}
+
+static uint16_t dwin_btn_mode_from_status(uint16_t status_icon)
+{
+    switch (status_icon) {
+        case DWIN_STATUS_STARTING:
+        case DWIN_STATUS_CHARGING:
+            return DWIN_BTN_STOP;
+        case DWIN_STATUS_COMPLETE:
+        case DWIN_STATUS_ERROR:
+            return DWIN_BTN_RESET;
+        case DWIN_STATUS_OFFLINE:
+            return DWIN_BTN_DISABLED;
+        case DWIN_STATUS_READY:
+        default:
+            return DWIN_BTN_START;
     }
-    if (flags & (CHARGE_CTRL_FAULT_NO_MODULE | CHARGE_CTRL_FAULT_MODULE_COUNT_MISMATCH |
-                 CHARGE_CTRL_FAULT_NO_DRIVER)) {
-        return FAULT_CHARGER_OFFLINE;
+}
+
+/* Shared by the physical BUTTON_1/PA15 handler and the DWIN action button:
+ * one press either starts, stops or acknowledges, decided by controller
+ * state -- NOT by which surface the press came from. See the PA15 comment
+ * block in App_Loop for the per-state rationale. */
+static void app_action_button(ChargeCtrlState_t state, uint32_t now)
+{
+    switch (state) {
+        case CHARGE_CTRL_STATE_IDLE:
+        case CHARGE_CTRL_STATE_READY:
+            LOG("App: action button (IDLE/READY) -> start charge cycle\r\n");
+            ChargeController_Start(CHARGE_CTRL_OWNER_DWIN, false, now);
+            break;
+        case CHARGE_CTRL_STATE_RUNNING:
+        case CHARGE_CTRL_STATE_FAULT:
+            LOG("App: action button (RUNNING/FAULT) -> stop charge cycle\r\n");
+            ChargeController_Stop(now);
+            break;
+        case CHARGE_CTRL_STATE_STOPPING:
+        default:
+            /* Transient -- ignore, let it settle to IDLE first. */
+            break;
     }
-    /* Catch-all for anything without a dedicated DWIN code yet
-     * (INVALID_CONFIG, BMS_STALE, reserved bits, future fault types):
-     * still surface *something* is wrong rather than silently showing
-     * FAULT_NONE. */
-    return FAULT_HARDWARE;
 }
 
 /* ============== Init ============== */
@@ -290,22 +331,7 @@ void App_Loop(void)
                 if (btn_start_prev) {
                     ChargeCtrlView_t btn_view;
                     ChargeController_GetView(&btn_view);
-                    switch (btn_view.state) {
-                        case CHARGE_CTRL_STATE_IDLE:
-                        case CHARGE_CTRL_STATE_READY:
-                            LOG("App_Loop: button pressed (IDLE/READY) -> starting charge cycle\r\n");
-                            ChargeController_Start(CHARGE_CTRL_OWNER_DWIN, false, now);
-                            break;
-                        case CHARGE_CTRL_STATE_RUNNING:
-                        case CHARGE_CTRL_STATE_FAULT:
-                            LOG("App_Loop: button pressed (RUNNING/FAULT) -> stopping charge cycle\r\n");
-                            ChargeController_Stop(now);
-                            break;
-                        case CHARGE_CTRL_STATE_STOPPING:
-                        default:
-                            /* Transient -- ignore this press, let it settle. */
-                            break;
-                    }
+                    app_action_button(btn_view.state, now);
                 }
             }
         }
@@ -333,43 +359,96 @@ void App_Loop(void)
         }
     }
 
-    /* (4) DWIN Update */
-    if ((now - last_dwin_tick) >= 50) { // Call every 50ms (so all 12 frames take 600ms)
+    /* (4) DWIN HMI refresh -- one field group per 50ms tick (see
+     * DWIN_UpdateData scatter). RX is drained above, near the top of the
+     * loop. */
+    if ((now - last_dwin_tick) >= 50) {
         last_dwin_tick = now;
-        DWIN_SystemData_t dwin_data = {0};
-        
+
         ChargeCtrlView_t cc_view;
         ChargeController_GetView(&cc_view);
-        
-        dwin_data.sys_status = cc_view.state;
-        dwin_data.dc_volt_x10 = (uint16_t)(cc_view.applied_voltage_v * 10);
-        dwin_data.dc_curr_x10 = (uint16_t)(cc_view.applied_current_per_module_a * cc_view.actual_module_count * 10);
-        
+
+        CHG_LIB_SystemSummary_t sum;
+        CHG_LIB_GetSystemSummary(&sum);
+
         BMS_View_t bms;
         BMS_GetView(&bms);
-        if (bms.online) {
-            dwin_data.bat_soc = bms.soc;
-            dwin_data.bat_pack_v_x10 = (uint16_t)(bms.batt_voltage * 10);
-            dwin_data.bat_cell_v_x100 = (uint16_t)(bms.max_cell_volt / 10); // mV to x100
-            dwin_data.temp_bat = bms.max_cell_temp;
+
+        /* One-shot once the panel has booted: identity strings + land on the
+         * dashboard page (DWIN_SetPage self-suppresses, so this never fights
+         * the operator navigating to Setting/Alarm via the footer). */
+        if (!dwin_boot_sent && now > 3000U) {
+            char fw_str[16];
+            (void)snprintf(fw_str, sizeof(fw_str), "FW V%u.%u.%u",
+                           (unsigned)FW_VERSION_MAJOR, (unsigned)FW_VERSION_MINOR,
+                           (unsigned)FW_VERSION_PATCH);
+            DWIN_SendSettingStrings(ChargeCycleConfig_GetHwRev(), fw_str,
+                                    ChargeCycleConfig_GetDeviceId());
+            DWIN_SetPage(DWIN_PAGE_DASH);
+            dwin_boot_sent = true;
         }
-        
-        dwin_data.temp_charger = (int16_t)BSP_ADC_GetTempC(0);
-        dwin_data.fault_code = dwin_fault_code_from_flags(cc_view.fault_flags);
-        
-        DWIN_UpdateData(&dwin_data);
+
+        DWIN_SystemData_t dd;
+        memset(&dd, 0, sizeof(dd));
+
+        float amps = cc_view.applied_current_per_module_a *
+                     (float)cc_view.actual_module_count;
+        dd.dc_voltage_x10 = (uint16_t)(cc_view.applied_voltage_v * 10.0f);
+        dd.dc_current_x10 = (uint16_t)(amps * 10.0f);
+        dd.dc_power_w     = (uint16_t)(cc_view.applied_voltage_v * amps);
+
+        if (bms.online) {
+            dd.soc_pct            = bms.soc;
+            dd.bat_pack_volt_x10  = (uint16_t)(bms.batt_voltage * 10.0f);
+            dd.bat_cell_volt_x100 = (uint16_t)(bms.max_cell_volt / 10U); /* mV -> 0.01V */
+            dd.temp_battery_c     = (int16_t)bms.max_cell_temp;
+        }
+        /* TODO(Phase 2): session charged-Ah has no accumulator yet -- send 0
+         * rather than a misleading proxy. Goes with the alarm/event-log work. */
+        dd.charged_ah_x10 = 0U;
+
+        /* AC phase voltages: per-module view (the summary carries none). */
+        CHG_LIB_ModuleView_t mv;
+        if (CHG_LIB_GetModuleView(0, &mv)) {
+            dd.ac_l1_v = (uint16_t)mv.ac_phase_a_voltage;
+            dd.ac_l2_v = (uint16_t)mv.ac_phase_b_voltage;
+            dd.ac_l3_v = (uint16_t)mv.ac_phase_c_voltage;
+        }
+
+        /* NTC channels: ch0 = charger, ch1..3 = jack/connector (max, with the
+         * same "-50C means disconnected" fallback used for jack derating). */
+        dd.temp_charge_c = (int16_t)BSP_ADC_GetTempC(0);
+        {
+            float jack_c = -273.15f;
+            for (uint8_t i = 1; i < 4; i++) {
+                float t = BSP_ADC_GetTempC(i);
+                if (isfinite(t) && t > jack_c) {
+                    jack_c = t;
+                }
+            }
+            dd.temp_jack_c = (int16_t)((jack_c < -50.0f) ? 0.0f : jack_c);
+        }
+
+        dd.status_icon = dwin_status_from_state(&cc_view, &sum);
+        dd.btn_mode    = dwin_btn_mode_from_status(dd.status_icon);
+        dd.uptime_s    = now / 1000U;
+
+        DWIN_UpdateData(&dd);
     }
 
     /* (5) Refresh IWDG — main loop only, never in ISR (~1s timeout) */
     MX_IWDG_Refresh();
 }
 
-void DWIN_OnCommandReceived(uint16_t command) {
-    if (command == 1) {
-        LOG("DWIN: Received START command\r\n");
-        ChargeController_Start(CHARGE_CTRL_OWNER_DWIN, false, BSP_GetTick());
-    } else if (command == 2) {
-        LOG("DWIN: Received STOP command\r\n");
-        ChargeController_Stop(BSP_GetTick());
-    }
+/* The DGUS action button is a single fixed-value Return-Key-Code control, so
+ * `keyval` only tells us the button was pressed -- app_action_button() then
+ * decides start/stop/reset from ChargeController state, exactly like the
+ * physical PA15 button. */
+void DWIN_OnActionButton(uint16_t keyval)
+{
+    ChargeCtrlView_t v;
+    ChargeController_GetView(&v);
+    LOG("DWIN: action button keyval=%u (state=%d)\r\n",
+        (unsigned)keyval, (int)v.state);
+    app_action_button(v.state, BSP_GetTick());
 }

@@ -1,16 +1,14 @@
 /**
  * @file test_dwin_protocol_e2e.c
- * @brief Host-compiled end-to-end test for Modules/hmi/dwin_protocol.c --
- *        previously ZERO automated test coverage (confirmed: no reference
- *        to dwin_protocol anywhere under test/ before this file). Compiles
- *        the real dwin_protocol.c, feeds real byte streams into the real
- *        DWIN_ParseRX(), and asserts on the real DWIN_OnCommandReceived()
- *        callback and DWIN_SendInt()/DWIN_SendString() wire output.
+ * @brief Host-compiled end-to-end test for Modules/hmi/dwin_protocol.c.
+ *        Compiles the real dwin_protocol.c, feeds real byte streams into the
+ *        real DWIN_ParseRX(), and asserts on the real DWIN_OnActionButton()
+ *        callback and the real DWIN_SendWords()/DWIN_SendString()/
+ *        DWIN_SetPage()/DWIN_UpdateData() wire output.
  *
- * dwin_protocol.c has no STM32 HAL dependency at all -- it only needs
+ * dwin_protocol.c has no STM32 HAL dependency -- it only needs
  * UART_Transmit_To_DWIN() (extern, stubbed below) and defines a weak
- * DWIN_OnCommandReceived() this file overrides -- so no mock_hal scaffolding
- * is needed beyond that.
+ * DWIN_OnActionButton() this file overrides.
  */
 #include <stdio.h>
 #include <string.h>
@@ -26,157 +24,225 @@
     } while (0)
 
 /* ================================================================== */
-/* UART_Transmit_To_DWIN stub -- captures the last frame DWIN_SendInt()/  */
-/* DWIN_SendString() built, so tests can assert on real wire bytes.       */
+/* UART_Transmit_To_DWIN stub -- records every frame so tests can       */
+/* assert on real wire bytes and on how many frames a call emitted.     */
 /* ================================================================== */
 
-static uint8_t g_last_tx[64];
-static uint16_t g_last_tx_len = 0;
+#define MAX_FRAMES 16
+static uint8_t  g_tx[MAX_FRAMES][64];
+static uint16_t g_tx_len[MAX_FRAMES];
+static int      g_tx_count = 0;
 
 void UART_Transmit_To_DWIN(uint8_t *data, uint16_t len)
 {
-    uint16_t copy_len = (len < sizeof(g_last_tx)) ? len : (uint16_t)sizeof(g_last_tx);
-    memcpy(g_last_tx, data, copy_len);
-    g_last_tx_len = len;
+    if (g_tx_count < MAX_FRAMES) {
+        uint16_t n = (len < 64U) ? len : 64U;
+        memcpy(g_tx[g_tx_count], data, n);
+        g_tx_len[g_tx_count] = len;
+    }
+    g_tx_count++;
 }
 
-/* DWIN_OnCommandReceived() override -- captures the last command
- * DWIN_ParseRX() dispatched, so tests can assert the real parser correctly
- * recognized a button-press frame from the touchscreen. */
-static uint16_t g_last_command = 0xFFFF;
-static uint16_t g_command_count = 0;
+static uint16_t g_last_keyval = 0xFFFF;
+static int      g_action_count = 0;
 
-void DWIN_OnCommandReceived(uint16_t command)
+void DWIN_OnActionButton(uint16_t keyval)
 {
-    g_last_command = command;
-    g_command_count++;
+    g_last_keyval = keyval;
+    g_action_count++;
 }
 
 static void reset_capture(void)
 {
-    memset(g_last_tx, 0, sizeof(g_last_tx));
-    g_last_tx_len = 0;
-    g_last_command = 0xFFFF;
-    g_command_count = 0;
+    memset(g_tx, 0, sizeof(g_tx));
+    memset(g_tx_len, 0, sizeof(g_tx_len));
+    g_tx_count = 0;
+    g_last_keyval = 0xFFFF;
+    g_action_count = 0;
 }
 
-/* Builds a real DWIN "write VP" RX frame -- [0x5A][0xA5][LEN][0x83][VP_H]
- * [VP_L][word_count][data...] -- matching what a real DWIN touchscreen
- * sends after a button press (VP_CMD_CTRL write), per DWIN_ParseRX(). */
-static void build_dwin_cmd_frame(uint8_t *buf, uint16_t vp_addr, uint16_t cmd_val)
+/* Build a real DGUS touch-upload frame:
+ * 5A A5 06 83 <VP_hi> <VP_lo> 01 <val_hi> <val_lo>  (9 bytes). */
+static void build_touch_frame(uint8_t *buf, uint16_t vp, uint16_t val)
 {
     buf[0] = DWIN_HEADER_1;
     buf[1] = DWIN_HEADER_2;
-    buf[2] = 0x06; /* len: CMD(1) + ADDR(2) + WORD_COUNT(1) + DATA(2) */
-    buf[3] = DWIN_READ;
-    buf[4] = (uint8_t)(vp_addr >> 8);
-    buf[5] = (uint8_t)(vp_addr & 0xFF);
-    buf[6] = 0x01; /* word_count */
-    buf[7] = (uint8_t)(cmd_val >> 8);
-    buf[8] = (uint8_t)(cmd_val & 0xFF);
+    buf[2] = 0x06;
+    buf[3] = DWIN_CMD_READ;
+    buf[4] = (uint8_t)(vp >> 8);
+    buf[5] = (uint8_t)(vp & 0xFF);
+    buf[6] = 0x01;
+    buf[7] = (uint8_t)(val >> 8);
+    buf[8] = (uint8_t)(val & 0xFF);
 }
 
 /* ================================================================== */
 
-static bool test_send_int_builds_correct_wire_frame(void)
+static bool test_send_words_single(void)
 {
-    printf("Running test_send_int_builds_correct_wire_frame...\n");
+    printf("Running test_send_words_single...\n");
     reset_capture();
 
-    DWIN_SendInt(VP_DC_VOLT, 4805); /* e.g. 480.5V encoded x10 */
+    uint16_t v = 4805; /* 480.5 V x10 */
+    DWIN_SendWords(VP_DC_VOLTAGE, &v, 1);
 
-    ASSERT(g_last_tx_len == 8, "DWIN_SendInt should transmit exactly 8 bytes");
-    ASSERT(g_last_tx[0] == DWIN_HEADER_1 && g_last_tx[1] == DWIN_HEADER_2, "wrong DWIN header");
-    ASSERT(g_last_tx[2] == 0x05, "payload length byte should be 5 (CMD+ADDR(2)+DATA(2))");
-    ASSERT(g_last_tx[3] == DWIN_WRITE, "DWIN_SendInt must use the WRITE command byte");
-    uint16_t addr = ((uint16_t)g_last_tx[4] << 8) | g_last_tx[5];
-    ASSERT(addr == VP_DC_VOLT, "VP address should round-trip correctly");
-    uint16_t value = ((uint16_t)g_last_tx[6] << 8) | g_last_tx[7];
-    ASSERT(value == 4805, "value should round-trip correctly, big-endian per DWIN protocol");
+    ASSERT(g_tx_count == 1, "one word -> exactly one frame");
+    ASSERT(g_tx_len[0] == 8, "frame should be 8 bytes");
+    ASSERT(g_tx[0][0] == DWIN_HEADER_1 && g_tx[0][1] == DWIN_HEADER_2, "header");
+    ASSERT(g_tx[0][2] == 0x05, "LEN = cmd + vp(2) + data(2) = 5");
+    ASSERT(g_tx[0][3] == DWIN_CMD_WRITE, "write command byte");
+    ASSERT((((uint16_t)g_tx[0][4] << 8) | g_tx[0][5]) == VP_DC_VOLTAGE, "VP round-trips");
+    ASSERT((((uint16_t)g_tx[0][6] << 8) | g_tx[0][7]) == 4805, "value big-endian");
 
-    printf("[PASS] test_send_int_builds_correct_wire_frame\n");
+    printf("[PASS] test_send_words_single\n");
     return true;
 }
 
-static bool test_parse_rx_dispatches_command(void)
+static bool test_send_words_multi(void)
 {
-    printf("Running test_parse_rx_dispatches_command...\n");
+    printf("Running test_send_words_multi...\n");
     reset_capture();
 
-    uint8_t frame[9];
-    build_dwin_cmd_frame(frame, VP_CMD_CTRL, 1 /* e.g. Start button */);
-    DWIN_ParseRX(frame, sizeof(frame));
+    uint16_t w[3] = { 0x0102, 0x0304, 0x0506 };
+    DWIN_SendWords(VP_AC_PHASE_L1, w, 3);
 
-    ASSERT(g_command_count == 1, "exactly one command should be dispatched for one valid frame");
-    ASSERT(g_last_command == 1, "dispatched command value should match the frame's payload");
+    ASSERT(g_tx_count == 1, "one frame");
+    ASSERT(g_tx_len[0] == 12, "6 header + 6 data");
+    ASSERT(g_tx[0][2] == 3 + 6, "LEN reflects 3 words");
+    ASSERT(g_tx[0][6] == 0x01 && g_tx[0][7] == 0x02, "word 0 big-endian");
+    ASSERT(g_tx[0][10] == 0x05 && g_tx[0][11] == 0x06, "word 2 big-endian");
 
-    printf("[PASS] test_parse_rx_dispatches_command\n");
+    /* out-of-range word counts are dropped */
+    reset_capture();
+    DWIN_SendWords(VP_DC_VOLTAGE, w, 0);
+    DWIN_SendWords(VP_DC_VOLTAGE, w, 99);
+    ASSERT(g_tx_count == 0, "0 and oversized word counts emit nothing");
+
+    printf("[PASS] test_send_words_multi\n");
     return true;
 }
 
-/* DWIN_ParseRX() is written to be fed byte-by-byte from a UART RX
- * interrupt (its state is `static` across calls) -- confirm it correctly
- * reassembles a command when called one byte at a time, not just when
- * handed the whole frame in one call. */
+static bool test_send_string_pads_field(void)
+{
+    printf("Running test_send_string_pads_field...\n");
+    reset_capture();
+
+    DWIN_SendString(VP_SET_DEVICE_ID, "PKG-1", VP_SET_STR_WORDS); /* 8 words = 16 bytes */
+
+    ASSERT(g_tx_count == 1, "one frame");
+    ASSERT(g_tx_len[0] == 6 + 16, "whole 16-byte field written");
+    ASSERT(g_tx[0][2] == 3 + 16, "LEN reflects the padded field");
+    ASSERT(memcmp(&g_tx[0][6], "PKG-1", 5) == 0, "text copied");
+    ASSERT(g_tx[0][6 + 5] == 0x00 && g_tx[0][6 + 15] == 0x00, "tail zero-padded");
+
+    /* a string longer than the field is truncated, not overflowed */
+    reset_capture();
+    DWIN_SendString(VP_SET_HW_VER, "0123456789ABCDEF-OVERFLOW", VP_SET_STR_WORDS);
+    ASSERT(g_tx_count == 1 && g_tx_len[0] == 6 + 16, "truncated to field width");
+    ASSERT(memcmp(&g_tx[0][6], "0123456789ABCDEF", 16) == 0, "first 16 chars kept");
+
+    printf("[PASS] test_send_string_pads_field\n");
+    return true;
+}
+
+static bool test_set_page_diff_suppressed(void)
+{
+    printf("Running test_set_page_diff_suppressed...\n");
+    reset_capture();
+
+    DWIN_SetPage(DWIN_PAGE_SETTING);
+    ASSERT(g_tx_count == 1, "first page switch emits");
+    ASSERT(g_tx_len[0] == 10, "5A A5 07 82 00 84 5A 01 00 02");
+    ASSERT(g_tx[0][2] == 0x07, "LEN = cmd + vp(2) + 2 words = 7");
+    ASSERT(g_tx[0][3] == DWIN_CMD_WRITE, "write");
+    ASSERT((((uint16_t)g_tx[0][4] << 8) | g_tx[0][5]) == VP_SYS_PIC_SET, "VP 0x0084");
+    ASSERT(g_tx[0][6] == 0x5A && g_tx[0][7] == 0x01, "arm word 0x5A01");
+    ASSERT((((uint16_t)g_tx[0][8] << 8) | g_tx[0][9]) == DWIN_PAGE_SETTING, "page id");
+
+    DWIN_SetPage(DWIN_PAGE_SETTING);
+    ASSERT(g_tx_count == 1, "repeat page switch is suppressed");
+
+    DWIN_SetPage(DWIN_PAGE_DASH);
+    ASSERT(g_tx_count == 2, "a different page emits again");
+
+    printf("[PASS] test_set_page_diff_suppressed\n");
+    return true;
+}
+
+static bool test_parse_rx_dispatches_and_clears(void)
+{
+    printf("Running test_parse_rx_dispatches_and_clears...\n");
+    reset_capture();
+
+    uint8_t f[9];
+    build_touch_frame(f, VP_SYS_ACTION_BTN, 1);
+    DWIN_ParseRX(f, sizeof(f));
+
+    ASSERT(g_action_count == 1, "one valid touch frame -> one dispatch");
+    ASSERT(g_last_keyval == 1, "keyval passed through");
+    ASSERT(g_tx_count == 1, "parser writes 0 back to clear VP_SYS_ACTION_BTN");
+    ASSERT((((uint16_t)g_tx[0][4] << 8) | g_tx[0][5]) == VP_SYS_ACTION_BTN, "clear targets 0x1042");
+    ASSERT(g_tx[0][6] == 0x00 && g_tx[0][7] == 0x00, "clear value is 0");
+
+    printf("[PASS] test_parse_rx_dispatches_and_clears\n");
+    return true;
+}
+
 static bool test_parse_rx_byte_by_byte(void)
 {
     printf("Running test_parse_rx_byte_by_byte...\n");
     reset_capture();
 
-    uint8_t frame[9];
-    build_dwin_cmd_frame(frame, VP_CMD_CTRL, 2 /* e.g. Stop button */);
-    for (uint16_t i = 0; i < sizeof(frame); i++) {
-        DWIN_ParseRX(&frame[i], 1);
+    uint8_t f[9];
+    build_touch_frame(f, VP_SYS_ACTION_BTN, 2);
+    for (uint16_t i = 0; i < sizeof(f); i++) {
+        DWIN_ParseRX(&f[i], 1);
     }
 
-    ASSERT(g_command_count == 1, "byte-by-byte feed should still dispatch exactly one command");
-    ASSERT(g_last_command == 2, "byte-by-byte feed should reassemble the correct command value");
+    ASSERT(g_action_count == 1, "reassembled from single bytes");
+    ASSERT(g_last_keyval == 2, "correct keyval");
 
     printf("[PASS] test_parse_rx_byte_by_byte\n");
     return true;
 }
 
-/* A write-VP frame from a DIFFERENT vp_addr must not be mistaken for a
- * VP_CMD_CTRL button press -- DWIN_ParseRX() only dispatches when
- * vp_addr == VP_CMD_CTRL (see the `if (vp_addr == VP_CMD_CTRL ...)` gate). */
-static bool test_parse_rx_ignores_other_vp_addr(void)
+static bool test_parse_rx_ignores_zero_and_other_vp(void)
 {
-    printf("Running test_parse_rx_ignores_other_vp_addr...\n");
+    printf("Running test_parse_rx_ignores_zero_and_other_vp...\n");
     reset_capture();
 
-    uint8_t frame[9];
-    build_dwin_cmd_frame(frame, VP_DC_VOLT /* not VP_CMD_CTRL */, 1);
-    DWIN_ParseRX(frame, sizeof(frame));
+    uint8_t f[9];
+    build_touch_frame(f, VP_SYS_ACTION_BTN, 0); /* keyval 0 = nothing pressed */
+    DWIN_ParseRX(f, sizeof(f));
+    ASSERT(g_action_count == 0 && g_tx_count == 0, "keyval 0 -> no dispatch, no clear");
 
-    ASSERT(g_command_count == 0, "a read/write of a non-VP_CMD_CTRL address must not fire the command callback");
+    build_touch_frame(f, VP_DC_VOLTAGE, 1);     /* not the action button VP */
+    DWIN_ParseRX(f, sizeof(f));
+    ASSERT(g_action_count == 0, "other VP -> no dispatch");
 
-    printf("[PASS] test_parse_rx_ignores_other_vp_addr\n");
+    printf("[PASS] test_parse_rx_ignores_zero_and_other_vp\n");
     return true;
 }
 
-/* Regression-style test for the header-resync branch in DWIN_ParseRX()'s
- * rx_idx==1 handling: a stray HEADER_1 byte where HEADER_2 was expected
- * must be treated as the start of a new frame, not desync the parser
- * permanently (same class of bug as pc_protocol.c's B-02 SOF resync). */
 static bool test_parse_rx_resyncs_on_stray_header1(void)
 {
     printf("Running test_parse_rx_resyncs_on_stray_header1...\n");
     reset_capture();
 
-    uint8_t good_frame[9];
-    build_dwin_cmd_frame(good_frame, VP_CMD_CTRL, 3);
+    uint8_t good[9];
+    build_touch_frame(good, VP_SYS_ACTION_BTN, 3);
 
     uint8_t stream[16];
     uint16_t n = 0;
-    stream[n++] = DWIN_HEADER_1; /* stray, would-be HEADER_2 slot corrupted below */
+    stream[n++] = DWIN_HEADER_1;
     stream[n++] = DWIN_HEADER_1; /* wrong byte where HEADER_2 was expected */
-    memcpy(&stream[n], good_frame, sizeof(good_frame));
-    n += sizeof(good_frame);
+    memcpy(&stream[n], good, sizeof(good));
+    n += sizeof(good);
 
     DWIN_ParseRX(stream, n);
 
-    ASSERT(g_command_count == 1, "parser should resync on the second HEADER_1 and still parse the real frame");
-    ASSERT(g_last_command == 3, "resynced frame should carry the correct command value");
+    ASSERT(g_action_count == 1, "parser resyncs and still parses the real frame");
+    ASSERT(g_last_keyval == 3, "correct keyval after resync");
 
     printf("[PASS] test_parse_rx_resyncs_on_stray_header1\n");
     return true;
@@ -187,43 +253,62 @@ static bool test_parse_rx_rejects_oversized_length(void)
     printf("Running test_parse_rx_rejects_oversized_length...\n");
     reset_capture();
 
-    /* Length byte > 60 must be rejected (DWIN_ParseRX's own bound) --
-     * confirm it doesn't overrun rx_buf[64] or wedge the parser. */
-    uint8_t stream[16] = {0};
-    stream[0] = DWIN_HEADER_1;
-    stream[1] = DWIN_HEADER_2;
-    stream[2] = 0xFF; /* invalid length */
-    DWIN_ParseRX(stream, 3);
+    uint8_t bad[3] = { DWIN_HEADER_1, DWIN_HEADER_2, 0xFF };
+    DWIN_ParseRX(bad, sizeof(bad));
 
-    /* Parser should have reset (rx_idx back to 0) and be ready to accept a
-     * fresh, valid frame right after -- prove it by feeding one. */
-    uint8_t good_frame[9];
-    build_dwin_cmd_frame(good_frame, VP_CMD_CTRL, 4);
-    DWIN_ParseRX(good_frame, sizeof(good_frame));
+    uint8_t good[9];
+    build_touch_frame(good, VP_SYS_ACTION_BTN, 4);
+    DWIN_ParseRX(good, sizeof(good));
 
-    ASSERT(g_command_count == 1, "parser must recover after an oversized-length frame, not stay wedged");
-    ASSERT(g_last_command == 4, "the frame following the rejected one should parse correctly");
+    ASSERT(g_action_count == 1, "parser recovers after an oversized LEN, not wedged");
+    ASSERT(g_last_keyval == 4, "the frame after the rejected one parses");
 
     printf("[PASS] test_parse_rx_rejects_oversized_length\n");
     return true;
 }
 
-static bool test_send_string_truncates_at_32_chars(void)
+static bool test_update_data_scatter(void)
 {
-    printf("Running test_send_string_truncates_at_32_chars...\n");
+    printf("Running test_update_data_scatter...\n");
     reset_capture();
 
-    /* A 40-char string must be capped at 32 (DWIN_SendString()'s own bound)
-     * -- otherwise it would write past its 64-byte stack buffer relative
-     * to the 6-byte header. */
-    const char *long_str = "0123456789012345678901234567890123456789"; /* 40 chars */
-    DWIN_SendString(VP_CHARGE_TIME, long_str);
+    DWIN_SystemData_t d;
+    memset(&d, 0, sizeof(d));
+    d.dc_voltage_x10 = 521;
+    d.temp_battery_c = -5;
+    d.status_icon = DWIN_STATUS_CHARGING;
+    d.btn_mode = DWIN_BTN_STOP;
 
-    ASSERT(g_last_tx_len == 6 + 32, "DWIN_SendString should cap payload at 32 chars (38 bytes total)");
-    ASSERT(g_last_tx[2] == 3 + 32, "length byte should reflect the capped 32-char payload");
-    ASSERT(memcmp(&g_last_tx[6], long_str, 32) == 0, "the first 32 chars should be transmitted unmodified");
+    /* First full cycle: every step sends (no previous snapshot). */
+    int frames_first_cycle = 0;
+    for (int i = 0; i < 8; i++) {
+        reset_capture();
+        DWIN_UpdateData(&d);
+        frames_first_cycle += g_tx_count;
+        ASSERT(g_tx_count <= 1, "at most one frame per call");
+    }
+    ASSERT(frames_first_cycle == 8, "first cycle pushes all 8 field groups");
 
-    printf("[PASS] test_send_string_truncates_at_32_chars\n");
+    /* Second cycle, unchanged data: nothing is re-sent. */
+    int frames_second_cycle = 0;
+    for (int i = 0; i < 8; i++) {
+        reset_capture();
+        DWIN_UpdateData(&d);
+        frames_second_cycle += g_tx_count;
+    }
+    ASSERT(frames_second_cycle == 0, "unchanged data is diff-suppressed");
+
+    /* Change one field: exactly one frame next cycle, on the temp step. */
+    d.temp_charge_c = 42;
+    int frames_after_change = 0;
+    for (int i = 0; i < 8; i++) {
+        reset_capture();
+        DWIN_UpdateData(&d);
+        frames_after_change += g_tx_count;
+    }
+    ASSERT(frames_after_change == 1, "one changed field -> one frame");
+
+    printf("[PASS] test_update_data_scatter\n");
     return true;
 }
 
@@ -232,16 +317,19 @@ static bool test_send_string_truncates_at_32_chars(void)
 int main(void)
 {
     setvbuf(stdout, NULL, _IONBF, 0);
-    printf("=== DWIN Protocol E2E Simulation Test (real byte stream -> real dwin_protocol.c) ===\n");
+    printf("=== DWIN Protocol E2E (real byte stream <-> real dwin_protocol.c) ===\n");
     bool pass = true;
 
-    pass &= test_send_int_builds_correct_wire_frame();
-    pass &= test_parse_rx_dispatches_command();
+    pass &= test_send_words_single();
+    pass &= test_send_words_multi();
+    pass &= test_send_string_pads_field();
+    pass &= test_set_page_diff_suppressed();
+    pass &= test_parse_rx_dispatches_and_clears();
     pass &= test_parse_rx_byte_by_byte();
-    pass &= test_parse_rx_ignores_other_vp_addr();
+    pass &= test_parse_rx_ignores_zero_and_other_vp();
     pass &= test_parse_rx_resyncs_on_stray_header1();
     pass &= test_parse_rx_rejects_oversized_length();
-    pass &= test_send_string_truncates_at_32_chars();
+    pass &= test_update_data_scatter();
 
     if (pass) {
         printf("ALL TESTS PASSED.\n");

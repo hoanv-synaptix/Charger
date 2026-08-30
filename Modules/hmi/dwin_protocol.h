@@ -4,70 +4,108 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-/* DWIN Header & Commands */
-#define DWIN_HEADER_1 0x5A
-#define DWIN_HEADER_2 0xA5
-#define DWIN_WRITE    0x82
-#define DWIN_READ     0x83
+#include "dwin_vp_map.h"
 
-/* VP Addresses (Từ dwin_vp_map.md) */
-#define VP_SYS_STATUS   0x1000
-#define VP_CMD_CTRL     0x1002
-#define VP_DC_VOLT      0x1100
-#define VP_DC_CURR      0x1102
-#define VP_CHARGE_TIME  0x1110 // Chuỗi String (Nhiều Words)
-#define VP_BAT_SOC      0x1200
-#define VP_BAT_PACK_V   0x1202
-#define VP_BAT_CELL_V   0x1204
-#define VP_AC_L1        0x1300
-#define VP_AC_L2        0x1302
-#define VP_AC_L3        0x1304
-#define VP_TEMP_CHARGER 0x1400
-#define VP_TEMP_BAT     0x1402
-#define VP_FAULT_CODE   0x2000
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-/* Fault Codes (Tương ứng với Bit Variable Icon ID trên DWIN 0.ICO) */
-typedef enum {
-    FAULT_NONE            = 0,
-    FAULT_BMS_OFFLINE     = 1,
-    FAULT_OVER_VOLT       = 2,
-    FAULT_OVER_CURR       = 3,
-    FAULT_OVER_TEMP       = 4,
-    FAULT_CHARGER_OFFLINE = 5,
-    FAULT_AC_INPUT        = 6,
-    FAULT_HARDWARE        = 7
-} DWIN_FaultCode_e;
+/* DGUS-II frame constants (guide V2.9 sec 4.2). */
+#define DWIN_HEADER_1   0x5AU
+#define DWIN_HEADER_2   0xA5U
+#define DWIN_CMD_WRITE  0x82U
+#define DWIN_CMD_READ   0x83U
 
-/* Cấu trúc dữ liệu Hệ thống để gửi lên DWIN */
+/**
+ * @brief Snapshot of everything shown on the dashboard + setting screens.
+ * @note  Built by the composition root (App/System/app_main.c) each HMI tick
+ *        from the charge-controller / BMS / charger views. This module holds
+ *        NO policy -- all state->icon/page decisions happen in App.
+ *        Temperatures are signed; negative values are sent as two's
+ *        complement, which DGUS renders correctly for a signed-int control.
+ */
 typedef struct {
-    uint16_t dc_volt_x10;
-    uint16_t dc_curr_x10;
-    uint16_t bat_soc;
-    uint16_t bat_pack_v_x10;
-    uint16_t bat_cell_v_x100;
-    uint16_t ac_l1;
-    uint16_t ac_l2;
-    uint16_t ac_l3;
-    uint16_t temp_charger;
-    uint16_t temp_bat;
-    uint16_t sys_status; // 0=Standby, 1=Run, 2=Fault
-    uint16_t fault_code;
+    /* --- dashboard --- */
+    uint16_t dc_voltage_x10;
+    uint16_t dc_current_x10;
+    uint16_t dc_power_w;
+    uint16_t bat_pack_volt_x10;
+    uint16_t bat_cell_volt_x100;
+    uint32_t charged_ah_x10;
+    uint16_t ac_l1_v;
+    uint16_t ac_l2_v;
+    uint16_t ac_l3_v;
+    int16_t  temp_battery_c;
+    int16_t  temp_charge_c;
+    int16_t  temp_jack_c;
+    uint16_t soc_pct;
+    uint16_t status_icon;   /* DwinStatusIcon_e */
+    uint16_t btn_mode;      /* DwinBtnMode_e */
+    /* --- setting --- */
+    uint32_t uptime_s;
 } DWIN_SystemData_t;
 
-/* Khởi tạo (Nếu cần thiết lập UART DMA/IT) */
+/** No-op today (BSP owns the UART); kept as the module's init seam. */
 void DWIN_Init(void);
 
-/* Cập nhật toàn bộ giao diện */
-void DWIN_UpdateData(const DWIN_SystemData_t* data);
+/**
+ * @brief Write @p n_words 16-bit words to consecutive VPs starting at @p vp.
+ *        One 0x82 frame, big-endian, no CRC. Silently drops out-of-range
+ *        requests (n_words 1..DWIN_TX_MAX_WORDS).
+ */
+void DWIN_SendWords(uint16_t vp, const uint16_t *words, uint8_t n_words);
 
-/* Các hàm truyền cơ bản */
-void DWIN_SendInt(uint16_t vp_addr, uint16_t value);
-void DWIN_SendString(uint16_t vp_addr, const char* str);
+/**
+ * @brief Write an ASCII string into a fixed @p field_words VP field, padded
+ *        with 0x00 so the whole field is overwritten (no stale characters).
+ */
+void DWIN_SendString(uint16_t vp, const char *str, uint8_t field_words);
 
-/* Hàm parse dữ liệu nhận (Đặt trong ngắt UART hoặc vòng lặp Rx) */
-void DWIN_ParseRX(uint8_t* buffer, uint16_t len);
+/**
+ * @brief Switch the displayed page via VP_SYS_PIC_SET. Emits a frame only
+ *        when @p page differs from the last one sent.
+ */
+void DWIN_SetPage(DwinPageId_e page);
 
-/* Callback được gọi khi có lệnh từ DWIN (Nút nhấn Start/Stop) */
-void DWIN_OnCommandReceived(uint16_t command);
+/** One-shot: push the three identity strings on the Setting screen. */
+void DWIN_SendSettingStrings(const char *hw_ver, const char *fw_ver,
+                             const char *device_id);
 
-#endif // DWIN_PROTOCOL_H
+/**
+ * @brief Scatter-send: emits at most ONE frame per call, cycling through the
+ *        dashboard/setting fields. Call from the ~50 ms HMI tick. Unchanged
+ *        fields are skipped to keep the half-duplex bus quiet.
+ */
+void DWIN_UpdateData(const DWIN_SystemData_t *data);
+
+/**
+ * @brief Feed raw RS485 RX bytes (whatever BSP_RS485_Read() returned).
+ *        Parses 0x83 frames; on a non-zero VP_SYS_ACTION_BTN value it calls
+ *        DWIN_OnActionButton() then writes 0 back to clear the VP.
+ */
+void DWIN_ParseRX(const uint8_t *buf, uint16_t len);
+
+/**
+ * @brief Weak callback: the action button on the screen was pressed.
+ * @param keyval  raw Return-Key-Code value. The DGUS button is a single
+ *        fixed-value control, so this really only means "pressed" -- the
+ *        override in app_main.c decides start/stop/reset from
+ *        ChargeController state, exactly like the physical PA15 button.
+ */
+void DWIN_OnActionButton(uint16_t keyval);
+
+/**
+ * @brief Push a wall-clock time to the panel's RTC (VP_SYS_RTC_SET).
+ * @note  Implemented but intentionally not called yet -- the panel keeps its
+ *        own time via its RTC IC. Wire this once a BSP_RTC wrapper exists
+ *        (the STM32 LSE crystal is on the board but the RTC peripheral is
+ *        not enabled in CubeMX yet). @p year is the full year, e.g. 2026.
+ */
+void DWIN_SetRTC(uint16_t year, uint8_t month, uint8_t day,
+                 uint8_t hour, uint8_t minute, uint8_t second);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* DWIN_PROTOCOL_H */
