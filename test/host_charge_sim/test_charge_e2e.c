@@ -764,19 +764,19 @@ static bool test_current_ramp_up(void)
     ChargeController_GetView(&cv);
     float target_i = cv.target_current_per_module_a;
     ASSERT(target_i > 40.0f, "scenario needs a meaningful target (~100A)");
-    ASSERT(cv.applied_current_per_module_a < 5.0f,
+    ASSERT(cv.applied_current_per_module_a < 3.0f,
            "current ramp starts from ~0, not a jump to target");
 
-    drive_ms(1000U);
+    drive_ms(2000U);
     ChargeController_GetView(&cv);
     float i1 = cv.applied_current_per_module_a;
-    ASSERT(i1 > 12.0f && i1 < 28.0f, "after 1s: ~20 A/s ramp rate");
+    ASSERT(i1 > 6.0f && i1 < 14.0f, "after 2s: ~5 A/s ramp rate");
     ASSERT(i1 < target_i - 5.0f, "still below target mid-ramp");
 
-    drive_ms(8000U);
+    drive_ms(25000U);
     ChargeController_GetView(&cv);
     ASSERT(fabsf(cv.applied_current_per_module_a - target_i) < 1.0f,
-           "ramp reaches the full target");
+           "ramp reaches the full target (~20s for 100A at 5 A/s)");
 
     printf("[PASS] test_current_ramp_up\n");
     return true;
@@ -831,11 +831,11 @@ static bool test_ramp_down_immediate(void)
            "manual start refused");
     drive_ms(600U);   /* reach RUNNING */
 
-    drive_ms(3000U);  /* current ramps ~0 -> ~60A */
+    drive_ms(9000U);  /* current ramps ~0 -> ~45A at 5 A/s */
     ChargeCtrlView_t cv;
     ChargeController_GetView(&cv);
-    ASSERT(cv.applied_current_per_module_a > 40.0f &&
-           cv.applied_current_per_module_a < 90.0f, "mid-ramp, ~60A");
+    ASSERT(cv.applied_current_per_module_a > 30.0f &&
+           cv.applied_current_per_module_a < 70.0f, "mid-ramp");
 
     /* Operator lowers the manual current. */
     ChargeController_SetManualTarget(400.0f, 25.0f);
@@ -1116,9 +1116,9 @@ static bool test_rated_current_seeded_from_config(void)
     ASSERT(warmup_and_start(1500U, 4000U), "module never reached RUNNING");
 
     /* The current setpoint now ramps 0 -> target at CHARGE_CTRL_CURRENT_RAMP_
-     * A_PER_S; drive past a full 100A / 20A-per-s ramp (+margin) so the
-     * final commanded ratio is the config value, not a mid-ramp fraction. */
-    drive_ms(8000U);
+     * A_PER_S (5 A/s); drive past a full 100A ramp (+margin) so the final
+     * commanded ratio is the config value, not a mid-ramp fraction. */
+    drive_ms(25000U);
 
     ChargeCtrlView_t cv;
     ChargeController_GetView(&cv);

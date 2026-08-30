@@ -46,8 +46,8 @@
  * protocols) specify no ramp rate; the module runs its own internal
  * soft-start. */
 #define CHARGE_CTRL_RAMP_STEP_MS                     100U
-#define CHARGE_CTRL_VOLTAGE_RAMP_V_PER_S             5.0f
-#define CHARGE_CTRL_CURRENT_RAMP_A_PER_S             20.0f  /* per module */
+#define CHARGE_CTRL_VOLTAGE_RAMP_V_PER_S             5.0f   /* e.g. dV 100V -> 20s */
+#define CHARGE_CTRL_CURRENT_RAMP_A_PER_S             5.0f   /* per module; e.g. 0->100A -> 20s, matches the voltage ramp */
 
 /* ============== Private State ============== */
 

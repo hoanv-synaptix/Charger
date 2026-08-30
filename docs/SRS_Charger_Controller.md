@@ -241,7 +241,7 @@ Quy ước độ ưu tiên: **M** = Must, **S** = Should, **C** = Could.
 | FR-CTRL-16 | EMERGENCY_STOP → EmergencyStop driver ngay + FAULT | M |
 | FR-CTRL-17 | Chỉ gửi Start/Stop khi should_run thay đổi (chống spam bus) | S |
 | FR-CTRL-18 | BMS stale → giữ target cũ, cảnh báo 1 lần | S |
-| FR-CTRL-19 | Ramp-up setpoint: chiều **tăng** của V/I lệnh bị giới hạn tốc độ (`CHARGE_CTRL_VOLTAGE_RAMP_V_PER_S`=5 V/s, `CHARGE_CTRL_CURRENT_RAMP_A_PER_S`=20 A/s/module, bước mỗi 100ms), áp dụng cả 3 mode. Chiều **giảm** (derating/clamp) tức thì; EMERGENCY/FAULT không ramp. Áp snap tới Stage-1/pack lúc start (relay hở, không tải), dòng ramp từ 0. *Tốc độ là giá trị khởi điểm, chờ đo scope trên DC bus.* | S |
+| FR-CTRL-19 | Ramp-up setpoint: chiều **tăng** của V/I lệnh bị giới hạn tốc độ (`CHARGE_CTRL_VOLTAGE_RAMP_V_PER_S`=5 V/s, `CHARGE_CTRL_CURRENT_RAMP_A_PER_S`=5 A/s/module, bước mỗi 100ms), áp dụng cả 3 mode. Chiều **giảm** (derating/clamp) tức thì; EMERGENCY/FAULT không ramp. Áp snap tới Stage-1/pack lúc start (relay hở, không tải), dòng ramp từ 0. *Tốc độ là giá trị khởi điểm, chờ đo scope trên DC bus.* | S |
 
 ### 3.5 Cấu hình (Config/Storage) — FR-CFG
 
