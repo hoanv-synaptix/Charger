@@ -50,14 +50,9 @@ extern "C" {
 #define BMS_MAX_VOLT_MV           4500U   /* Max cell voltage (mV) */
 #define BMS_MAX_TEMP_DEGC         60U     /* Max allowed cell temp (°C) */
 #define BMS_MIN_TEMP_DEGC         (-10)   /* Min allowed cell temp (°C) */
-/* Relay-close voltage threshold, as a percentage of the controller's target
- * voltage -- consumed by App/Charge/charge_controller.c's
- * update_relay_decision(), not by anything in this module. Lives here
- * (rather than duplicated as a magic number in charge_controller.c) because
- * it's conceptually "how close to the requested pack voltage is close
- * enough to trust the connection", the same kind of battery-safety
- * threshold as BMS_MIN_VOLT_MV/BMS_MAX_VOLT_MV above. */
-#define BMS_CHARGE_VOLT_LIMIT_PCT  90U
+/* The relay-close voltage threshold moved to charge_controller.c
+ * (CHARGE_CTRL_RELAY_ARM_VOLT_PCT) 2026-08-30 -- it is purely that file's
+ * relay logic, not a BMS concern, and the value was bumped 90 -> 95. */
 
 /* ============== BMS State ============== */
 

@@ -407,6 +407,8 @@ Mới: min_voltage(module) < BmsView.batt_voltage × 90% →  chưa đóng relay
 
 Verification loop đầy đủ (`-fsyntax-only`, `check_architecture.py`, `check_ioc.py`, `test_logic.c`, Release build RAM 13.95%/FLASH 53.21%) đều sạch.
 
+_Re-verified 2026-08-30: ngưỡng "90%" trong công thức trên giờ là hằng số có tên `CHARGE_CTRL_RELAY_ARM_VOLT_PCT` khai báo ngay trong `charge_controller.c` (trước đây là `BMS_CHARGE_VOLT_LIMIT_PCT` ở `bms_core.h` — sai lớp, đã gỡ khỏi `bms_core.h`), và bumped 90 → 95 theo yêu cầu người dùng: module output phải bám sát hơn điện áp pack thật trước khi relay latch → dV qua tiếp điểm nhỏ hơn → inrush thấp hơn. Safety-relevant (AGENTS.md 15). Test multipliers trong `test_charge_e2e.c` chỉnh 0.95f → 0.97f (mốc "đã đủ arm") và `g_sim_module.voltage` 280 → 290 cho `test_relay_arms_off_bms_voltage_not_target` (280V = 93.3% của 300V, dưới ngưỡng 95% mới). Full verify loop + `test_dwin_protocol_e2e` + Release/rel-dwin build pass._
+
 ## 8f. B-24 vẫn không đóng sau fix §8e -- bỏ hẳn gate `charge_relay_closed` (2026-08-29)
 
 Sau fix §8e (ngưỡng 90% so với `BmsView.batt_voltage`), người dùng test lại trên hardware thật, xác nhận qua ảnh chụp Monitor tab thật: điện áp module (52.80V) đã vượt 90% điện áp pack BMS báo (53.20V, ~99.2%) — điều kiện điện áp **đã thỏa** — nhưng relay MCU vẫn không đóng. Field **Charge Relay** trên panel BMS Overview hiện **Open**, đứng yên kể cả để chạy lâu.

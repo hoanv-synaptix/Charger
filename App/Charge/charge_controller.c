@@ -34,6 +34,16 @@
 #define RELAY_OPEN_CURRENT_THRESHOLD_A               1.0f
 #define RELAY_OPEN_TIMEOUT_MS                        3000U
 
+/* Relay ARM threshold: the worst-case (minimum) output voltage across all
+ * active modules must reach this percentage of the reference voltage
+ * (compute_voltage_ref(): the BMS pack voltage in BMS mode, vmax in
+ * standalone) before the relay is allowed to latch closed. Higher = smaller
+ * dV across the contacts at closure = less inrush, but the module must be
+ * able to regulate that close to the pack voltage while still unloaded.
+ * (Was BMS_CHARGE_VOLT_LIMIT_PCT in bms_core.h -- moved here 2026-08-30
+ * since only this file's relay logic uses it, and bumped 90 -> 95.) */
+#define CHARGE_CTRL_RELAY_ARM_VOLT_PCT               95U
+
 /* Setpoint ramp-up (2026-08-30): rate-limit the RISE of the commanded
  * voltage/current toward the target, to soften the current onset at relay
  * closure and protect the connector/cable/contactor. Applies to all charge
@@ -123,8 +133,8 @@ static struct {
 
     /* Battery relay decision -- see ChargeCtrlView_t.relay_should_close and
      * update_relay_decision() for the full condition. relay_latched_closed
-     * is the "has it already earned >=90% this RUNNING session" latch: once
-     * set, voltage dropping back below 90% (normal charging behaviour, e.g.
+     * is the "has it already earned the arm threshold this RUNNING session" latch: once
+     * set, voltage dropping back below the arm threshold (normal charging, e.g.
      * CV-phase current taper) does NOT reopen the relay by itself -- only
      * leaving RUNNING or the BMS reporting unsafe does. Reset to false the
      * moment state leaves RUNNING, so the next RUNNING session must earn it
@@ -251,7 +261,7 @@ static uint8_t get_active_module_count(void) {
 }
 
 /**
- * @brief Reference voltage for both the relay-arm 90% threshold and the
+ * @brief Reference voltage for both the relay-arm threshold and the
  *        Stage-1 (pre-relay-close) module setpoint -- see
  *        update_relay_decision() and the target_voltage_v assignment in
  *        run_bms_controlled_mode()/run_standalone_mode().
@@ -276,10 +286,11 @@ static float compute_voltage_ref(const ChargeCycleConfig_t *cfg) {
 
 /**
  * @brief Decide whether the battery relay should be closed this tick.
- * @note  This is a latch, not a continuous gate: reaching the >=90% voltage
- *        threshold CLOSES the relay, but once closed it stays closed
+ * @note  This is a latch, not a continuous gate: reaching the
+ *        >=CHARGE_CTRL_RELAY_ARM_VOLT_PCT voltage threshold CLOSES the relay,
+ *        but once closed it stays closed
  *        through normal voltage/current fluctuation (e.g. CV-phase current
- *        taper naturally sagging the bus below 90% again) -- only a real
+ *        taper naturally sagging the bus below it again) -- only a real
  *        fault reopens it. "Fault" is:
  *          1. Controller state leaves RUNNING (FAULT/STOPPING/IDLE/READY) --
  *             applies in every charge_source_mode.
@@ -300,13 +311,13 @@ static float compute_voltage_ref(const ChargeCycleConfig_t *cfg) {
  *             physically installed in that mode, so requiring
  *             BMS_IsOnline() would mean the relay could never close at
  *             all.
- *        Falling back below 90% target voltage is explicitly NOT a fault
+ *        Falling back below the arm threshold is explicitly NOT a fault
  *        once latched -- by design, per product decision.
  *
  *        To (re-)arm the latch (only evaluated while not already latched
  *        closed): the worst-case (minimum) output voltage across all
  *        active (enabled, online, not OFFLINE/FAULT) modules must reach
- *        BMS_CHARGE_VOLT_LIMIT_PCT of a *reference* voltage -- i.e. every
+ *        CHARGE_CTRL_RELAY_ARM_VOLT_PCT of a *reference* voltage -- i.e. every
  *        module must be up, not just one of several in a multi-module
  *        stack. The reference is:
  *          - BMS-Controlled mode: BmsView.batt_voltage (the pack's real,
@@ -330,8 +341,8 @@ static float compute_voltage_ref(const ChargeCycleConfig_t *cfg) {
  *            reference exists in this mode by definition.
  *
  *        The latch resets to "not yet armed" the instant state leaves
- *        RUNNING, so the next RUNNING session must earn >=90% again from
- *        scratch.
+ *        RUNNING, so the next RUNNING session must earn the threshold
+ *        again from scratch.
  *
  *        Opening is NOT immediate once latched closed (2026-08-29,
  *        user-confirmed): breaking a DC relay while real charging current
@@ -451,7 +462,7 @@ static void update_relay_decision(uint32_t now_tick) {
     if (min_voltage < 0.0f) {
         return; /* no active module reporting voltage */
     }
-    if (min_voltage < (voltage_ref * ((float)BMS_CHARGE_VOLT_LIMIT_PCT / 100.0f))) {
+    if (min_voltage < (voltage_ref * ((float)CHARGE_CTRL_RELAY_ARM_VOLT_PCT / 100.0f))) {
         return;
     }
 
@@ -473,7 +484,7 @@ static void update_relay_decision(uint32_t now_tick) {
  *        update_relay_decision()'s BMS_ShouldCloseChargeRelay() check
  *        would block the MCU's own relay forever -- independent of, and
  *        regardless of, module output voltage. Confirmed against a real
- *        HIL run: module voltage already >90% of target, relay still
+ *        HIL run: module voltage already above the arm threshold of the target, relay still
  *        never closed.
  *        allow_charge=true only while actually RUNNING (not READY/
  *        STOPPING/FAULT) -- user-confirmed choice, the safest reading of
@@ -567,7 +578,7 @@ static void apply_charge_targets(uint32_t now_tick) {
         /* Charge start: ramp BOTH from zero. Pre-relay-close the voltage
          * rises at the fast CHARGE_CTRL_VOLTAGE_PRECLOSE_RAMP_V_PER_S toward
          * the pack/Stage-1 voltage (BMS) or vmax (standalone/manual); the
-         * relay arms once the module output reaches >=90% of it. Post-close
+         * relay arms once the module output reaches >= CHARGE_CTRL_RELAY_ARM_VOLT_PCT of it. Post-close
          * the (BMS-mode) Stage-1 -> vmax rise uses the slow
          * CHARGE_CTRL_VOLTAGE_RAMP_V_PER_S. Current ramps from zero at
          * CHARGE_CTRL_CURRENT_RAMP_A_PER_S; while the relay is open no

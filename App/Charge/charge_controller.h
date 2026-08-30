@@ -109,7 +109,7 @@ typedef struct {
     /** True when the battery relay should be closed. This is a latch, not
      * a continuous voltage gate: it closes once state is RUNNING and the
      * worst-case (minimum) online module output voltage reaches
-     * BMS_CHARGE_VOLT_LIMIT_PCT of target_voltage_v, then STAYS closed
+     * CHARGE_CTRL_RELAY_ARM_VOLT_PCT of the reference (pack) voltage, then STAYS closed
      * through normal voltage/current fluctuation — voltage dropping back
      * below that threshold does NOT reopen it. Only leaving RUNNING, or —
      * when charge_source_mode is BMS-Controlled — the BMS itself reporting

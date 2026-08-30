@@ -409,7 +409,7 @@ static bool test_relay_bms_mode(void)
 
     /* >=90% of BMS pack voltage, BMS healthy (bms_relay_allow default true
      * from sim_bms_reset): relay closes (arms the latch). */
-    g_sim_module.voltage = bms_ref * 0.95f;
+    g_sim_module.voltage = bms_ref * 0.97f;
     drive_ms(200U);
     ChargeController_GetView(&cv);
     ASSERT(cv.relay_should_close == 1, "relay should close once voltage >=90% of BMS pack voltage and BMS reports safe");
@@ -456,7 +456,7 @@ static bool setup_relay_closed_bms_mode(void)
     if (!setup_scenario(CHARGE_MODULE_TYPE_TONHE, NULL)) return false;
     set_healthy_bms(400.0f, 50);
     if (!warmup_and_start(1500U, 4000U)) return false;
-    g_sim_module.voltage = 400.0f * 0.95f; /* >=90% of the 400V pack */
+    g_sim_module.voltage = 400.0f * 0.97f; /* >=95% arm threshold of the 400V pack */
     drive_ms(200U);
     ChargeCtrlView_t cv;
     ChargeController_GetView(&cv);
@@ -602,7 +602,7 @@ static bool test_relay_arms_off_bms_voltage_not_target(void)
      * docstring), so it would read ~300V here, not the final target. */
     ASSERT(cfg.vmax_v > 350.0f, "target should be well above the pack's current voltage (sanity on the fixture)");
 
-    g_sim_module.voltage = 280.0f; /* >=90% of 300V pack, but nowhere near 90% of ~500V target */
+    g_sim_module.voltage = 290.0f; /* >=95% arm threshold of the 300V pack, but nowhere near 95% of the ~500V target */
     drive_ms(200U);
     ChargeCtrlView_t cv;
     ChargeController_GetView(&cv);
@@ -683,7 +683,7 @@ static bool test_relay_standalone_mode(void)
     ChargeController_GetView(&cv);
     ASSERT(cv.relay_should_close == 0, "relay must stay open below 90% target voltage");
 
-    g_sim_module.voltage = target * 0.95f;
+    g_sim_module.voltage = target * 0.97f;
     drive_ms(200U);
     ChargeController_GetView(&cv);
     ASSERT(cv.relay_should_close == 1, "relay should close on voltage alone -- no BMS required in standalone mode");
