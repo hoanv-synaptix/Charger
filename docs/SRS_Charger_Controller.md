@@ -246,7 +246,7 @@ Quy ước độ ưu tiên: **M** = Must, **S** = Should, **C** = Could.
 
 | ID | Yêu cầu | ƯP |
 |---|---|---|
-| FR-CFG-01 | `ChargeCycleConfig_t` 207 byte, version 3, static-assert kích thước | M |
+| FR-CFG-01 | `ChargeCycleConfig_t` 235 byte, version 4, static-assert kích thước. v4 thêm `device_id[16]`/`hw_rev[12]` (cho màn Setting); struct lớn hơn ⇒ record v≤3 trong flash bị loại khi boot v4 ⇒ config reset về default 1 lần (chấp nhận với người dùng 2026-08-30) | M |
 | FR-CFG-02 | Validate: float không NaN/âm, ngưỡng tăng dần, imax≥imin, module 1–8, enum trong phạm vi | M |
 | FR-CFG-03 | Flash record {magic, version, length, CRC32, payload} align 8; append; trang đầy mới erase | M |
 | FR-CFG-04 | Boot: nạp record hợp lệ mới nhất; không có → default | M |
@@ -256,10 +256,13 @@ Quy ước độ ưu tiên: **M** = Must, **S** = Should, **C** = Could.
 
 | ID | Yêu cầu | ƯP |
 |---|---|---|
-| FR-HMI-01 | Giao thức 5A A5: gửi int/string tới VP; parse nút nhấn VP 0x1002 → callback | S |
-| FR-HMI-02 | RX ring-buffer ISR, drain `BSP_RS485_Read()`; re-arm sau lỗi UART | M |
-| FR-HMI-03 | Tích hợp update dữ liệu HMI vào main loop | C (đang phát triển) |
-| FR-HMI-04 | Nút DWIN START/STOP → controller (owner=DWIN) | S |
+| FR-HMI-01 | Giao thức 5A A5 (không CRC): `DWIN_SendWords()` ghi N word big-endian tới VP liên tiếp; `DWIN_SendString()` ghi field cố định pad 0x00; parse frame 0x83 nút nhấn VP `0x1042` → `DWIN_OnActionButton()` + ghi 0 clear | S |
+| FR-HMI-02 | RX ring-buffer ISR, drain `BSP_RS485_Read()`; re-arm sau lỗi UART; `DWIN_ParseRX()` state-machine byte-wise có resync | M |
+| FR-HMI-03 | Update dữ liệu HMI trong main loop 50ms: scatter 8 nhóm field (DC/battery/AC/temp/SOC+status/btn/uptime), diff-suppressed; chuỗi định danh + trang DASH gửi 1 lần sau khi panel boot | M |
+| FR-HMI-04 | Nút action DWIN (VP `0x1042`, 1 keycode cố định) → `app_action_button()` quyết Start/Stop/Reset theo state controller (owner=DWIN), giống nút PA15 | S |
+| FR-HMI-05 | `VP_SYS_STATUS_ICON 0x1041` (0..5) + `VP_SYS_BTN_MODE 0x1043` (0..3) do `dwin_status_from_state()` / `dwin_btn_mode_from_status()` dẫn xuất | S |
+| FR-HMI-06 | Bảng Alarm (VP `0x1200+`) — Phase 2, cần module event-log | C (chưa làm) |
+| FR-HMI-07 | RTC (`VP_SYS_RTC_SET 0x009C`): panel tự giữ giờ; `DWIN_SetRTC()` có sẵn nhưng chưa gọi (chờ `BSP_RTC`) | C (chưa làm) |
 
 ### 3.7 Vận hành & an toàn — FR-OPS
 
@@ -323,7 +326,7 @@ Mã lỗi NACK: 0x01 bad CRC, 0x02 unknown cmd, 0x03 bad length, 0x04 CAN TX fai
 PING ──► PONG(version)
 SET_DRIVER(id) ──► ACK
 SET_MODULE_ADDR(addr,group) ──► ACK      (mỗi module)
-SET_CHARGE_CFG(207B) ──► CHARGE_CFG      (tùy chọn)
+SET_CHARGE_CFG(235B) ──► CHARGE_CFG      (tùy chọn)
 READ_ALL / GET_SYSTEM                    (giám sát)
 START(manual) ──► ACK
 ```
@@ -356,7 +359,7 @@ START(manual) ──► ACK
 | 0x16 | SEND_RAW_CAN | 0x95 |
 | 0x17 | READ_BMS | 0x93 |
 | 0x18 | GET_SYSTEM (68 B, mục 6.5) | 0x94 |
-| 0x19/0x1A | GET/SET_CHARGE_CFG (207 B) | 0x97 |
+| 0x19/0x1A | GET/SET_CHARGE_CFG (235 B) | 0x97 |
 
 ### 4.2 CAN1 — Module sạc (125 kbps, classic, ext-frame)
 
@@ -405,10 +408,29 @@ Frame RX được feed tới driver đang active qua `CHG_LIB_FeedCanFrame()`.
 
 ### 4.4 RS485 — HMI DWIN (115200-8N1, half-duplex, DE=PB1)
 
-- Header `5A A5`; Write=0x82, Read=0x83
-- MCU → DWIN: `5A A5 [len] 82 [VP_hi] [VP_lo] [data]`; VP: 0x1000 status, 0x1100 V, 0x1102 I, 0x1110 time, 0x1200 SOC, 0x1202 pack V, 0x1204 cell V, 0x1300–1304 AC L1/L2/L3, 0x1400/1402 temp, 0x2000 fault (1–8)
-- DWIN → MCU: `5A A5 [len] 83 [VP] [n] [data]`; VP 0x1002 = lệnh → `DWIN_OnCommandReceived()`
-- RX ring-buffer 128 byte, drain `BSP_RS485_Read()`
+- Header `5A A5`; Write=0x82, Read=0x83; **CRC tắt** (DGUS CFG bit 0x05.7 = 0). Big-endian; giá trị 32-bit chiếm 2 VP liên tiếp, word cao ở địa chỉ thấp.
+- VP map — nguồn sự thật: [`Modules/hmi/dwin_vp_map.h`](../Modules/hmi/dwin_vp_map.h), phải khớp project DGUS trong `ui/`.
+
+  | VP | Ý nghĩa | Định dạng |
+  |---|---|---|
+  | `0x0084` | chuyển trang (`5A01` + page id) | 0=logo 1=dash 2=setting 3=alarm |
+  | `0x1000/1/2` | DC V / I / P | u16 0.1V / 0.1A / 1W |
+  | `0x1010/1` | pack V / cell V | u16 0.1V / 0.01V |
+  | `0x1012` | charged Ah | u32 (0x1012–13) 0.1Ah — *Phase 2, hiện gửi 0* |
+  | `0x1020/1/2` | AC L1/L2/L3 | u16 1V |
+  | `0x1030/1/2` | temp battery / charge / jack | i16 signed 1°C |
+  | `0x1040` | SOC | u16 0–100% |
+  | `0x1041` | status icon | 0 READY 1 STARTING 2 CHARGING 3 COMPLETE 4 ERROR 5 OFFLINE |
+  | `0x1042` | nút action (DWIN→MCU) | Return-Key-Code; MCU ghi 0 clear |
+  | `0x1043` | button mode icon | 0 START 1 STOP 2 RESET 3 DISABLED |
+  | `0x1100/1108/1110` | HW ver / FW ver / Device ID | ASCII 8 VP / 16 ký tự |
+  | `0x1118` | uptime | u32 (0x1118–19) giây |
+  | `0x009C` | RTC set | *chưa dùng — panel tự giữ giờ* |
+  | `0x1200+` | bảng Alarm (20 VP/dòng ×5) | *Phase 2* |
+
+- MCU → DWIN: `5A A5 [len] 82 [VP_hi] [VP_lo] [word...]` — `DWIN_SendWords()` / `DWIN_SendString()` / `DWIN_SetPage()`; scatter 1 nhóm/50ms trong `DWIN_UpdateData()`.
+- DWIN → MCU: `5A A5 06 83 10 42 01 [val_hi] [val_lo]` khi nhấn nút → `DWIN_OnActionButton()` (val ≠ 0), sau đó MCU ghi `0x1042 = 0`.
+- RX ring-buffer 128 byte, drain `BSP_RS485_Read()`; `DWIN_ParseRX()` byte-wise có resync + chặn LEN quá cỡ.
 
 ### 4.5 Debug log (USART1)
 
@@ -480,7 +502,7 @@ addr, group, enabled, online, running, state; voltage/current/current_limit; tem
 
 FW version, driver id, module counts, charging, controller state/derating/inhibit, source mode, limit source/band; total V/I/P, max temp, target V/I, active limit C; uptime, CAN1/2 TX/RX (offset 46–61); controller fault flags, stop_reason, bms_stale.
 
-### 6.6 `ChargeCycleConfig_t` — 207 byte, v3 (packed)
+### 6.6 `ChargeCycleConfig_t` — 235 byte, v4 (packed)
 
 | Nhóm | Trường |
 |------|--------|
@@ -490,11 +512,12 @@ FW version, driver id, module counts, charging, controller state/derating/inhibi
 | SOC stage | enabled, delta, 5 ngưỡng %, 4 C-rate |
 | Bảo vệ | jack_charge {en, delta_v, delay_s}; jack_temp {en, delay_s, threshold, delta, limit_pct} |
 | Hệ thống | source_mode (0=BMS/1=Standalone), can_battery_id, source_module_count, module_type, module_u_min/max_v, module_i_min/max_a |
+| Định danh (v4) | device_id[16], hw_rev[12] — chuỗi ASCII cho màn Setting |
 
 ### 6.7 Flash layout cấu hình
 
 - Trang 63 `0x0801F800`, 2 KB, page-erase
-- Record `{u32 magic=0x43434647, u16 ver=1, u16 len=207, u32 crc32, payload[207]}`, align 8
+- Record `{u32 magic=0x43434647, u16 ver=1, u16 len=235, u32 crc32, payload[235]}`, align 8
 - Append vào offset trống; đầy → erase → ghi offset 0; read-back verify
 - CRC32 poly 0xEDB88320 reflected, init/final XOR 0xFFFFFFFF
 
@@ -542,7 +565,7 @@ PC                    MCU                                   CAN1           CAN2/
 
 | Mã | Mô tả | Ưu tiên |
 |----|-------|---------|
-| TBD-01 | DWIN HMI chưa tích hợp vào App_Loop (protocol sẵn sàng) | Trung bình |
+| ~~TBD-01~~ | ~~DWIN HMI chưa tích hợp vào App_Loop (protocol sẵn sàng)~~ | **Đã đóng 2026-08-30**: viết lại `Modules/hmi/dwin_protocol.*` theo project DGUS thật (`ui/`), thêm `Modules/hmi/dwin_vp_map.h`. `app_main.c` section (4) scatter update 8 nhóm field mỗi 50ms + `dwin_status_from_state()`/`dwin_btn_mode_from_status()`; nút màn hình dùng `app_action_button()` chung với nút PA15. Còn Phase 2: bảng Alarm `0x1200` (cần event-log) và RTC `0x009C` (chờ `BSP_RTC`). Verified: build FW Release, 4/4 check + host test dwin e2e. |
 | ~~TBD-02~~ | ~~`BMS_ShouldCloseChargeRelay()` có API nhưng chưa nối vào flow relay~~ | **Đã đóng** — _2026-08-29: đã nối từ trước (không rõ session nào, không có ghi chú); xác nhận lại bằng code khi review thuật toán sạc theo yêu cầu người dùng: `update_relay_decision()` (`charge_controller.c`) gọi `BMS_ShouldCloseChargeRelay()` ở chế độ BMS-Controlled, `app_main.c` đọc `relay_should_close` và ghi GPIO mỗi 20ms. Xem thêm TBD-05._ |
 | ~~TBD-03~~ | ~~Jack-temp ADC chưa đọc thực (giả lập 25°C)~~ | **Đã đóng** — _2026-08-29: đã đọc ADC thật từ trước (không rõ session nào); xác nhận lại bằng code: `app_main.c` đọc max 4 kênh NTC (`BSP_ADC_GetTempC`) mỗi chu kỳ, chỉ fallback 25°C khi cả 4 kênh disconnect (`<-50°C` sentinel), truyền vào `ChargeController_SetJackTempC()`._ |
 | **TBD-04** | `bms_chg_v/i_request` được parse nhưng BMS-mode cố tình bỏ qua (dùng config nội bộ) | **Đã xác nhận nghiệp vụ 2026-08-29**: đúng thiết kế, không phải gap. BMS chỉ đóng vai trò giám sát/an toàn (online/offline, alarm, telemetry nuôi stage band, `BMS_ShouldCloseChargeRelay()`); U/I mục tiêu luôn do thuật toán sạc quyết định từ `ChargeCycleConfig_t` cấu hình cục bộ, không theo yêu cầu động của BMS. Đã ghi rõ trong comment `run_bms_controlled_mode()`. |
