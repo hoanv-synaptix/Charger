@@ -28,8 +28,9 @@ extern "C" {
  * @note  Built by the composition root (App/System/app_main.c) each HMI tick
  *        from the charge-controller / BMS / charger views. This module holds
  *        NO policy -- all state->icon/page decisions happen in App.
- *        Temperatures are signed; negative values are sent as two's
- *        complement, which DGUS renders correctly for a signed-int control.
+ *        Temperatures are signed and scaled x10 (270 -> 27.0 degC): the DGUS
+ *        Data Variable control for 0x1030..0x1032 must be a signed integer
+ *        with 1 decimal place. Negative values go as two's complement.
  */
 typedef struct {
     /* --- dashboard --- */
@@ -42,9 +43,9 @@ typedef struct {
     uint16_t ac_l1_v;
     uint16_t ac_l2_v;
     uint16_t ac_l3_v;
-    int16_t  temp_battery_c;
-    int16_t  temp_charge_c;
-    int16_t  temp_jack_c;
+    int16_t  temp_battery_c_x10;
+    int16_t  temp_charge_c_x10;
+    int16_t  temp_jack_c_x10;
     uint16_t soc_pct;
     uint16_t status_icon;   /* DwinStatusIcon_e */
     uint16_t btn_mode;      /* DwinBtnMode_e */

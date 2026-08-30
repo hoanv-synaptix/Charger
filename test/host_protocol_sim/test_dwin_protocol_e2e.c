@@ -275,7 +275,7 @@ static bool test_update_data_scatter(void)
     DWIN_SystemData_t d;
     memset(&d, 0, sizeof(d));
     d.dc_voltage_x10 = 521;
-    d.temp_battery_c = -5;
+    d.temp_battery_c_x10 = -50;  /* -5.0 degC */
     d.status_icon = DWIN_STATUS_CHARGING;
     d.btn_mode = DWIN_BTN_STOP;
 
@@ -299,7 +299,7 @@ static bool test_update_data_scatter(void)
     ASSERT(frames_second_cycle == 0, "unchanged data is diff-suppressed");
 
     /* Change one field: exactly one frame next cycle, on the temp step. */
-    d.temp_charge_c = 42;
+    d.temp_charge_c_x10 = 425;  /* 42.5 degC */
     int frames_after_change = 0;
     for (int i = 0; i < 8; i++) {
         reset_capture();

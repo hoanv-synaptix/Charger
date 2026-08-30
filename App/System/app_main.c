@@ -423,7 +423,7 @@ void App_Loop(void)
             dd.soc_pct            = bms.soc;
             dd.bat_pack_volt_x10  = (uint16_t)(bms.batt_voltage * 10.0f);
             dd.bat_cell_volt_x100 = (uint16_t)(bms.max_cell_volt / 10U); /* mV -> 0.01V */
-            dd.temp_battery_c     = (int16_t)bms.max_cell_temp;
+            dd.temp_battery_c_x10 = (int16_t)(bms.max_cell_temp * 10.0f);
         }
         /* TODO(Phase 2): session charged-Ah has no accumulator yet -- send 0
          * rather than a misleading proxy. Goes with the alarm/event-log work. */
@@ -439,11 +439,11 @@ void App_Loop(void)
 
         /* NTC channels: ch0 = charger, ch1..3 = jack/connector (max, with the
          * same "-50C means disconnected" fallback used for jack derating).
-         * BSP_ADC_GetTempC() returns NAN for an open/short NTC -- send 0, not
-         * a (int16_t)NAN garbage value. */
+         * All temps go x10 (270 = 27.0 degC). BSP_ADC_GetTempC() returns NAN
+         * for an open/short NTC -- send 0, not a (int16_t)NAN garbage value. */
         {
             float charge_t = BSP_ADC_GetTempC(0);
-            dd.temp_charge_c = isfinite(charge_t) ? (int16_t)charge_t : 0;
+            dd.temp_charge_c_x10 = isfinite(charge_t) ? (int16_t)(charge_t * 10.0f) : 0;
         }
         {
             float jack_c = -273.15f;
@@ -453,7 +453,7 @@ void App_Loop(void)
                     jack_c = t;
                 }
             }
-            dd.temp_jack_c = (int16_t)((jack_c < -50.0f) ? 0.0f : jack_c);
+            dd.temp_jack_c_x10 = (int16_t)((jack_c < -50.0f) ? 0.0f : jack_c * 10.0f);
         }
 
         dd.status_icon = dwin_status_from_state(&cc_view, &sum);

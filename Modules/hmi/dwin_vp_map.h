@@ -44,7 +44,8 @@
 #define VP_AC_PHASE_L2       0x1021U
 #define VP_AC_PHASE_L3       0x1022U
 
-/* --- Dashboard: Temperature (0x1030), i16 signed, 1 degC --- */
+/* --- Dashboard: Temperature (0x1030), i16 signed, 0.1 degC (270 = 27.0)
+ *     -- DGUS control: signed int, 1 decimal place --- */
 #define VP_TEMP_BATTERY      0x1030U
 #define VP_TEMP_CHARGE       0x1031U
 #define VP_TEMP_JACK         0x1032U

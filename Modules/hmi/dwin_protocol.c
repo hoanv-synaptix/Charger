@@ -214,12 +214,12 @@ void DWIN_UpdateData(const DWIN_SystemData_t *d)
         break;
 
     case STEP_TEMP:
-        if (first || prev.temp_battery_c != d->temp_battery_c ||
-            prev.temp_charge_c != d->temp_charge_c ||
-            prev.temp_jack_c != d->temp_jack_c) {
-            w[0] = (uint16_t)d->temp_battery_c;
-            w[1] = (uint16_t)d->temp_charge_c;
-            w[2] = (uint16_t)d->temp_jack_c;
+        if (first || prev.temp_battery_c_x10 != d->temp_battery_c_x10 ||
+            prev.temp_charge_c_x10 != d->temp_charge_c_x10 ||
+            prev.temp_jack_c_x10 != d->temp_jack_c_x10) {
+            w[0] = (uint16_t)d->temp_battery_c_x10;
+            w[1] = (uint16_t)d->temp_charge_c_x10;
+            w[2] = (uint16_t)d->temp_jack_c_x10;
             DWIN_SendWords(VP_TEMP_BATTERY, w, 3);
         }
         break;
