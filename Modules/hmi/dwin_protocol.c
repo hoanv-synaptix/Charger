@@ -133,10 +133,10 @@ void DWIN_SetRTC(uint16_t year, uint8_t month, uint8_t day,
 /* ===================== TX: dashboard scatter ===================== */
 
 /* One field-group per DWIN_UpdateData() call. Contiguous VPs are grouped
- * into a single multi-word write. STEP_BTN_MODE writes VP_SYS_BUTTON
- * (0x1043) -- that VP is bidirectional (the panel also uploads the button
- * keycode on press); the write here just drives the label icon, and the RX
- * path re-writes it right after a press (see app_main DWIN_OnActionButton). */
+ * into a single multi-word write. The button is split across two VPs:
+ * STEP_BTN_MODE writes the label icon to VP_SYS_BTN_ICON (0x1042, MCU->panel
+ * only); the panel uploads presses on VP_SYS_BTN_KEY (0x1043), which the MCU
+ * never writes -- so no collision, no clear/restore dance. */
 enum {
     STEP_DC = 0,      /* 0x1000..0x1002 */
     STEP_BATT_V,      /* 0x1010..0x1011 */
@@ -237,7 +237,7 @@ void DWIN_UpdateData(const DWIN_SystemData_t *d)
     case STEP_BTN_MODE:
         if (first || prev.btn_mode != d->btn_mode) {
             w[0] = d->btn_mode;
-            DWIN_SendWords(VP_SYS_BUTTON, w, 1);
+            DWIN_SendWords(VP_SYS_BTN_ICON, w, 1);
         }
         break;
 
@@ -316,12 +316,12 @@ void DWIN_ParseRX(const uint8_t *buf, uint16_t len)
                 if (rx[3] == DWIN_CMD_READ && expected >= 6U) {
                     uint16_t vp = (uint16_t)(((uint16_t)rx[4] << 8) | rx[5]);
                     uint8_t  nw = rx[6];
-                    if (vp == VP_SYS_BUTTON && nw >= 1U) {
+                    if (vp == VP_SYS_BTN_KEY && nw >= 1U) {
                         uint16_t keyval =
                             (uint16_t)(((uint16_t)rx[7] << 8) | rx[8]);
                         /* Any non-zero upload of 0x1043 is a button press
-                         * (fixed keycode). The override restores the label
-                         * icon on this same VP -- no clear frame here. */
+                         * (fixed keycode). The label icon lives on a
+                         * separate VP (0x1042), so nothing to clear here. */
                         if (keyval != 0U) {
                             DWIN_OnActionButton(keyval);
                         }

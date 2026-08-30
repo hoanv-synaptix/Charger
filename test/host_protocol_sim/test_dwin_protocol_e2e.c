@@ -175,7 +175,7 @@ static bool test_parse_rx_dispatches(void)
     reset_capture();
 
     uint8_t f[9];
-    build_touch_frame(f, VP_SYS_BUTTON, 1);
+    build_touch_frame(f, VP_SYS_BTN_KEY, 1);
     DWIN_ParseRX(f, sizeof(f));
 
     ASSERT(g_action_count == 1, "one valid touch frame -> one dispatch");
@@ -194,7 +194,7 @@ static bool test_parse_rx_byte_by_byte(void)
     reset_capture();
 
     uint8_t f[9];
-    build_touch_frame(f, VP_SYS_BUTTON, 2);
+    build_touch_frame(f, VP_SYS_BTN_KEY, 2);
     for (uint16_t i = 0; i < sizeof(f); i++) {
         DWIN_ParseRX(&f[i], 1);
     }
@@ -212,7 +212,7 @@ static bool test_parse_rx_ignores_zero_and_other_vp(void)
     reset_capture();
 
     uint8_t f[9];
-    build_touch_frame(f, VP_SYS_BUTTON, 0); /* keyval 0 = nothing pressed */
+    build_touch_frame(f, VP_SYS_BTN_KEY, 0); /* keyval 0 = nothing pressed */
     DWIN_ParseRX(f, sizeof(f));
     ASSERT(g_action_count == 0 && g_tx_count == 0, "keyval 0 -> no dispatch, no clear");
 
@@ -230,7 +230,7 @@ static bool test_parse_rx_resyncs_on_stray_header1(void)
     reset_capture();
 
     uint8_t good[9];
-    build_touch_frame(good, VP_SYS_BUTTON, 3);
+    build_touch_frame(good, VP_SYS_BTN_KEY, 3);
 
     uint8_t stream[16];
     uint16_t n = 0;
@@ -257,7 +257,7 @@ static bool test_parse_rx_rejects_oversized_length(void)
     DWIN_ParseRX(bad, sizeof(bad));
 
     uint8_t good[9];
-    build_touch_frame(good, VP_SYS_BUTTON, 4);
+    build_touch_frame(good, VP_SYS_BTN_KEY, 4);
     DWIN_ParseRX(good, sizeof(good));
 
     ASSERT(g_action_count == 1, "parser recovers after an oversized LEN, not wedged");
@@ -323,7 +323,7 @@ static bool test_update_data_scatter(void)
         else if (vp == VP_AC_PHASE_L1)    seen |= 1u << 3;
         else if (vp == VP_TEMP_BATTERY)   seen |= 1u << 4;
         else if (vp == VP_SOC_VALUE)      seen |= 1u << 5;
-        else if (vp == VP_SYS_BUTTON)   seen |= 1u << 6;
+        else if (vp == VP_SYS_BTN_ICON)   seen |= 1u << 6;
         else if (vp == VP_SET_UPTIME)     seen |= 1u << 7;
     }
     ASSERT(seen == 0xFF, "forced refresh re-sends all 8 field groups");

@@ -51,15 +51,11 @@
 #define VP_TEMP_JACK         0x1032U
 
 /* --- Dashboard: centre status + action button (0x1040) --- */
-#define VP_SOC_VALUE         0x1040U  /* u16, 0..100 % */
-#define VP_SYS_STATUS_ICON   0x1041U  /* u16, DwinStatusIcon_e -- drives the status-box Variable Icon */
-/* 0x1042 unused -- the button's touch upload was moved to 0x1043. */
-#define VP_SYS_BUTTON        0x1043U  /* BIDIRECTIONAL:
-                                       *  MCU -> panel : u16 DwinBtnMode_e (0..3) -- the button-label
-                                       *                 Variable Icon.
-                                       *  panel -> MCU : Return-Key-Code upload on every press (fixed
-                                       *                 keycode, value ignored). The MCU re-writes the
-                                       *                 label right after handling the press. */
+#define VP_SOC_VALUE         0x1040U  /* MCU->panel: u16, 0..100 % */
+#define VP_SYS_STATUS_ICON   0x1041U  /* MCU->panel: u16 DwinStatusIcon_e -- status-box Variable Icon */
+#define VP_SYS_BTN_ICON      0x1042U  /* MCU->panel: u16 DwinBtnMode_e (0..3) -- button-label Variable Icon */
+#define VP_SYS_BTN_KEY       0x1043U  /* panel->MCU: Return-Key-Code upload on every press (fixed keycode,
+                                       * value ignored). MCU never writes this VP. */
 
 /* --- Setting screen (0x1100) --- */
 #define VP_SET_HW_VER        0x1100U  /* ASCII, 8 VP / 16 chars */
@@ -94,7 +90,7 @@ typedef enum {
     DWIN_STATUS_OFFLINE  = 5,
 } DwinStatusIcon_e;
 
-/* VP_SYS_BUTTON label values (button-label Variable Icon). */
+/* VP_SYS_BTN_ICON values (button-label Variable Icon). */
 typedef enum {
     DWIN_BTN_START    = 0,
     DWIN_BTN_STOP     = 1,

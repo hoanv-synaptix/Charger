@@ -76,7 +76,7 @@ static uint8_t read_btn_start(void) { return BSP_BTN_IsPressed(BSP_BTN_START) ? 
  * Policy lives here in the composition root, not in Modules/hmi (which does
  * pure framing). The dashboard centre element is one status-box Variable
  * Icon (VP_SYS_STATUS_ICON, 6 states) plus one button-label Variable Icon
- * (VP_SYS_BUTTON, 4 modes). Neither is a safety interlock -- the relay /
+ * (VP_SYS_BTN_ICON, 4 modes). Neither is a safety interlock -- the relay /
  * charge-control logic reads fault_flags/state directly. */
 
 static uint16_t dwin_status_from_state(const ChargeCtrlView_t *cc,
@@ -476,12 +476,12 @@ void App_Loop(void)
     MX_IWDG_Refresh();
 }
 
-/* The DGUS button uploads a fixed keycode on VP 0x1043; `keyval` only means
- * "pressed". app_action_button() decides what to do from the status the
- * button is currently showing, same as the physical PA15 button.
- * The panel's upload also overwrote 0x1043 with the keycode, so re-write the
- * correct label icon afterwards (the periodic diff-write in DWIN_UpdateData
- * would not if the press did not change state -- e.g. a rejected Start). */
+/* The DGUS button uploads a fixed keycode on VP_SYS_BTN_KEY (0x1043);
+ * `keyval` only means "pressed". app_action_button() decides what to do
+ * from the status the button is currently showing, same as the physical
+ * PA15 button. The button-label icon is a separate MCU-owned VP
+ * (VP_SYS_BTN_ICON, 0x1042); write the fresh label straight away so it
+ * flips without waiting for the next scatter cycle. */
 void DWIN_OnActionButton(uint16_t keyval)
 {
     uint32_t now = BSP_GetTick();
@@ -493,6 +493,6 @@ void DWIN_OnActionButton(uint16_t keyval)
 
     {
         uint16_t btn = dwin_btn_mode_from_status(dwin_current_status());
-        DWIN_SendWords(VP_SYS_BUTTON, &btn, 1);
+        DWIN_SendWords(VP_SYS_BTN_ICON, &btn, 1);
     }
 }
