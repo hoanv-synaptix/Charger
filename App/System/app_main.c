@@ -24,6 +24,7 @@
 #include "chg_lib_driver_tonhe.h"
 #include "pc_protocol.h"
 #include "pc_debug_protocol.h"
+#include "app_dwin_debug.h"
 #include "debug_log.h"
 #include "main.h"
 #include "iwdg.h"
@@ -298,11 +299,14 @@ void App_Loop(void)
 
     PC_Protocol_ProcessTx();
     
-    /* DWIN HMI: Read RX and Parse */
+    /* DWIN HMI: drain RX + parse; pump any queued bench-debug frame first
+     * (no-op unless CHG_DEBUG_DWIN). */
+    AppDwinDebug_Pump();
     uint8_t rs485_buf[64];
     uint16_t rs485_len = BSP_RS485_Read(rs485_buf, sizeof(rs485_buf));
     if (rs485_len > 0) {
         DWIN_ParseRX(rs485_buf, rs485_len);
+        AppDwinDebug_CaptureRx(rs485_buf, rs485_len);
     }
 
     /* (2) Button handling with debounce -- single toggle button (BUTTON_1/

@@ -22,6 +22,7 @@
 #define DEBUG_CMD_GET_SYSTEM      0x18    /**< Read system information */
 #define DEBUG_CMD_GET_CHARGE_CFG  0x19    /**< Read charge-cycle configuration */
 #define DEBUG_CMD_SET_CHARGE_CFG  0x1A    /**< Write charge-cycle configuration */
+#define DEBUG_CMD_DWIN_XFER       0x1B    /**< (Debug build only) push raw bytes to the DWIN over RS485, then return RS485 RX captured since the previous call. Empty payload = poll-only. */
 
 /* ============== Debug Responses (MCU -> PC) ============== */
 #define DEBUG_RSP_MODULE_DATA     0x90    /**< Single module data */
@@ -32,6 +33,7 @@
 #define DEBUG_RSP_RAW_CAN_TX      0x95    /**< Raw CAN TX confirmation */
 #define DEBUG_RSP_ERROR           0x96    /**< Error response */
 #define DEBUG_RSP_CHARGE_CFG      0x97    /**< Charge-cycle configuration */
+#define DEBUG_RSP_DWIN_XFER       0x9B    /**< DWIN RS485 RX bytes captured since the last DWIN_XFER */
 
 /* ============== Constants ============== */
 #define DEBUG_MAX_MODULES         8

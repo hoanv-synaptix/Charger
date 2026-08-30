@@ -14,6 +14,7 @@
 #include "debug_log.h"
 #include "bsp_can.h"
 #include "bsp_sys.h"
+#include "app_dwin_debug.h"
 #include <string.h>
 
 /* ============== Private State ============== */
@@ -552,6 +553,25 @@ bool DebugProtocol_HandleCommand(uint8_t cmd, const uint8_t *payload, uint16_t l
         return true;
     }
 #endif /* CHG_DEBUG_RAW_CAN */
+
+#ifdef CHG_DEBUG_DWIN
+    case DEBUG_CMD_DWIN_XFER: {
+        /* Bench-debug only (see CHG_DEBUG_DWIN in CMakeLists.txt): push
+         * `payload` verbatim out the RS485 line to the DWIN panel, using
+         * the MCU's own transceiver. Runs in USB-ISR context, so it only
+         * QUEUES the bytes -- App_Loop() does the actual blocking transmit
+         * and captures the panel's reply. Reply carries whatever RS485 RX
+         * was captured since the previous call (empty payload = poll-only).
+         * Flow from the PC: send the frame, wait ~150ms, send an empty
+         * DWIN_XFER to collect the reply. */
+        if (len > 0U) {
+            AppDwinDebug_QueueTx(payload, (uint8_t)((len > 40U) ? 40U : len));
+        }
+        uint16_t rx_n = AppDwinDebug_TakeRx(reply, (uint8_t)sizeof(reply));
+        PC_Protocol_SendFrame(DEBUG_RSP_DWIN_XFER, reply, rx_n);
+        return true;
+    }
+#endif /* CHG_DEBUG_DWIN */
 
     default:
         /* Not handled - let standard protocol handler try */

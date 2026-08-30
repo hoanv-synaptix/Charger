@@ -14,6 +14,8 @@ set(CMAKE_C_EXTENSIONS ON)
 
 
 # Define the build type
+option(CHG_DEBUG_DWIN "Enable the USB->RS485 DWIN relay debug command (bench only)" OFF)
+
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE "Release")
 endif()
@@ -61,6 +63,13 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     # out of Release so a production unit's USB debug port cannot be used to
     # send arbitrary commands onto the charger/BMS bus.
     $<$<CONFIG:Debug>:CHG_DEBUG_RAW_CAN>
+    # CHG_DEBUG_DWIN: enables DEBUG_CMD_DWIN_XFER (App/Protocol/pc_debug_protocol.c
+    # + App/Protocol/app_dwin_debug.c) -- the PC pushes a raw frame to the DWIN
+    # panel over RS485 and reads the reply, via the MCU's own transceiver
+    # (test/dwin_cli.py). OFF by default and NOT tied to CONFIG:Debug, because
+    # the -O0 -g3 Debug build already overflows the 128 KB flash; turn it on for
+    # a Release build:  cmake --preset Release -DCHG_DEBUG_DWIN=ON
+    $<$<BOOL:${CHG_DEBUG_DWIN}>:CHG_DEBUG_DWIN>
 )
 
 # Remove wrong libob.a library dependency when using cpp files
