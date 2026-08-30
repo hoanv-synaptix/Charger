@@ -150,87 +150,67 @@ enum {
 void DWIN_UpdateData(const DWIN_SystemData_t *d)
 {
     static uint8_t step = 0;
-    static DWIN_SystemData_t prev;
-    static bool have_prev = false;
     uint16_t w[3];
-    bool first = !have_prev;
 
     if (d == NULL) {
         return;
     }
 
+    /* One field group per call, cycling through all of them -- a full
+     * refresh of every VP every STEP_COUNT calls (~400 ms at the 50 ms HMI
+     * tick). No diff suppression: the panel always has the current value, a
+     * panel that just rebooted catches up within one cycle, and a mid-stream
+     * sniff sees the whole picture. Bus cost is trivial (~10 small frames
+     * per 400 ms at 115200). */
     switch (step) {
     case STEP_DC:
-        if (first || prev.dc_voltage_x10 != d->dc_voltage_x10 ||
-            prev.dc_current_x10 != d->dc_current_x10 ||
-            prev.dc_power_w != d->dc_power_w) {
-            w[0] = d->dc_voltage_x10;
-            w[1] = d->dc_current_x10;
-            w[2] = d->dc_power_w;
-            DWIN_SendWords(VP_DC_VOLTAGE, w, 3);
-        }
+        w[0] = d->dc_voltage_x10;
+        w[1] = d->dc_current_x10;
+        w[2] = d->dc_power_w;
+        DWIN_SendWords(VP_DC_VOLTAGE, w, 3);
         break;
 
     case STEP_BATT_V:
-        if (first || prev.bat_pack_volt_x10 != d->bat_pack_volt_x10 ||
-            prev.bat_cell_volt_x100 != d->bat_cell_volt_x100) {
-            w[0] = d->bat_pack_volt_x10;
-            w[1] = d->bat_cell_volt_x100;
-            DWIN_SendWords(VP_BAT_PACK_VOLT, w, 2);
-        }
+        w[0] = d->bat_pack_volt_x10;
+        w[1] = d->bat_cell_volt_x100;
+        DWIN_SendWords(VP_BAT_PACK_VOLT, w, 2);
         break;
 
     case STEP_CHARGED_AH:
-        if (first || prev.charged_ah_x10 != d->charged_ah_x10) {
-            w[0] = (uint16_t)(d->charged_ah_x10 >> 16);
-            w[1] = (uint16_t)(d->charged_ah_x10 & 0xFFFFU);
-            DWIN_SendWords(VP_BAT_CHARGED_AH, w, 2);
-        }
+        w[0] = (uint16_t)(d->charged_ah_x10 >> 16);
+        w[1] = (uint16_t)(d->charged_ah_x10 & 0xFFFFU);
+        DWIN_SendWords(VP_BAT_CHARGED_AH, w, 2);
         break;
 
     case STEP_AC:
-        if (first || prev.ac_l1_v != d->ac_l1_v || prev.ac_l2_v != d->ac_l2_v ||
-            prev.ac_l3_v != d->ac_l3_v) {
-            w[0] = d->ac_l1_v;
-            w[1] = d->ac_l2_v;
-            w[2] = d->ac_l3_v;
-            DWIN_SendWords(VP_AC_PHASE_L1, w, 3);
-        }
+        w[0] = d->ac_l1_v;
+        w[1] = d->ac_l2_v;
+        w[2] = d->ac_l3_v;
+        DWIN_SendWords(VP_AC_PHASE_L1, w, 3);
         break;
 
     case STEP_TEMP:
-        if (first || prev.temp_battery_c != d->temp_battery_c ||
-            prev.temp_charge_c != d->temp_charge_c ||
-            prev.temp_jack_c != d->temp_jack_c) {
-            w[0] = (uint16_t)d->temp_battery_c;
-            w[1] = (uint16_t)d->temp_charge_c;
-            w[2] = (uint16_t)d->temp_jack_c;
-            DWIN_SendWords(VP_TEMP_BATTERY, w, 3);
-        }
+        w[0] = (uint16_t)d->temp_battery_c;
+        w[1] = (uint16_t)d->temp_charge_c;
+        w[2] = (uint16_t)d->temp_jack_c;
+        DWIN_SendWords(VP_TEMP_BATTERY, w, 3);
         break;
 
     case STEP_SOC_STATUS:
-        if (first || prev.soc_pct != d->soc_pct ||
-            prev.status_icon != d->status_icon) {
-            w[0] = d->soc_pct;
-            w[1] = d->status_icon;
-            DWIN_SendWords(VP_SOC_VALUE, w, 2);
-        }
+        w[0] = d->soc_pct;
+        w[1] = d->status_icon;
+        DWIN_SendWords(VP_SOC_VALUE, w, 2);
         break;
 
     case STEP_BTN_MODE:
-        if (first || prev.btn_mode != d->btn_mode) {
-            w[0] = d->btn_mode;
-            DWIN_SendWords(VP_SYS_BTN_MODE, w, 1);
-        }
+        w[0] = d->btn_mode;
+        DWIN_SendWords(VP_SYS_BTN_MODE, w, 1);
         break;
 
     case STEP_UPTIME:
-        if (first || prev.uptime_s != d->uptime_s) {
-            w[0] = (uint16_t)(d->uptime_s >> 16);
-            w[1] = (uint16_t)(d->uptime_s & 0xFFFFU);
-            DWIN_SendWords(VP_SET_UPTIME, w, 2);
-        }
+        w[0] = (uint16_t)(d->uptime_s >> 16);
+        w[1] = (uint16_t)(d->uptime_s & 0xFFFFU);
+        DWIN_SendWords(VP_SET_UPTIME, w, 2);
         break;
 
     default:
@@ -240,8 +220,6 @@ void DWIN_UpdateData(const DWIN_SystemData_t *d)
     step++;
     if (step >= STEP_COUNT) {
         step = 0;
-        prev = *d;
-        have_prev = true;
     }
 }
 

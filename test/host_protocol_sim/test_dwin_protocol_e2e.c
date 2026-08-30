@@ -270,7 +270,6 @@ static bool test_parse_rx_rejects_oversized_length(void)
 static bool test_update_data_scatter(void)
 {
     printf("Running test_update_data_scatter...\n");
-    reset_capture();
 
     DWIN_SystemData_t d;
     memset(&d, 0, sizeof(d));
@@ -279,34 +278,39 @@ static bool test_update_data_scatter(void)
     d.status_icon = DWIN_STATUS_CHARGING;
     d.btn_mode = DWIN_BTN_STOP;
 
-    /* First full cycle: every step sends (no previous snapshot). */
-    int frames_first_cycle = 0;
-    for (int i = 0; i < 8; i++) {
-        reset_capture();
-        DWIN_UpdateData(&d);
-        frames_first_cycle += g_tx_count;
-        ASSERT(g_tx_count <= 1, "at most one frame per call");
+    /* One frame per call, and a full refresh every 8 calls -- every cycle,
+     * whether or not the data changed (no diff suppression). */
+    for (int cycle = 0; cycle < 3; cycle++) {
+        int frames = 0;
+        uint16_t seen_vps = 0;  /* bitmask of the 8 groups */
+        for (int i = 0; i < 8; i++) {
+            reset_capture();
+            DWIN_UpdateData(&d);
+            ASSERT(g_tx_count == 1, "exactly one frame per call, every cycle");
+            frames += g_tx_count;
+            uint16_t vp = ((uint16_t)g_tx[0][4] << 8) | g_tx[0][5];
+            if (vp == VP_DC_VOLTAGE)      seen_vps |= 1u << 0;
+            else if (vp == VP_BAT_PACK_VOLT)  seen_vps |= 1u << 1;
+            else if (vp == VP_BAT_CHARGED_AH) seen_vps |= 1u << 2;
+            else if (vp == VP_AC_PHASE_L1)    seen_vps |= 1u << 3;
+            else if (vp == VP_TEMP_BATTERY)   seen_vps |= 1u << 4;
+            else if (vp == VP_SOC_VALUE)      seen_vps |= 1u << 5;
+            else if (vp == VP_SYS_BTN_MODE)   seen_vps |= 1u << 6;
+            else if (vp == VP_SET_UPTIME)     seen_vps |= 1u << 7;
+        }
+        ASSERT(frames == 8, "full refresh every cycle regardless of change");
+        ASSERT(seen_vps == 0xFF, "all 8 field groups sent once per cycle");
     }
-    ASSERT(frames_first_cycle == 8, "first cycle pushes all 8 field groups");
 
-    /* Second cycle, unchanged data: nothing is re-sent. */
-    int frames_second_cycle = 0;
+    /* A write never lands on the touch inbox VP 0x1042. */
     for (int i = 0; i < 8; i++) {
         reset_capture();
         DWIN_UpdateData(&d);
-        frames_second_cycle += g_tx_count;
+        uint16_t vp = ((uint16_t)g_tx[0][4] << 8) | g_tx[0][5];
+        uint8_t nwords = (g_tx[0][2] - 3) / 2;
+        ASSERT(!(vp <= VP_SYS_ACTION_BTN && vp + nwords > VP_SYS_ACTION_BTN),
+               "no frame's VP span covers 0x1042");
     }
-    ASSERT(frames_second_cycle == 0, "unchanged data is diff-suppressed");
-
-    /* Change one field: exactly one frame next cycle, on the temp step. */
-    d.temp_charge_c = 42;
-    int frames_after_change = 0;
-    for (int i = 0; i < 8; i++) {
-        reset_capture();
-        DWIN_UpdateData(&d);
-        frames_after_change += g_tx_count;
-    }
-    ASSERT(frames_after_change == 1, "one changed field -> one frame");
 
     printf("[PASS] test_update_data_scatter\n");
     return true;
