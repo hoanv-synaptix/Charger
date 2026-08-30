@@ -46,6 +46,11 @@ void ChargeCycleConfig_GetDefaults(ChargeCycleConfig_t *config)
     config->module_i_min_a = 5.0f;
     config->module_i_max_a = 100.0f;
     config->protect_jack_temp_power_limit_pct = 80.0f;
+
+    /* strncpy into a memset-0 buffer leaves the field NUL-terminated as long
+     * as the literal is shorter than the field, which both are. */
+    strncpy(config->device_id, "PKG-0001", sizeof(config->device_id) - 1U);
+    strncpy(config->hw_rev, "HW V1.0", sizeof(config->hw_rev) - 1U);
 }
 
 void ChargeCycleConfig_Init(void)
@@ -68,7 +73,8 @@ bool ChargeCycleConfig_Set(const ChargeCycleConfig_t *config)
         return false;
     }
 
-    if (config->version != CHARGE_CYCLE_CONFIG_VERSION && config->version != 1U && config->version != 2U) {
+    if (config->version != CHARGE_CYCLE_CONFIG_VERSION &&
+        config->version != 1U && config->version != 2U && config->version != 3U) {
         return false;
     }
 
@@ -154,6 +160,10 @@ bool ChargeCycleConfig_Set(const ChargeCycleConfig_t *config)
     }
 
     g_charge_cycle_config = *config;
+    /* Defend the display/consumer side against a caller that filled the
+     * identity fields to the brim without a terminator. */
+    g_charge_cycle_config.device_id[sizeof(g_charge_cycle_config.device_id) - 1U] = '\0';
+    g_charge_cycle_config.hw_rev[sizeof(g_charge_cycle_config.hw_rev) - 1U] = '\0';
 
     CHG_LIB_DriverId_t drv_id = CHG_LIB_DRV_NONE;
     switch (config->module_type) {
@@ -193,5 +203,15 @@ bool ChargeCycleConfig_Set(const ChargeCycleConfig_t *config)
     }
 
     return true;
+}
+
+const char *ChargeCycleConfig_GetDeviceId(void)
+{
+    return g_charge_cycle_config.device_id;
+}
+
+const char *ChargeCycleConfig_GetHwRev(void)
+{
+    return g_charge_cycle_config.hw_rev;
 }
 

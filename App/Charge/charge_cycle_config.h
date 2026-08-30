@@ -8,7 +8,12 @@
 extern "C" {
 #endif
 
-#define CHARGE_CYCLE_CONFIG_VERSION 3U
+#define CHARGE_CYCLE_CONFIG_VERSION 4U
+
+/* Fixed-width identity strings shown on the DWIN "Setting" screen
+ * (VP_SET_HW_VER / VP_SET_DEVICE_ID). Always NUL-terminated on load. */
+#define CHARGE_CYCLE_DEVICE_ID_LEN 16U
+#define CHARGE_CYCLE_HW_REV_LEN    12U
 
 typedef enum {
     CHARGE_MODULE_TYPE_UNKNOWN = 0,
@@ -91,14 +96,29 @@ typedef struct __attribute__((packed)) {
     float module_u_max_v;
     float module_i_min_a;
     float module_i_max_a;
+
+    /* v4: device identity strings for the DWIN Setting screen. Appended at
+     * the end so the on-flash layout of every prior field is unchanged.
+     * Growing the struct changes sizeof(), which the storage layer keys its
+     * record-validity check on (charge_cycle_storage.c validate_record):
+     * records written by v<=3 firmware are silently rejected on the first
+     * boot of v4 and the defaults are loaded instead -- a deliberate,
+     * one-time reset of the saved charge parameters, accepted with the user
+     * 2026-08-30. Re-save from the PC app after upgrading. */
+    char device_id[CHARGE_CYCLE_DEVICE_ID_LEN];
+    char hw_rev[CHARGE_CYCLE_HW_REV_LEN];
 } ChargeCycleConfig_t;
 
-_Static_assert(sizeof(ChargeCycleConfig_t) == 207, "ChargeCycleConfig_t must stay 207 bytes");
+_Static_assert(sizeof(ChargeCycleConfig_t) == 235, "ChargeCycleConfig_t must stay 235 bytes");
 
 void ChargeCycleConfig_Init(void);
 void ChargeCycleConfig_Get(ChargeCycleConfig_t *config);
 bool ChargeCycleConfig_Set(const ChargeCycleConfig_t *config);
 void ChargeCycleConfig_GetDefaults(ChargeCycleConfig_t *config);
+
+/** Identity strings (always NUL-terminated). Never NULL. */
+const char *ChargeCycleConfig_GetDeviceId(void);
+const char *ChargeCycleConfig_GetHwRev(void);
 
 #ifdef __cplusplus
 }
