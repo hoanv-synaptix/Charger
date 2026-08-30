@@ -1,0 +1,1088 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Battery HMI System 480x272</title>
+    <!-- Use FontAwesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #333;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        .dashboard-container {
+            width: 480px;
+            height: 272px;
+            background-color: #f0f3f6;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+        }
+
+        /* Header */
+        .header {
+            background-color: #ffffff; 
+            height: 28px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0 10px;
+            border-bottom: 2px solid #cbd5e1;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.08); 
+            position: relative;
+            z-index: 10;
+        }
+        .logo { 
+            display: flex; 
+            align-items: center; 
+            height: 100%;
+        }
+        .logo-icon-wrapper {
+            height: 16px; 
+            overflow: hidden;
+            display: flex;
+        }
+        .logo-icon-wrapper img {
+            height: 22px; 
+            object-fit: cover;
+            object-position: left top;
+        }
+        .logo-battery {
+            color: #000000; 
+            font-size: 14px; 
+            font-weight: bold;
+            margin-left: 6px;
+            letter-spacing: 0.5px;
+            font-family: Arial, sans-serif;
+        }
+        .device-id { 
+            color: #444444; 
+            font-size: 12px; 
+            font-weight: bold; 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            letter-spacing: 0.5px; 
+        }
+
+        /* Main Content */
+        .main-content {
+            display: flex;
+            justify-content: space-between;
+            padding: 6px 6px 4px 6px; 
+            height: 216px;
+        }
+        .col { width: 150px; display: flex; flex-direction: column; justify-content: space-between; }
+        .col-center { width: 156px; }
+
+        /* Panels */
+        .panel {
+            background-color: white;
+            border: 1px solid #d0d7e0;
+            border-radius: 5px;
+            height: 100px;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+        }
+        .panel-header {
+            height: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 12px;
+            font-weight: bold;
+            gap: 6px;
+        }
+        .panel-header i { font-size: 13px; }
+        
+        .bg-blue { background-color: #1a51a1; }
+        .bg-green { background-color: #179344; }
+        .bg-orange { background-color: #ea851c; }
+
+        .panel-body {
+            flex: 1;
+            padding: 4px 8px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-around;
+        }
+
+        /* Data Rows */
+        .data-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            font-size: 11px; 
+            font-weight: bold;
+            font-family: Arial, sans-serif;
+        }
+        .data-label { color: #222; text-transform: uppercase; }
+        .data-value { 
+            display: grid; 
+            grid-template-columns: 1fr 18px; 
+            gap: 4px; 
+            align-items: baseline; 
+            width: 72px; 
+        }
+        .data-num { font-size: 17px; color: #000; text-align: right; } 
+        .data-unit { font-size: 13px; color: #333; text-align: right; } 
+        .text-red { color: #e12b18; }
+
+        /* SOC Panel */
+        .soc-panel {
+            background-color: white;
+            border: 1px solid #d0d7e0;
+            border-radius: 6px;
+            height: 206px; 
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            position: relative;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+        }
+        .soc-badge {
+            background-color: #1a51a1;
+            color: white;
+            font-size: 11px;
+            font-weight: bold;
+            padding: 3px 12px;
+            border-radius: 12px;
+            position: absolute;
+            top: -5px; 
+            letter-spacing: 0.5px;
+            box-shadow: 0 2px 4px rgba(26,81,161,0.2); 
+            cursor: pointer; /* Thêm con trỏ để báo hiệu click được */
+        }
+        .soc-value {
+            font-size: 68px; 
+            font-weight: bold;
+            color: #1a51a1;
+            margin-top: 28px; 
+            line-height: 1;
+            font-family: Arial, sans-serif;
+            letter-spacing: -2px;
+            transition: color 0.3s ease;
+        }
+        .soc-divider {
+            width: 85%;
+            height: 1px;
+            background-color: #1a51a1;
+            margin: 8px 0 14px; 
+            transition: background-color 0.3s ease;
+        }
+        
+        /* Status Box & Action Button Base Styles */
+        .status-box {
+            border: 1.5px solid #94b5e2; /* Default Blue */
+            color: #1a51a1;
+            font-size: 18px; 
+            font-weight: bold;
+            width: 85%;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 16px; 
+            margin-bottom: 12px;
+            letter-spacing: 0.5px;
+            background-color: #f7fbff;
+            transition: all 0.3s ease;
+        }
+        .action-btn {
+            background-color: #1a51a1; /* Default Blue */
+            color: white;
+            border: none;
+            width: 65%;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 15px; 
+            font-size: 16px; 
+            font-weight: bold;
+            cursor: pointer;
+            letter-spacing: 0.5px;
+            box-shadow: 0 3px 6px rgba(26,81,161,0.3);
+            transition: all 0.2s ease;
+        }
+        .action-btn:active {
+            transform: scale(0.96);
+        }
+
+        /* --- STATE MODIFIERS (Dynamic Colors) --- */
+        
+        /* GREEN: CHARGING, COMPLETE */
+        .status-green { border-color: #179344; color: #179344; background-color: #f0fdf4; }
+        .btn-green { background-color: #179344; box-shadow: 0 3px 6px rgba(23,147,68,0.3); }
+
+        /* ORANGE: STARTING */
+        .status-orange { border-color: #ea851c; color: #ea851c; background-color: #fff7ed; }
+        .btn-orange { background-color: #ea851c; box-shadow: 0 3px 6px rgba(234,133,28,0.3); }
+
+        /* RED: ERROR, STOP */
+        .status-red { border-color: #e12b18; color: #e12b18; background-color: #fef2f2; }
+        .btn-red { background-color: #e12b18; box-shadow: 0 3px 6px rgba(225,43,24,0.3); }
+
+        /* GRAY: OFFLINE */
+        .status-gray { border-color: #cbd5e1; color: #64748b; background-color: #f8fafc; }
+        .btn-gray { background-color: #94a3b8; box-shadow: none; cursor: not-allowed; }
+
+        /* Footer */
+        .footer {
+            height: 28px; 
+            display: flex;
+            padding: 0 8px 4px 8px; 
+            gap: 6px;
+        }
+        .footer-btn {
+            flex: 1;
+            background-color: white;
+            border: 1px solid #d0d7e0;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 5px;
+            font-size: 11px;
+            font-weight: bold;
+            color: #333;
+            cursor: pointer;
+        }
+        .footer-btn.active { color: #1a51a1; }
+        .footer-btn i { font-size: 13px; }
+        
+        .footer-time {
+            flex: 1.2;
+            background-color: white;
+            border: 1px solid #d0d7e0;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            font-size: 12px;
+            font-weight: bold;
+            color: #000;
+        }
+        .footer-time i { font-size: 14px; }
+    
+/* SETTING CSS */
+
+        
+        
+        .dashboard-container {
+            width: 480px;
+            height: 272px;
+            background-color: #f0f3f6;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+        }
+
+        /* --- TÁI SỬ DỤNG HEADER TRẮNG TỪ DASHBOARD --- */
+        .header {
+            background-color: #ffffff; 
+            height: 28px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0 10px;
+            border-bottom: 2px solid #cbd5e1;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.08); 
+            position: relative;
+            z-index: 10;
+            flex-shrink: 0;
+        }
+        
+        
+        
+        .logo-battery {
+            color: #000000; 
+            font-size: 14px; 
+            font-weight: bold;
+            margin-left: 6px;
+            letter-spacing: 0.5px;
+            font-family: Arial, sans-serif;
+        }
+        
+
+        /* --- GIAO DIỆN SETTING CHÍNH --- */
+        .setting-content {
+            /* Kế thừa font Segoe UI từ body để các Tiêu đề mềm mại, sang trọng hơn */
+            flex: 1;
+            padding: 6px 12px; 
+            display: flex;
+            flex-direction: column;
+            gap: 6px; 
+        }
+
+        /* Box chung */
+        .box-panel {
+            background-color: white;
+            border: 1px solid #cbd5e1; 
+            border-radius: 8px; 
+            box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+            display: flex;
+        }
+
+        /* 1. Phần Thông tin Công ty (Top) */
+        .info-panel {
+            flex-direction: column;
+            align-items: center;
+            padding: 8px 12px; 
+        }
+        .company-title {
+            color: #1a51a1;
+            font-size: 24px; /* Phóng to hẳn lên vì font Segoe UI thanh mảnh hơn */
+            font-weight: 800; /* Độ đậm vừa phải, không bị thô như 900 */
+            letter-spacing: 0.5px;
+            margin-bottom: 6px; 
+            text-transform: uppercase;
+        }
+        .contact-row {
+            display: flex;
+            gap: 10px;
+            width: 100%;
+        }
+        .contact-box {
+            flex: 1;
+            border: 1px solid #cbd5e1;
+            border-radius: 12px; 
+            padding: 4px 0;
+            text-align: center;
+            font-size: 11px;
+            font-weight: bold;
+            color: #1a51a1;
+        }
+
+        /* 2. Phần Thông số Kỹ thuật (Middle) */
+        .specs-row {
+            display: flex;
+            gap: 10px;
+            flex: 1; 
+        }
+        .spec-panel {
+            flex-direction: column;
+            flex: 1;
+            padding: 0; 
+            overflow: hidden; 
+        }
+        .spec-header {
+            background-color: #f4f7fb; 
+            color: #1a51a1;
+            font-size: 17px; /* Tăng size để nổi bật làm tiêu đề cột */
+            font-weight: 800;
+            text-align: center;
+            padding: 6px 0;
+            border-bottom: 1px solid #cbd5e1; 
+            letter-spacing: 0.5px;
+        }
+        .spec-body {
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            padding: 0; 
+        }
+        .spec-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex: 1; 
+            padding: 0 12px; 
+            font-size: 11px; 
+            font-family: Arial, sans-serif; /* Riêng Data vẫn giữ Arial kỹ thuật */
+            border-bottom: 1px solid #cbd5e1; 
+        }
+        .spec-item:last-child {
+            border-bottom: none; 
+        }
+        .spec-label {
+            color: #666; 
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+        .spec-value {
+            color: #000; 
+            font-weight: bold;
+        }
+
+        /* 3. Phần Truy cập Quản trị (Bottom) */
+        .admin-panel {
+            flex-direction: row;
+            align-items: center;
+            justify-content: space-between;
+            padding: 6px 14px;
+        }
+        .admin-label {
+            color: #1a51a1;
+            font-size: 16px; /* Tăng size nhãn Admin */
+            font-weight: 800;
+            letter-spacing: 0.5px;
+        }
+        .admin-actions {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+        .admin-input {
+            width: 90px;
+            height: 26px;
+            border: 1px solid #cbd5e1;
+            border-radius: 13px; 
+            text-align: center;
+            font-size: 24px; /* Dấu chấm to và rõ ràng hơn */
+            line-height: 24px; /* Căn giữa dọc dấu chấm */
+            letter-spacing: 3px; /* Dãn khoảng cách dấu chấm */
+            color: #1a51a1;
+            font-weight: bold;
+            outline: none;
+            background-color: #fff;
+        }
+        .btn-login {
+            background-color: #1a51a1;
+            color: white;
+            border: none;
+            border-radius: 13px; 
+            width: 75px; 
+            height: 26px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: Arial, sans-serif; 
+            font-size: 14px; 
+            font-weight: bold;
+            cursor: pointer;
+        }
+        .btn-login:active { transform: scale(0.95); }
+        
+        .btn-back {
+            background-color: white;
+            color: #333;
+            border: 1px solid #cbd5e1;
+            border-radius: 13px; 
+            width: 65px; 
+            height: 26px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: Arial, sans-serif; 
+            font-size: 14px; 
+            font-weight: bold;
+            cursor: pointer;
+        }
+        .btn-back:hover { background-color: #f1f5f9; }
+        .btn-back:active { transform: scale(0.95); }
+
+    
+/* ALARM CSS */
+
+        
+        
+        .dashboard-container {
+            width: 480px;
+            height: 272px;
+            background-color: #f0f3f6;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+        }
+
+        /* --- TÁI SỬ DỤNG HEADER TRẮNG ĐỒNG BỘ --- */
+        .header {
+            background-color: #ffffff; 
+            height: 28px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0 10px;
+            border-bottom: 2px solid #cbd5e1;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.08); 
+            position: relative;
+            z-index: 10;
+        }
+        
+        
+        
+        .logo-battery {
+            color: #000000; 
+            font-size: 14px; 
+            font-weight: bold;
+            margin-left: 6px;
+            letter-spacing: 0.5px;
+            font-family: Arial, sans-serif;
+        }
+        
+
+        /* --- GIAO DIỆN ALARMS --- */
+        .alarm-content {
+            flex: 1;
+            padding: 6px 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        /* Sub-header: Nút back và Tiêu đề */
+        .alarm-sub-header {
+            display: flex;
+            align-items: center;
+            justify-content: center; /* Dùng flexbox căn giữa tiêu đề tự nhiên nhất */
+            height: 28px;
+            position: relative; 
+        }
+        .btn-back-square {
+            position: absolute; /* Đưa nút back ra khỏi luồng căn giữa */
+            left: 0;
+            width: 28px; /* Ép thành hình vuông tuyệt đối 28x28 */
+            height: 28px;
+            background-color: white;
+            border: 1px solid #cbd5e1;
+            border-radius: 6px; 
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: #0b1c3f;
+            font-size: 20px; /* Phóng to icon */
+            font-weight: bold; /* Làm icon đậm đà hơn */
+            cursor: pointer;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+            text-decoration: none; 
+            transition: background-color 0.1s;
+        }
+        .btn-back-square:active { transform: scale(0.95); }
+        .page-title {
+            color: #1a51a1;
+            /* Đã xóa dòng ép font Arial để kế thừa font Segoe UI của hệ thống */
+            font-size: 20px; /* Tăng từ 17px lên 20px để ra dáng Tiêu đề trang */
+            font-weight: 800; 
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+        }
+
+        /* Body: Bảng log và nút cuộn */
+        .alarm-body {
+            display: flex;
+            gap: 10px;
+            flex: 1; /* Chiếm hết chiều cao còn lại */
+        }
+        
+        /* Bảng log */
+        .table-container {
+            flex: 1;
+            background-color: white;
+            border: 1px solid #cbd5e1;
+            border-radius: 8px;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+        }
+        .table-row {
+            display: flex;
+            align-items: center;
+            flex: 1; 
+            border-bottom: 1px solid #cbd5e1;
+            padding: 0 14px; /* Tăng padding ngang để rộng rãi hơn */
+            font-family: Arial, sans-serif; 
+            font-size: 11px;
+            font-weight: bold;
+            color: #000; /* Mặc định chữ đen cho toàn bộ data */
+        }
+        .table-row:last-child { border-bottom: none; }
+        
+        .table-header {
+            background-color: #f4f7fb;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-weight: 900;
+            color: #1a51a1; /* Đảm bảo cả hàng tiêu đề màu xanh đồng bộ */
+            font-size: 11px; 
+            text-transform: uppercase;
+        }
+
+        /* Đổi màu xám nhạt cho cột time và code (chỉ áp dụng cho Data Row) */
+        .table-row:not(.table-header) .col-time,
+        .table-row:not(.table-header) .col-code {
+            color: #444;
+        }
+        
+        /* Độ rộng các cột (Đã tăng để chữ không bị dính) */
+        .col-time { width: 80px; }
+        .col-level { width: 65px; font-weight: 900; }
+        .col-code { width: 55px; }
+        .col-desc { flex: 1; }
+
+        /* Màu sắc báo động */
+        .level-fault { color: #dc2626; } 
+        .level-warn { color: #ea851c; } 
+        .level-info { color: #1a51a1; } 
+
+        /* Nút cuộn dọc */
+        .scroll-container {
+            width: 30px; /* Thu hẹp lại bề ngang giống bản gốc */
+            display: flex;
+            flex-direction: column;
+            gap: 6px; /* Giảm gap */
+        }
+        .btn-scroll {
+            flex: 1; 
+            background-color: white;
+            border: 1px solid #cbd5e1;
+            border-radius: 6px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: #0b1c3f;
+            font-size: 16px; /* Thu nhỏ tam giác */
+            cursor: pointer;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+        }
+        .btn-scroll:active { background-color: #f1f5f9; transform: scale(0.95); }
+
+    
+        /* SPA specific styles */
+        .screen-view {
+            display: none;
+            flex-direction: column;
+            flex: 1;
+        }
+    </style>
+</head>
+<body>
+
+<div class="dashboard-container">
+<div class="header">
+        <div class="logo">
+            <div class="logo-icon-wrapper">
+                <img src="logo1.png" alt="PKG Logo" onerror="this.src='logo2.png'">
+            </div>
+            <span class="logo-battery">BATTERY</span>
+        </div>
+        <div class="device-id">
+            ID: <span class="dwin-hide">PKG-48V-01</span>
+        </div>
+    </div>
+
+        
+    <!-- DASHBOARD SCREEN -->
+    <div id="screen-dashboard" class="screen-view" style="display: flex;">
+<div class="main-content">
+        <!-- Left Column -->
+        <div class="col">
+            <div class="panel">
+                <div class="panel-header bg-blue">
+                    <i class="fa-solid fa-list-ul"></i> OUTPUT DC
+                </div>
+                <div class="panel-body">
+                    <div class="data-row">
+                        <span class="data-label">VOLTAGE</span>
+                        <div class="data-value">
+                            <span class="data-num">0.0</span>
+                            <span class="data-unit">V</span>
+                        </div>
+                    </div>
+                    <div class="data-row">
+                        <span class="data-label">CURRENT</span>
+                        <div class="data-value">
+                            <span class="data-num">0.0</span>
+                            <span class="data-unit">A</span>
+                        </div>
+                    </div>
+                    <div class="data-row">
+                        <span class="data-label">POWER</span>
+                        <div class="data-value">
+                            <span class="data-num">0</span>
+                            <span class="data-unit">W</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="panel">
+                <div class="panel-header bg-green">
+                    <i class="fa-solid fa-battery-half"></i> BATTERY
+                </div>
+                <div class="panel-body">
+                    <div class="data-row">
+                        <span class="data-label">PACK</span>
+                        <div class="data-value">
+                            <span class="data-num">52.1</span>
+                            <span class="data-unit">V</span>
+                        </div>
+                    </div>
+                    <div class="data-row">
+                        <span class="data-label">CELL</span>
+                        <div class="data-value">
+                            <span class="data-num">3.25</span>
+                            <span class="data-unit">V</span>
+                        </div>
+                    </div>
+                    <div class="data-row">
+                        <span class="data-label">CHARGED</span>
+                        <div class="data-value">
+                            <span class="data-num">0.0</span>
+                            <span class="data-unit">Ah</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Center Column -->
+        <div class="col-center">
+            <div class="soc-panel">
+                <div class="soc-badge" id="btn-simulate-state" title="Bấm để test các State">SOC</div>
+                <div class="soc-value" id="soc-text">65%</div>
+                <div class="soc-divider" id="soc-div"></div>
+                <!-- Status Box -->
+                <div class="status-box" id="sys-status">READY</div>
+                <!-- Action Button -->
+                <button class="action-btn" id="sys-action">START</button>
+            </div>
+        </div>
+
+        <!-- Right Column -->
+        <div class="col">
+            <div class="panel">
+                <div class="panel-header bg-blue">
+                    <i class="fa-solid fa-wave-square" style="transform: scaleY(0.7) scaleX(1.2);"></i> INPUT AC
+                </div>
+                <div class="panel-body">
+                    <div class="data-row">
+                        <span class="data-label">PHASE L1</span>
+                        <div class="data-value">
+                            <span class="data-num">225</span>
+                            <span class="data-unit">V</span>
+                        </div>
+                    </div>
+                    <div class="data-row">
+                        <span class="data-label">PHASE L2</span>
+                        <div class="data-value">
+                            <span class="data-num">226</span>
+                            <span class="data-unit">V</span>
+                        </div>
+                    </div>
+                    <div class="data-row">
+                        <span class="data-label">PHASE L3</span>
+                        <div class="data-value">
+                            <span class="data-num">224</span>
+                            <span class="data-unit">V</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="panel">
+                <div class="panel-header bg-orange">
+                    <i class="fa-solid fa-temperature-half"></i> TEMP
+                </div>
+                <div class="panel-body">
+                    <div class="data-row">
+                        <span class="data-label">BATTERY</span>
+                        <div class="data-value">
+                            <span class="data-num text-red">30</span>
+                            <span class="data-unit">&deg;C</span>
+                        </div>
+                    </div>
+                    <div class="data-row">
+                        <span class="data-label">CHARGE</span>
+                        <div class="data-value">
+                            <span class="data-num text-red">35</span>
+                            <span class="data-unit">&deg;C</span>
+                        </div>
+                    </div>
+                    <div class="data-row">
+                        <span class="data-label">JACK</span>
+                        <div class="data-value">
+                            <span class="data-num text-red">30</span>
+                            <span class="data-unit">&deg;C</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="footer">
+        <div class="footer-btn active" id="f-home" onclick="switchScreen('dashboard')">
+            <i class="fa-solid fa-house-chimney"></i> HOME
+        </div>
+        <div class="footer-btn" id="f-set" onclick="switchScreen('setting')">
+            <i class="fa-solid fa-gear"></i> SETTING
+        </div>
+        <div class="footer-btn" id="f-alarm" onclick="switchScreen('alarm')">
+            <i class="fa-solid fa-bell"></i> ALARM
+        </div>
+        <div class="footer-time">
+            <i class="fa-regular fa-clock"></i> <span class="dwin-hide">00:00:00</span>
+        </div>
+    </div>
+
+    </div>
+    
+    <!-- SETTING SCREEN -->
+    <div id="screen-setting" class="screen-view">
+<div class="setting-content">
+        <!-- Panel 1: Công ty -->
+        <div class="box-panel info-panel">
+            <div class="company-title">PKG BATTERY COMPANY</div>
+            <div class="contact-row">
+                <div class="contact-box">Hotline: 091.456.5199 - 02437.577.888</div>
+                <div class="contact-box">Email: info@pkgbattery.com</div>
+            </div>
+        </div>
+
+        <!-- Panel 2: Thông số -->
+        <div class="specs-row">
+            <div class="box-panel spec-panel">
+                <div class="spec-header">DEVICE</div>
+                <div class="spec-body">
+                    <div class="spec-item">
+                        <span class="spec-label">HARDWARE</span>
+                        <span class="spec-value">HW V1.2</span>
+                    </div>
+                    <div class="spec-item">
+                        <span class="spec-label">FIRMWARE</span>
+                        <span class="spec-value">FW V2.04</span>
+                    </div>
+                    <div class="spec-item">
+                        <span class="spec-label">DEVICE ID</span>
+                        <span class="spec-value">PKG-0001</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="box-panel spec-panel">
+                <div class="spec-header">SYSTEM</div>
+                <div class="spec-body">
+                    <div class="spec-item">
+                        <span class="spec-label">DATE</span>
+                        <span class="spec-value" id="current-date">2026-08-13</span>
+                    </div>
+                    <div class="spec-item">
+                        <span class="spec-label">TIME</span>
+                        <span class="spec-value" id="current-time">10:30:45</span>
+                    </div>
+                    <div class="spec-item">
+                        <span class="spec-label">UPTIME</span>
+                        <span class="spec-value">125:32:18</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Panel 3: Admin -->
+        <div class="box-panel admin-panel">
+            <div class="admin-label">ADMIN ACCESS</div>
+            <div class="admin-actions">
+                <button class="btn-login" onclick="alert('Login form clicked!')">LOGIN</button>
+                <!-- Nút Back link về dashboard -->
+                <button class="btn-back" onclick="switchScreen('dashboard')">BACK</button>
+            </div>
+        </div>
+    </div>
+
+    </div>
+    
+    <!-- ALARM SCREEN -->
+    <div id="screen-alarm" class="screen-view">
+<div class="alarm-content">
+            
+            <div class="alarm-sub-header">
+                <!-- Nút BACK gắn link về setting -->
+                <a href="javascript:void(0)" onclick="switchScreen('dashboard')" class="btn-back-square">
+                    <i class="fa-solid fa-angle-left"></i>
+                </a>
+                <div class="page-title">SYSTEM ALARMS</div>
+            </div>
+
+            <div class="alarm-body">
+                
+                <!-- Bảng danh sách cảnh báo -->
+                <div class="table-container">
+                    <div class="table-row table-header">
+                        <div class="col-time">TIME</div>
+                        <div class="col-level">LEVEL</div>
+                        <div class="col-code">CODE</div>
+                        <div class="col-desc">DESCRIPTION</div>
+                    </div>
+                    
+                    <div class="table-row">
+                        <div class="col-time">10:30:21</div>
+                        <div class="col-level level-fault">FAULT</div>
+                        <div class="col-code">E006</div>
+                        <div class="col-desc">CELL 6 OVER VOLTAGE</div>
+                    </div>
+                    
+                    <div class="table-row">
+                        <div class="col-time">10:28:45</div>
+                        <div class="col-level level-warn">WARN</div>
+                        <div class="col-code">W002</div>
+                        <div class="col-desc">HIGH TEMPERATURE</div>
+                    </div>
+
+                    <div class="table-row">
+                        <div class="col-time">10:25:10</div>
+                        <div class="col-level level-warn">WARN</div>
+                        <div class="col-code">W001</div>
+                        <div class="col-desc">LOW CELL VOLTAGE</div>
+                    </div>
+
+                    <div class="table-row">
+                        <div class="col-time">10:20:05</div>
+                        <div class="col-level level-info">INFO</div>
+                        <div class="col-code">I001</div>
+                        <div class="col-desc">SYSTEM POWER ON</div>
+                    </div>
+                </div>
+
+                <!-- Thanh cuộn giả lập cảm ứng -->
+                <div class="scroll-container">
+                    <div class="btn-scroll">
+                        <i class="fa-solid fa-caret-up"></i>
+                    </div>
+                    <div class="btn-scroll">
+                        <i class="fa-solid fa-caret-down"></i>
+                    </div>
+                </div>
+
+            </div>
+
+        </div>
+
+    
+    </div>
+</div>
+
+<script>
+
+    // --- FULL SIMULATION SCRIPT ---
+    const statusBox = document.getElementById('sys-status');
+    const actionBtn = document.getElementById('sys-action');
+    const socText = document.getElementById('soc-text');
+    const socDiv = document.getElementById('soc-div');
+    
+    const STATE = {
+        READY: { name: "READY", btnText: "START", statusClass: "", btnClass: "", color: "#1a51a1" },
+        STARTING: { name: "STARTING", btnText: "STOP", statusClass: "status-orange", btnClass: "btn-red", color: "#ea851c" },
+        CHARGING: { name: "CHARGING", btnText: "STOP", statusClass: "status-green", btnClass: "btn-red", color: "#179344" },
+        COMPLETE: { name: "COMPLETE", btnText: "RESET", statusClass: "status-green", btnClass: "", color: "#179344" },
+        ERROR: { name: "ERROR", btnText: "RESET", statusClass: "status-red", btnClass: "btn-red", color: "#e12b18" },
+        OFFLINE: { name: "OFFLINE", btnText: "---", statusClass: "status-gray", btnClass: "btn-gray", color: "#64748b" }
+    };
+
+    let currentState = "READY";
+    let simTimer = null;
+    let chargeTimer = null;
+    let socValue = 65;
+
+    function applyState(stateKey) {
+        currentState = stateKey;
+        const s = STATE[stateKey];
+        
+        statusBox.innerText = s.name;
+        actionBtn.innerText = s.btnText;
+        statusBox.className = "status-box " + s.statusClass;
+        actionBtn.className = "action-btn " + s.btnClass;
+        socText.style.color = s.color;
+        socDiv.style.backgroundColor = s.color;
+        
+        // Reset timers
+        clearTimeout(simTimer);
+        clearInterval(chargeTimer);
+        
+        // Logic mô phỏng tự động
+        if (stateKey === "STARTING") {
+            // Sau 2s tự động chuyển sang CHARGING
+            simTimer = setTimeout(() => applyState("CHARGING"), 2000);
+        } else if (stateKey === "CHARGING") {
+            // Nhảy % mỗi 0.5s để mô phỏng đang sạc
+            chargeTimer = setInterval(() => {
+                socValue += 1;
+                socText.innerText = socValue + "%";
+                if (socValue >= 100) applyState("COMPLETE");
+            }, 500); 
+        } else if (stateKey === "COMPLETE") {
+            socValue = 100;
+            socText.innerText = "100%";
+        } else if (stateKey === "ERROR" || stateKey === "OFFLINE") {
+            socText.innerText = "--%";
+        } else if (stateKey === "READY") {
+            socValue = 65; // Đặt lại mức pin ban đầu
+            socText.innerText = "65%";
+        }
+    }
+
+    // Gắn sự kiện click cho NÚT BẤM CHÍNH
+    actionBtn.addEventListener('click', function() {
+        if (currentState === "READY") {
+            applyState("STARTING"); // Bấm START -> Bắt đầu sạc
+        } else if (currentState === "STARTING" || currentState === "CHARGING") {
+            applyState("READY"); // Bấm STOP -> Hủy sạc
+        } else if (currentState === "COMPLETE" || currentState === "ERROR") {
+            applyState("READY"); // Bấm RESET -> Trở về ban đầu
+        }
+    });
+
+    // Gắn sự kiện click ẩn ở CHỮ SOC để test các lỗi bất thường
+    document.getElementById('btn-simulate-state').addEventListener('click', function() {
+        if (currentState === "ERROR") applyState("OFFLINE");
+        else applyState("ERROR");
+    });
+    
+    // Khởi tạo ban đầu
+    applyState("READY");
+
+
+    // Tự động cập nhật giờ hệ thống cho sinh động
+    function updateClock() {
+        const now = new Date();
+        const dateStr = now.toISOString().split('T')[0];
+        const timeStr = now.toTimeString().split(' ')[0];
+        document.getElementById('current-date').innerText = dateStr;
+        document.getElementById('current-time').innerText = timeStr;
+    }
+    setInterval(updateClock, 1000);
+    updateClock();
+
+    // --- SINGLE PAGE APPLICATION LOGIC ---
+    function switchScreen(screenId) {
+        // Hide all screens
+        document.getElementById('screen-dashboard').style.display = 'none';
+        document.getElementById('screen-setting').style.display = 'none';
+        document.getElementById('screen-alarm').style.display = 'none';
+        
+        // Show target screen
+        const target = document.getElementById('screen-' + screenId);
+        if (target) {
+            target.style.display = 'flex';
+        }
+
+        // Update footer active state (if on dashboard footer)
+        const fHome = document.getElementById('f-home');
+        const fSet = document.getElementById('f-set');
+        const fAlarm = document.getElementById('f-alarm');
+        
+        if (fHome) fHome.classList.remove('active');
+        if (fSet) fSet.classList.remove('active');
+        if (fAlarm) fAlarm.classList.remove('active');
+        
+        if (screenId === 'dashboard' && fHome) fHome.classList.add('active');
+        if (screenId === 'setting' && fSet) fSet.classList.add('active');
+        if (screenId === 'alarm' && fAlarm) fAlarm.classList.add('active');
+    }
+
+</script>
+</body>
+</html>

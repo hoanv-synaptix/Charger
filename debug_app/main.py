@@ -2635,6 +2635,9 @@ class ChargerDebugApp:
             # Blocking here used to leave the operator stuck with an empty,
             # unselectable module table and no way to reach START, even
             # though the module was already correctly registered on the MCU.
+            # Re-sending SET_MODULE_ADDR for an addr the MCU already knows
+            # doesn't change its module count, so this path is harmless
+            # even while charging -- no warning needed here.
             for idx_existing, mod in self.modules.items():
                 if mod.addr == addr and mod.driver == self.driver_id:
                     mod.user_added = True
@@ -2646,6 +2649,29 @@ class ChargerDebugApp:
                     self._set_selected_module(idx_existing)
                     self._add_traffic("SYS", f"{addr:03X}", 0, b"",
                                     f"Module already tracked, re-selected: {DRIVER_NAMES[self.driver_id]} 0x{addr:02X}")
+                    return
+
+            # Genuinely new module. 2026-08-29, user-requested: adding one
+            # the MCU wasn't configured to expect while it's actively
+            # charging trips the firmware's own module-count-mismatch fault
+            # a few seconds later (App/Charge/charge_controller.c), which
+            # silently stops the cycle -- confusing without this warning,
+            # since nothing on screen explained why charging just stopped.
+            # Warn up front and let the user cancel instead of finding out
+            # via a mystery stop. Checked against the live SYSTEM_INFO push
+            # (self.system_info.controller_state), not any locally-cached
+            # flag, so this can't go stale.
+            info = self.system_info
+            if info is not None and info.controller_state in (2, 3):  # Running, Derating
+                if not messagebox.askyesno(
+                    "Charging in progress",
+                    "The charger is currently RUNNING.\n\n"
+                    "Adding a new module now will make the module count "
+                    "not match what the MCU expects, which will stop the "
+                    "charge cycle automatically after a few seconds.\n\n"
+                    "Add anyway?",
+                    icon="warning",
+                ):
                     return
 
             idx = 0
@@ -3329,6 +3355,15 @@ class ChargerDebugApp:
             mod = ChargerModule(addr=data.addr, driver=data.driver_id, module_idx=idx, user_added=True)
             self.modules[idx] = mod
             self._module_lookup[key] = idx
+            self._update_module_grid()
+            # 2026-08-29, user-requested: a module the MCU already loaded
+            # from flash (this is how it gets auto-created here in the
+            # first place) should show its telemetry immediately, not
+            # require an extra manual click just to see what's already
+            # running. Only when nothing else is selected -- never steals
+            # focus from a module the user deliberately picked.
+            if self.selected_module_idx is None:
+                self._set_selected_module(idx)
 
         mod.online = data.online
         mod.running = data.running
