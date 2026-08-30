@@ -418,7 +418,7 @@ Frame RX được feed tới driver đang active qua `CHG_LIB_FeedCanFrame()`.
   | `0x1010/1` | pack V / cell V | u16 0.1V / 0.01V |
   | `0x1012` | charged Ah | u32 (0x1012–13) 0.1Ah — *Phase 2, hiện gửi 0* |
   | `0x1020/1/2` | AC L1/L2/L3 | u16 1V |
-  | `0x1030/1/2` | temp battery / charge / jack | i16 signed 0.1°C (270 = 27.0; NTC rớt → 0) |
+  | `0x1030/1/2` | temp: battery (BMS max cell) / charge (module DC-DC max, CAN) / jack (max 4 NTC PA0–3) | i16 signed 0.1°C (270 = 27.0; không đo được → 0) |
   | `0x1040` | SOC | u16 0–100% |
   | `0x1041` | status icon | 0 READY 1 STARTING 2 CHARGING 3 COMPLETE 4 ERROR 5 OFFLINE |
   | `0x1042` | nhãn nút (MCU→panel) | 0 START 1 STOP 2 RESET 3 DISABLED — VAR Icon |

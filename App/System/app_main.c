@@ -453,17 +453,31 @@ void App_Loop(void)
             dd.ac_l3_v = (uint16_t)mv.ac_phase_c_voltage;
         }
 
-        /* NTC channels: ch0 = charger, ch1..3 = jack/connector (max, with the
-         * same "-50C means disconnected" fallback used for jack derating).
-         * All temps go x10 (270 = 27.0 degC). BSP_ADC_GetTempC() returns NAN
-         * for an open/short NTC -- send 0, not a (int16_t)NAN garbage value. */
+        /* Dashboard TEMP panel, all x10 (270 = 27.0 degC), unavailable -> 0:
+         *  BATTERY = BMS max cell temp   (set above when bms.online)
+         *  CHARGE  = hottest DC-DC stage across online modules, from CAN --
+         *            the same max_temp_dcdc the PC app reports (NOT a board
+         *            NTC; there is no dedicated "charger" NTC).
+         *  JACK    = hottest of the 4 connector NTCs (PA0..PA3) -- the same
+         *            channels the charge controller uses for jack over-temp
+         *            (charge_controller feed loop above). Open/short NTC ->
+         *            NAN from BSP_ADC_GetTempC(); display 0 (the controller
+         *            itself falls back to 25 for its derating logic). */
         {
-            float charge_t = BSP_ADC_GetTempC(0);
-            dd.temp_charge_c_x10 = isfinite(charge_t) ? (int16_t)(charge_t * 10.0f) : 0;
+            float max_dcdc = 0.0f;
+            uint8_t nmod = CHG_LIB_GetModuleCount();
+            for (uint8_t i = 0; i < nmod; i++) {
+                CHG_LIB_ModuleView_t tv;
+                if (CHG_LIB_GetModuleView(i, &tv) && tv.online &&
+                    isfinite(tv.temp_dcdc) && tv.temp_dcdc > max_dcdc) {
+                    max_dcdc = tv.temp_dcdc;
+                }
+            }
+            dd.temp_charge_c_x10 = (int16_t)(max_dcdc * 10.0f);
         }
         {
             float jack_c = -273.15f;
-            for (uint8_t i = 1; i < 4; i++) {
+            for (uint8_t i = 0; i < 4; i++) {
                 float t = BSP_ADC_GetTempC(i);
                 if (isfinite(t) && t > jack_c) {
                     jack_c = t;

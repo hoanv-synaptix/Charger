@@ -44,11 +44,11 @@
 #define VP_AC_PHASE_L2       0x1021U
 #define VP_AC_PHASE_L3       0x1022U
 
-/* --- Dashboard: Temperature (0x1030), i16 signed, 0.1 degC (270 = 27.0)
- *     -- DGUS control: signed int, 1 decimal place --- */
-#define VP_TEMP_BATTERY      0x1030U
-#define VP_TEMP_CHARGE       0x1031U
-#define VP_TEMP_JACK         0x1032U
+/* --- Dashboard: Temperature (0x1030), i16 signed, 0.1 degC (270 = 27.0),
+ *     unavailable -> 0. DGUS control: signed int, 1 decimal place. --- */
+#define VP_TEMP_BATTERY      0x1030U  /* BMS max cell temp */
+#define VP_TEMP_CHARGE       0x1031U  /* hottest module DC-DC temp (CAN), = PC app max_temp_dcdc */
+#define VP_TEMP_JACK         0x1032U  /* hottest of the 4 connector NTCs (PA0..PA3) */
 
 /* --- Dashboard: centre status + action button (0x1040) --- */
 #define VP_SOC_VALUE         0x1040U  /* MCU->panel: u16, 0..100 % */
