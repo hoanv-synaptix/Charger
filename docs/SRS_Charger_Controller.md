@@ -256,7 +256,7 @@ Quy ước độ ưu tiên: **M** = Must, **S** = Should, **C** = Could.
 
 | ID | Yêu cầu | ƯP |
 |---|---|---|
-| FR-HMI-01 | Giao thức 5A A5 (không CRC): `DWIN_SendWords()` ghi N word big-endian tới VP liên tiếp; `DWIN_SendString()` ghi field cố định pad 0x00; parse frame 0x83 nút nhấn VP `0x1042` → `DWIN_OnActionButton()` + ghi 0 clear | S |
+| FR-HMI-01 | Giao thức DGUS-II (không CRC), header `A5 5A` (⚠ chuẩn DGUS là `5A A5` — dự án đổi theo yêu cầu 2026-08-30, xem `DWIN_HEADER_1/2`): `DWIN_SendWords()` ghi N word big-endian tới VP liên tiếp; `DWIN_SendString()` ghi field cố định pad 0x00; parse frame 0x83 nút nhấn VP `0x1042` → `DWIN_OnActionButton()` + ghi 0 clear | S |
 | FR-HMI-02 | RX ring-buffer ISR, drain `BSP_RS485_Read()`; re-arm sau lỗi UART; `DWIN_ParseRX()` state-machine byte-wise có resync | M |
 | FR-HMI-03 | Update dữ liệu HMI trong main loop 50ms: scatter 8 nhóm field (DC/battery/AC/temp/SOC+status/btn/uptime), diff-suppressed; chuỗi định danh + trang DASH gửi 1 lần sau khi panel boot | M |
 | FR-HMI-04 | Nút action DWIN (VP `0x1042`, 1 keycode cố định) → `app_action_button()` quyết Start/Stop/Reset theo state controller (owner=DWIN), giống nút PA15 | S |
@@ -408,7 +408,7 @@ Frame RX được feed tới driver đang active qua `CHG_LIB_FeedCanFrame()`.
 
 ### 4.4 RS485 — HMI DWIN (115200-8N1, half-duplex, DE=PB1)
 
-- Header `5A A5`; Write=0x82, Read=0x83; **CRC tắt** (DGUS CFG bit 0x05.7 = 0). Big-endian; giá trị 32-bit chiếm 2 VP liên tiếp, word cao ở địa chỉ thấp.
+- Header **`A5 5A`** (⚠ chuẩn DGUS-II là `5A A5`; dự án build với `A5 5A` theo yêu cầu 2026-08-30 — `DWIN_HEADER_1/2` trong `dwin_protocol.h`, đổi 2 macro là revert); Write=0x82, Read=0x83; **CRC tắt** (DGUS CFG bit 0x05.7 = 0). Big-endian; giá trị 32-bit chiếm 2 VP liên tiếp, word cao ở địa chỉ thấp.
 - VP map — nguồn sự thật: [`Modules/hmi/dwin_vp_map.h`](../Modules/hmi/dwin_vp_map.h), phải khớp project DGUS trong `ui/`.
 
   | VP | Ý nghĩa | Định dạng |
@@ -428,8 +428,8 @@ Frame RX được feed tới driver đang active qua `CHG_LIB_FeedCanFrame()`.
   | `0x009C` | RTC set | *chưa dùng — panel tự giữ giờ* |
   | `0x1200+` | bảng Alarm (20 VP/dòng ×5) | *Phase 2* |
 
-- MCU → DWIN: `5A A5 [len] 82 [VP_hi] [VP_lo] [word...]` — `DWIN_SendWords()` / `DWIN_SendString()` / `DWIN_SetPage()`; scatter 1 nhóm/50ms trong `DWIN_UpdateData()`.
-- DWIN → MCU: `5A A5 06 83 10 42 01 [val_hi] [val_lo]` khi nhấn nút → `DWIN_OnActionButton()` (val ≠ 0), sau đó MCU ghi `0x1042 = 0`.
+- MCU → DWIN: `A5 5A [len] 82 [VP_hi] [VP_lo] [word...]` — `DWIN_SendWords()` / `DWIN_SendString()` / `DWIN_SetPage()`; scatter 1 nhóm/50ms trong `DWIN_UpdateData()`, chỉ gửi trường nào đổi giá trị (chu kỳ boot đầu gửi hết).
+- DWIN → MCU: `A5 5A 06 83 10 42 01 [val_hi] [val_lo]` khi nhấn nút → `DWIN_OnActionButton()` (val ≠ 0), sau đó MCU ghi `0x1042 = 0`.
 - RX ring-buffer 128 byte, drain `BSP_RS485_Read()`; `DWIN_ParseRX()` byte-wise có resync + chặn LEN quá cỡ.
 
 ### 4.5 Debug log (USART1)

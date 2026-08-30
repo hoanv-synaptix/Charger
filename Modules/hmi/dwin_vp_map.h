@@ -13,11 +13,13 @@
  *   >>> KEEP THIS FILE IN SYNC WITH THE DGUS PROJECT BY HAND. <<<
  *   A mismatch makes the screen show garbage.
  *
- * Wire format (T5L_DGUSII guide V2.9 sec 4.2):
- *   MCU -> panel : 5A A5 <len> 82 <vp_hi> <vp_lo> <payload...>
- *   panel -> MCU : 5A A5 <len> 83 <vp_hi> <vp_lo> <n_words> <payload...>
- *   <len> counts the command byte + VP + payload. CRC is OFF (DGUS CFG bit
- *   0x05.7 = 0) -- firmware sends and expects no CRC.
+ * Wire format (based on T5L_DGUSII guide V2.9 sec 4.2):
+ *   MCU -> panel : <H1> <H2> <len> 82 <vp_hi> <vp_lo> <payload...>
+ *   panel -> MCU : <H1> <H2> <len> 83 <vp_hi> <vp_lo> <n_words> <payload...>
+ *   Header <H1><H2> = DWIN_HEADER_1/DWIN_HEADER_2 in dwin_protocol.h. The
+ *   DGUS-stock value is 5A A5; THIS PROJECT IS BUILT WITH A5 5A (user
+ *   request 2026-08-30). <len> counts the command byte + VP + payload. CRC
+ *   is OFF (DGUS CFG bit 0x05.7 = 0) -- firmware sends and expects no CRC.
  * All values big-endian. A 32-bit value spans two consecutive VPs, high
  * word at the lower address.
  */

@@ -25,7 +25,8 @@ extern void UART_Transmit_To_DWIN(uint8_t *data, uint16_t len);
 
 static void dwin_write_frame(uint16_t vp, const uint8_t *payload, uint8_t payload_len)
 {
-    /* 5A A5 | LEN | 82 | VP_hi VP_lo | payload...
+    /* A5 5A | LEN | 82 | VP_hi VP_lo | payload...   (header is DWIN_HEADER_1/2
+     * -- this project uses A5 5A, not the DGUS-stock 5A A5; see dwin_protocol.h)
      * LEN counts cmd(1) + vp(2) + payload_len. */
     uint8_t buf[6U + (2U * DWIN_TX_MAX_WORDS)];
 
