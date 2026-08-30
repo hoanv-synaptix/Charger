@@ -10,9 +10,16 @@
 extern "C" {
 #endif
 
-/* DGUS-II frame constants (guide V2.9 sec 4.2). */
-#define DWIN_HEADER_1   0x5AU
-#define DWIN_HEADER_2   0xA5U
+/* Frame header, first byte then second byte, on both TX and RX.
+ *
+ * NOTE: the T5L_DGUSII guide V2.9 sec 4.2 specifies 0x5A 0xA5 and every
+ * example uses that order; a stock DGUS panel scans for exactly that byte
+ * sequence. This build is set to 0xA5 0x5A at the user's request
+ * (2026-08-30). If the panel stops recognising frames, swap these two
+ * back to 0x5A / 0xA5 -- it is the only change needed (framing + parser
+ * both read these macros). */
+#define DWIN_HEADER_1   0xA5U
+#define DWIN_HEADER_2   0x5AU
 #define DWIN_CMD_WRITE  0x82U
 #define DWIN_CMD_READ   0x83U
 

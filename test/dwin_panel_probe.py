@@ -12,7 +12,7 @@ USB-RS485 adapter (A->A, B->B, GND common). The screen must be powered.
     python test/dwin_panel_probe.py            # auto-pick a USB serial port
 
 What it does, in order:
- 1. Read the DGUS version (5A A5 04 83 000F 01). A correct reply proves the
+ 1. Read the DGUS version (header 04 83 000F 01). A correct reply proves the
     link + baud (115200-8N1) + that frame CRC is OFF in the panel CFG.
     Then it retries WITH a CRC-16 to tell you if the panel wants CRC on.
  2. Write a full dashboard test pattern to VP 0x1000..0x1043.
@@ -34,7 +34,9 @@ except ImportError:
     print("[FAIL] pyserial not installed -- run: pip install pyserial")
     sys.exit(1)
 
-H1, H2 = 0x5A, 0xA5
+# Must match Modules/hmi/dwin_protocol.h. Stock DGUS is 0x5A,0xA5; this
+# project is currently built with them swapped.
+H1, H2 = 0xA5, 0x5A
 CMD_WRITE, CMD_READ = 0x82, 0x83
 
 

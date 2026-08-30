@@ -14,7 +14,7 @@ here gets a NACK.
     python test/dwin_cli.py --port COM12 write 0x1000 521 105 3000
     python test/dwin_cli.py --port COM12 page 1
     python test/dwin_cli.py --port COM12 poll          # watch the action button
-    python test/dwin_cli.py --port COM12 raw 5AA50483000F01
+    python test/dwin_cli.py --port COM12 raw A55A0483000F01
 """
 import argparse
 import sys
@@ -75,7 +75,9 @@ def cdc_read(ser, want_cmd=None, timeout=0.6):
 
 
 # ---- DWIN DGUS-II frames --------------------------------------------
-H1, H2 = 0x5A, 0xA5
+# Must match Modules/hmi/dwin_protocol.h (DWIN_HEADER_1 / _2). Stock DGUS is
+# 0x5A,0xA5; this project is currently built with them swapped.
+H1, H2 = 0xA5, 0x5A
 
 
 def dwin_write(vp: int, words) -> bytes:
@@ -149,7 +151,7 @@ def main():
 
     try:
         if a.cmd == "version":
-            show("version (no CRC)", lk.xfer(bytes.fromhex("5AA50483000F01")))
+            show("version (no CRC)", lk.xfer(bytes([H1, H2, 0x04, 0x83, 0x00, 0x0F, 0x01])))
 
         elif a.cmd == "read":
             vp = int(a.args[0], 0)
@@ -184,7 +186,7 @@ def main():
 
         elif a.cmd == "pattern":
             print("[1] version read")
-            show("version", lk.xfer(bytes.fromhex("5AA50483000F01")))
+            show("version", lk.xfer(bytes([H1, H2, 0x04, 0x83, 0x00, 0x0F, 0x01])))
             print("[2] dashboard test pattern")
             lk.xfer(dwin_write(0x1000, [521, 105, 3000]))
             lk.xfer(dwin_write(0x1010, [521, 325]))
