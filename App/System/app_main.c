@@ -275,6 +275,11 @@ void App_Loop(void)
         CHG_LIB_Process(now);
         BMS_Process(now);
 
+        /* Re-arm the NTC ADC scan (single-shot ADC + one-shot DMA -- see
+         * bsp_adc.c). Internally rate-limited; without this the jack temps
+         * below would be frozen at their power-on sample. */
+        BSP_ADC_Process(now);
+
         /* Read jack/connector NTC temperature here (Platform) and hand the
          * max of the 4 channels to charge policy (App/Charge), which must
          * not touch BSP_ADC itself (AGENTS.md sec 5-6). Same max-of-4 +

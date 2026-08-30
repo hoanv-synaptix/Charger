@@ -74,6 +74,20 @@ def main():
     results.append(check(
         "ADC1 scan mode enabled", adc,
         r"hadc1\.Init\.ScanConvMode\s*=\s*ADC_SCAN_ENABLE\s*;", "Core/Src/adc.c"))
+    # BSP/bsp_adc.c's BSP_ADC_Process() re-arms the scan on a 200ms timer and
+    # assumes it is single-shot. If a regen switches either of these to
+    # free-running (ContinuousConvMode=ENABLE / DMA_CIRCULAR) the re-arm becomes
+    # a redundant Stop/Start of a running conversion -- update bsp_adc.c to just
+    # read the buffer and note it here, don't only delete the check.
+    results.append(check(
+        "ADC1 single-shot scan (ContinuousConvMode=DISABLE) -- BSP_ADC_Process re-arms it",
+        adc, r"hadc1\.Init\.ContinuousConvMode\s*=\s*DISABLE\s*;", "Core/Src/adc.c"))
+    results.append(check(
+        "ADC1 DMA is one-shot (hdma_adc1 Mode=DMA_NORMAL) -- paired with the single-shot scan",
+        adc, r"hdma_adc1\.Init\.Mode\s*=\s*DMA_NORMAL\s*;", "Core/Src/adc.c"))
+    results.append(check(
+        "ADC1 DMA request kept enabled for the full 4-channel scan (DMAContinuousRequests=ENABLE)",
+        adc, r"hadc1\.Init\.DMAContinuousRequests\s*=\s*ENABLE\s*;", "Core/Src/adc.c"))
 
     hal_conf = read("Core/Inc/stm32g0xx_hal_conf.h")
     results.append(check(
