@@ -428,7 +428,7 @@ Frame RX được feed tới driver đang active qua `CHG_LIB_FeedCanFrame()`.
   | `0x009C` | RTC set | *chưa dùng — panel tự giữ giờ* |
   | `0x1200+` | bảng Alarm (20 VP/dòng ×5) | *Phase 2* |
 
-- MCU → DWIN: `A5 5A [len] 82 [VP_hi] [VP_lo] [word...]` — `DWIN_SendWords()` / `DWIN_SendString()` / `DWIN_SetPage()`; scatter 1 nhóm/50ms trong `DWIN_UpdateData()`, chỉ gửi trường nào đổi giá trị (chu kỳ boot đầu gửi hết).
+- MCU → DWIN: `A5 5A [len] 82 [VP_hi] [VP_lo] [word...]` — `DWIN_SendWords()` / `DWIN_SendString()` / `DWIN_SetPage()`; scatter 1 nhóm/50ms trong `DWIN_UpdateData()`, chỉ gửi trường nào đổi giá trị + full re-send mỗi 5s (`DWIN_ForceFullRefresh()`, để panel boot muộn / reboot bắt kịp); trường không đo được (NTC rớt, BMS offline) → 0.
 - DWIN → MCU: `A5 5A 06 83 10 42 01 [val_hi] [val_lo]` khi nhấn nút → `DWIN_OnActionButton()` (val ≠ 0), sau đó MCU ghi `0x1042 = 0`.
 - RX ring-buffer 128 byte, drain `BSP_RS485_Read()`; `DWIN_ParseRX()` byte-wise có resync + chặn LEN quá cỡ.
 

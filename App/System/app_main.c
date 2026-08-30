@@ -44,10 +44,11 @@
 
 /* ============== Private state ============== */
 
-static uint32_t last_process_tick = 0;
-static uint32_t last_led_tick     = 0;
-static uint32_t last_dwin_tick    = 0;
-static uint32_t last_main_log     = 0;
+static uint32_t last_process_tick   = 0;
+static uint32_t last_led_tick       = 0;
+static uint32_t last_dwin_tick      = 0;
+static uint32_t last_dwin_full_tick = 0;
+static uint32_t last_main_log       = 0;
 /* Button debounce -- single toggle button (BUTTON_1/PA15), see App_Loop()
  * "(2) Button handling" for the state-decides-direction logic. BUTTON_2
  * (PD2) is no longer read here -- confirmed with user 2026-08-29, hardware
@@ -391,9 +392,22 @@ void App_Loop(void)
             DWIN_SendSettingStrings(ChargeCycleConfig_GetHwRev(), fw_str,
                                     ChargeCycleConfig_GetDeviceId());
             DWIN_SetPage(DWIN_PAGE_DASH);
+            /* Panel just got its page + strings -- push every data field to
+             * it now (the first scatter cycle ran at t~=400ms, before the
+             * panel was listening). */
+            DWIN_ForceFullRefresh();
+            last_dwin_full_tick = now;
             dwin_boot_sent = true;
             /* Fires exactly once -- safe outside the 50ms LOG-blocking budget. */
             LOG("DWIN: HMI init sent (HW/FW/ID strings + dashboard page).\r\n");
+        }
+
+        /* Heartbeat: re-send every field every 5s so a panel that booted
+         * late, or brown-out-rebooted, catches up without needing a value to
+         * change. Diff-suppressed in between. */
+        if (dwin_boot_sent && (now - last_dwin_full_tick) >= 5000U) {
+            last_dwin_full_tick = now;
+            DWIN_ForceFullRefresh();
         }
 
         DWIN_SystemData_t dd;
@@ -424,8 +438,13 @@ void App_Loop(void)
         }
 
         /* NTC channels: ch0 = charger, ch1..3 = jack/connector (max, with the
-         * same "-50C means disconnected" fallback used for jack derating). */
-        dd.temp_charge_c = (int16_t)BSP_ADC_GetTempC(0);
+         * same "-50C means disconnected" fallback used for jack derating).
+         * BSP_ADC_GetTempC() returns NAN for an open/short NTC -- send 0, not
+         * a (int16_t)NAN garbage value. */
+        {
+            float charge_t = BSP_ADC_GetTempC(0);
+            dd.temp_charge_c = isfinite(charge_t) ? (int16_t)charge_t : 0;
+        }
         {
             float jack_c = -273.15f;
             for (uint8_t i = 1; i < 4; i++) {

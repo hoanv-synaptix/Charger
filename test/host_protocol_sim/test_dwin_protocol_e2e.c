@@ -308,6 +308,35 @@ static bool test_update_data_scatter(void)
     }
     ASSERT(frames_after_change == 1, "one changed field -> one frame");
 
+    /* DWIN_ForceFullRefresh(): next full cycle re-sends every group even
+     * though nothing changed. */
+    DWIN_ForceFullRefresh();
+    uint16_t seen = 0;
+    for (int i = 0; i < 8; i++) {
+        reset_capture();
+        DWIN_UpdateData(&d);
+        ASSERT(g_tx_count == 1, "forced cycle: one frame per call");
+        uint16_t vp = ((uint16_t)g_tx[0][4] << 8) | g_tx[0][5];
+        if (vp == VP_DC_VOLTAGE)          seen |= 1u << 0;
+        else if (vp == VP_BAT_PACK_VOLT)  seen |= 1u << 1;
+        else if (vp == VP_BAT_CHARGED_AH) seen |= 1u << 2;
+        else if (vp == VP_AC_PHASE_L1)    seen |= 1u << 3;
+        else if (vp == VP_TEMP_BATTERY)   seen |= 1u << 4;
+        else if (vp == VP_SOC_VALUE)      seen |= 1u << 5;
+        else if (vp == VP_SYS_BTN_MODE)   seen |= 1u << 6;
+        else if (vp == VP_SET_UPTIME)     seen |= 1u << 7;
+    }
+    ASSERT(seen == 0xFF, "forced refresh re-sends all 8 field groups");
+
+    /* The force is one-shot: the cycle after it is diff-suppressed again. */
+    int frames_after_force = 0;
+    for (int i = 0; i < 8; i++) {
+        reset_capture();
+        DWIN_UpdateData(&d);
+        frames_after_force += g_tx_count;
+    }
+    ASSERT(frames_after_force == 0, "force is one-shot, not sticky");
+
     printf("[PASS] test_update_data_scatter\n");
     return true;
 }

@@ -86,6 +86,15 @@ void DWIN_SendSettingStrings(const char *hw_ver, const char *fw_ver,
 void DWIN_UpdateData(const DWIN_SystemData_t *data);
 
 /**
+ * @brief Make the next full DWIN_UpdateData() scatter cycle send every field
+ *        unconditionally (one-shot, regardless of which step it is on now).
+ *        Call once the panel is (re)ready, and on a periodic heartbeat, so a
+ *        panel that booted late or brown-out-rebooted catches up without
+ *        waiting for a value to change.
+ */
+void DWIN_ForceFullRefresh(void);
+
+/**
  * @brief Feed raw RS485 RX bytes (whatever BSP_RS485_Read() returned).
  *        Parses 0x83 frames; on a non-zero VP_SYS_ACTION_BTN value it calls
  *        DWIN_OnActionButton() then writes 0 back to clear the VP.

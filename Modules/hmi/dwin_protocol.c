@@ -148,16 +148,30 @@ enum {
     STEP_COUNT
 };
 
+/* >0 => the next this-many DWIN_UpdateData() calls send unconditionally
+ * (one full scatter cycle). Only touched from the main loop. */
+static uint8_t s_force_steps = 0;
+
+void DWIN_ForceFullRefresh(void)
+{
+    s_force_steps = (uint8_t)STEP_COUNT;
+}
+
 void DWIN_UpdateData(const DWIN_SystemData_t *d)
 {
     static uint8_t step = 0;
     static DWIN_SystemData_t prev;
     static bool have_prev = false;
     uint16_t w[3];
-    bool first = !have_prev;
+    bool first;
 
     if (d == NULL) {
         return;
+    }
+
+    first = !have_prev || (s_force_steps > 0U);
+    if (s_force_steps > 0U) {
+        s_force_steps--;
     }
 
     switch (step) {
