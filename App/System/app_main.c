@@ -167,8 +167,10 @@ void App_Init(void)
     led_run_off();
     led_fault_off();
 
-    /* RS485 (USART3 + DE pin, che do nhan) */
+    /* RS485 (USART3 + DE pin, che do nhan) + DWIN HMI protocol */
     BSP_RS485_Init();
+    DWIN_Init();
+    LOG("App_Init: RS485/DWIN HMI ready (USART3 115200-8N1 SWAP, DE=PB1).\r\n");
 
     /* Start CAN1 + CAN2 (filter + interrupt) */
     LOG("App_Init: Starting CAN bus...\r\n");
@@ -386,6 +388,8 @@ void App_Loop(void)
                                     ChargeCycleConfig_GetDeviceId());
             DWIN_SetPage(DWIN_PAGE_DASH);
             dwin_boot_sent = true;
+            /* Fires exactly once -- safe outside the 50ms LOG-blocking budget. */
+            LOG("DWIN: HMI init sent (HW/FW/ID strings + dashboard page).\r\n");
         }
 
         DWIN_SystemData_t dd;
