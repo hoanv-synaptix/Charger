@@ -46,8 +46,9 @@
  * protocols) specify no ramp rate; the module runs its own internal
  * soft-start. */
 #define CHARGE_CTRL_RAMP_STEP_MS                     100U
-#define CHARGE_CTRL_VOLTAGE_RAMP_V_PER_S             5.0f   /* e.g. dV 100V -> 20s */
-#define CHARGE_CTRL_CURRENT_RAMP_A_PER_S             5.0f   /* per module; e.g. 0->100A -> 20s, matches the voltage ramp */
+#define CHARGE_CTRL_VOLTAGE_RAMP_V_PER_S             2.0f   /* post-relay-close: e.g. dV 100V -> 50s */
+#define CHARGE_CTRL_VOLTAGE_PRECLOSE_RAMP_V_PER_S    10.0f  /* pre-relay-close: bring the module up to the pack voltage FAST relative to the post-close ramp. Module is unloaded here, but this still delays relay arming by ~(0.9 * pack_V) / rate (e.g. 400V pack -> ~36s). */
+#define CHARGE_CTRL_CURRENT_RAMP_A_PER_S             5.0f   /* per module; e.g. 0->100A -> 20s */
 
 /* ============== Private State ============== */
 
@@ -563,18 +564,20 @@ static void apply_charge_targets(uint32_t now_tick) {
     bool should_run = (g_ctrl.target_current_total_a > 0.0f && !g_ctrl.inhibit);
 
     if (should_run && !g_ctrl.last_running) {
-        /* Charge start. Snap the voltage to target -- pre-latch this is the
-         * pack/Stage-1 voltage (BMS mode) or vmax (standalone/manual), and
-         * the module is unloaded (relay open), so a snap is safe and lets
-         * the relay arm normally. Start the CURRENT ramp from zero: that is
-         * the inrush-critical one, and while the relay is still open no
-         * current flows regardless, so the ramp is "pre-charged" and softens
-         * the onset once the relay latches. */
-        g_ctrl.applied_voltage_v = g_ctrl.target_voltage_v;
+        /* Charge start: ramp BOTH from zero. Pre-relay-close the voltage
+         * rises at the fast CHARGE_CTRL_VOLTAGE_PRECLOSE_RAMP_V_PER_S toward
+         * the pack/Stage-1 voltage (BMS) or vmax (standalone/manual); the
+         * relay arms once the module output reaches >=90% of it. Post-close
+         * the (BMS-mode) Stage-1 -> vmax rise uses the slow
+         * CHARGE_CTRL_VOLTAGE_RAMP_V_PER_S. Current ramps from zero at
+         * CHARGE_CTRL_CURRENT_RAMP_A_PER_S; while the relay is open no
+         * current flows regardless, so that ramp is "pre-charged" and
+         * softens the onset once the relay latches. */
+        g_ctrl.applied_voltage_v = 0.0f;
         g_ctrl.applied_current_per_module_a = 0.0f;
         g_ctrl.ramp_tick = now_tick;
 
-        CHG_LIB_SetVoltageAll(g_ctrl.applied_voltage_v);
+        CHG_LIB_SetVoltageAll(0.0f);
         CHG_LIB_SetCurrentLimitAll(0.0f);
         CHG_LIB_StartAll();
 
@@ -600,8 +603,13 @@ static void apply_charge_targets(uint32_t now_tick) {
             g_ctrl.ramp_tick = now_tick;
 
             float step_s = (float)CHARGE_CTRL_RAMP_STEP_MS / 1000.0f;
+            /* Fast rate while arming (module unloaded), slow rate once the
+             * relay is latched and real current can flow. */
+            float v_rate = g_ctrl.relay_latched_closed
+                               ? CHARGE_CTRL_VOLTAGE_RAMP_V_PER_S
+                               : CHARGE_CTRL_VOLTAGE_PRECLOSE_RAMP_V_PER_S;
             float new_v = ramp_value(g_ctrl.applied_voltage_v, g_ctrl.target_voltage_v,
-                                     CHARGE_CTRL_VOLTAGE_RAMP_V_PER_S * step_s);
+                                     v_rate * step_s);
             float new_i = ramp_value(g_ctrl.applied_current_per_module_a,
                                      g_ctrl.target_current_per_module_a,
                                      CHARGE_CTRL_CURRENT_RAMP_A_PER_S * step_s);

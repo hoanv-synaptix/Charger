@@ -782,9 +782,10 @@ static bool test_current_ramp_up(void)
     return true;
 }
 
-/* Voltage ramp: after the relay latches, the commanded voltage rises from
- * the pack/Stage-1 voltage toward vmax_v gradually
- * (CHARGE_CTRL_VOLTAGE_RAMP_V_PER_S), not a step. */
+/* Two-rate voltage ramp: PRE-close the commanded voltage rises from 0 toward
+ * the pack voltage at the fast CHARGE_CTRL_VOLTAGE_PRECLOSE_RAMP_V_PER_S
+ * (which also gates when the relay arms); POST-close the Stage-1 -> vmax
+ * rise uses the slow CHARGE_CTRL_VOLTAGE_RAMP_V_PER_S. Neither is a step. */
 static bool test_voltage_ramp_up(void)
 {
     printf("Running test_voltage_ramp_up...\n");
@@ -792,23 +793,29 @@ static bool test_voltage_ramp_up(void)
     set_healthy_bms(400.0f, 50);          /* pack 400V, cfg vmax 500V */
     ASSERT(warmup_and_start(1500U, 4000U), "module never reached RUNNING");
 
-    /* Let the relay arm (sim module snaps to the commanded 400V). */
-    drive_ms(500U);
     ChargeCtrlView_t cv;
     ChargeController_GetView(&cv);
-    ASSERT(cv.relay_should_close, "relay should have latched at ~90% pack V");
-    ASSERT(cv.target_voltage_v > 490.0f, "post-latch target is vmax_v (~500V)");
-    ASSERT(cv.applied_voltage_v < 460.0f,
-           "commanded voltage has NOT jumped straight to vmax");
+    ASSERT(cv.applied_voltage_v < 60.0f,
+           "pre-close: voltage ramps from 0, not snapped to the pack voltage");
+    ASSERT(!cv.relay_should_close, "relay not armed yet -- voltage still climbing");
 
+    /* Pre-close ramp: 0 -> ~400V at 10 V/s (~40s) then the relay latches. */
+    drive_ms(45000U);
+    ChargeController_GetView(&cv);
+    ASSERT(cv.relay_should_close, "relay latches once voltage reaches ~90% pack");
+    ASSERT(cv.target_voltage_v > 490.0f, "post-latch target is vmax_v (~500V)");
     float v0 = cv.applied_voltage_v;
-    drive_ms(2000U);
+    ASSERT(v0 > 380.0f && v0 < 470.0f,
+           "commanded voltage is near the pack V, has NOT jumped to vmax");
+
+    /* Post-close ramp: slow rate toward vmax. */
+    drive_ms(5000U);
     ChargeController_GetView(&cv);
     float v1 = cv.applied_voltage_v;
-    ASSERT(v1 > v0 + 5.0f && v1 < cv.target_voltage_v,
-           "voltage climbs in steps toward vmax, ~5 V/s");
+    ASSERT(v1 > v0 + 3.0f && v1 < cv.target_voltage_v,
+           "post-close: slow ramp toward vmax");
 
-    drive_ms(25000U);
+    drive_ms(60000U);   /* 100V at 2 V/s = 50s + margin */
     ChargeController_GetView(&cv);
     ASSERT(fabsf(cv.applied_voltage_v - cv.target_voltage_v) < 1.0f,
            "voltage ramp reaches vmax");
