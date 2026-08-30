@@ -414,7 +414,7 @@ Frame RX được feed tới driver đang active qua `CHG_LIB_FeedCanFrame()`.
   | VP | Ý nghĩa | Định dạng |
   |---|---|---|
   | `0x0084` | chuyển trang (`5A01` + page id) | 0=logo 1=dash 2=setting 3=alarm |
-  | `0x1000/1/2` | DC V / I / P | u16 0.1V / 0.1A / 1W |
+  | `0x1000/1/2` | DC V / I / P (đo thực tế từ module — `sum.voltage`/`sum.total_current`, giống app PC) | u16 0.1V / 0.1A / 1W |
   | `0x1010/1` | pack V / cell V | u16 0.1V / 0.01V |
   | `0x1012` | charged Ah | u32 (0x1012–13) 0.1Ah — *Phase 2, hiện gửi 0* |
   | `0x1020/1/2` | AC L1/L2/L3 | u16 1V |

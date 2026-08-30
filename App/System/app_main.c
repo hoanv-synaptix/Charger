@@ -422,11 +422,18 @@ void App_Loop(void)
         DWIN_SystemData_t dd;
         memset(&dd, 0, sizeof(dd));
 
-        float amps = cc_view.applied_current_per_module_a *
-                     (float)cc_view.actual_module_count;
-        dd.dc_voltage_x10 = (uint16_t)(cc_view.applied_voltage_v * 10.0f);
-        dd.dc_current_x10 = (uint16_t)(amps * 10.0f);
-        dd.dc_power_w     = (uint16_t)(cc_view.applied_voltage_v * amps);
+        /* OUTPUT DC: the modules' actual measured output, same values the PC
+         * app shows (sum.voltage / sum.total_current), NOT the controller's
+         * commanded setpoints (cc_view.applied_*). */
+        {
+            float out_v = (isfinite(sum.voltage) && sum.voltage > 0.0f)
+                              ? sum.voltage : 0.0f;
+            float out_i = (isfinite(sum.total_current) && sum.total_current > 0.0f)
+                              ? sum.total_current : 0.0f;
+            dd.dc_voltage_x10 = (uint16_t)(out_v * 10.0f);
+            dd.dc_current_x10 = (uint16_t)(out_i * 10.0f);
+            dd.dc_power_w     = (uint16_t)(out_v * out_i);
+        }
 
         if (bms.online) {
             dd.soc_pct            = bms.soc;
