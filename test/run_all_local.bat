@@ -52,13 +52,14 @@ if %errorlevel% neq 0 (
 )
 
 echo [4/8] Running PC Protocol E2E Simulation (byte stream -> pc_protocol.c/pc_debug_protocol.c)...
-gcc -Wall -I"test/mock_hal" -I"test/host_charge_sim" -I"Modules/chg_lib" -I"Modules/bms" -I"BSP" -I"Utils/Log" -I"App/Charge" -I"App/Protocol" ^
+gcc -Wall -I"test/mock_hal" -I"test/host_charge_sim" -I"Modules/chg_lib" -I"Modules/bms" -I"BSP" -I"Utils/Log" -I"App/Charge" -I"App/Alarm" -I"App/Protocol" ^
     test/host_protocol_sim/test_pc_protocol_e2e.c ^
     test/host_charge_sim/sim_can_modules.c ^
     test/host_charge_sim/sim_bms.c ^
     test/mock_hal/mock_stubs.c ^
     App/Protocol/pc_protocol.c ^
     App/Protocol/pc_debug_protocol.c ^
+    App/Alarm/alarm.c ^
     App/Charge/charge_controller.c ^
     App/Charge/charge_cycle_config.c ^
     Modules/chg_lib/chg_lib_core.c ^

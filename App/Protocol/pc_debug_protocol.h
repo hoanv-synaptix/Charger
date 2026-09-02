@@ -23,6 +23,7 @@
 #define DEBUG_CMD_GET_CHARGE_CFG  0x19    /**< Read charge-cycle configuration */
 #define DEBUG_CMD_SET_CHARGE_CFG  0x1A    /**< Write charge-cycle configuration */
 #define DEBUG_CMD_DWIN_XFER       0x1B    /**< (Debug build only) push raw bytes to the DWIN over RS485, then return RS485 RX captured since the previous call. Empty payload = poll-only. */
+#define DEBUG_CMD_GET_ALARMS      0x1C    /**< Read unified alarm state + recent event log */
 
 /* ============== Debug Responses (MCU -> PC) ============== */
 #define DEBUG_RSP_MODULE_DATA     0x90    /**< Single module data */
@@ -34,6 +35,7 @@
 #define DEBUG_RSP_ERROR           0x96    /**< Error response */
 #define DEBUG_RSP_CHARGE_CFG      0x97    /**< Charge-cycle configuration */
 #define DEBUG_RSP_DWIN_XFER       0x9B    /**< DWIN RS485 RX bytes captured since the last DWIN_XFER */
+#define DEBUG_RSP_ALARMS         0x9C    /**< Unified alarm state + event log */
 
 /* ============== Constants ============== */
 #define DEBUG_MAX_MODULES         8
@@ -148,6 +150,22 @@ typedef struct __attribute__((packed)) {
 
 _Static_assert(sizeof(DebugSystemInfo_t) == 68, "DebugSystemInfo_t must be 68 bytes");
 
+/**
+ * @brief Unified alarm state header. Followed on the wire by @c log_count
+ *        packed { uint32 uptime_ms, uint16 code, uint8 action, uint8 event }
+ *        entries (newest first), i.e. AlarmLogEntry_t from alarm.h.
+ */
+typedef struct __attribute__((packed)) {
+    uint64_t active_mask;
+    uint64_t latched_mask;
+    uint8_t  highest_action;
+    uint8_t  worst_code;
+    uint8_t  active_count;
+    uint8_t  log_count;
+} DebugAlarmInfo_t;
+
+_Static_assert(sizeof(DebugAlarmInfo_t) == 20, "DebugAlarmInfo_t must be 20 bytes");
+
 /* ============== Function Declarations ============== */
 
 /**
@@ -233,6 +251,15 @@ uint16_t DebugProtocol_BuildCommStats(uint8_t idx, uint8_t *data);
  * @return Bytes written
  */
 uint16_t DebugProtocol_BuildChargeConfig(uint8_t *data, uint16_t max_len);
+
+/**
+ * @brief Build the unified alarm state + event-log snapshot
+ *        (DebugAlarmInfo_t header + packed AlarmLogEntry_t entries).
+ * @param data Output buffer
+ * @param max_len Max buffer size
+ * @return Bytes written, 0 if it would not fit
+ */
+uint16_t DebugProtocol_BuildAlarmInfo(uint8_t *data, uint16_t max_len);
 
 #endif /* PC_DEBUG_PROTOCOL_H */
 

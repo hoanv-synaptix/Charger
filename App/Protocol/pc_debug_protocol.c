@@ -11,6 +11,7 @@
 #include "charge_cycle_config.h"
 #include "charge_cycle_storage.h"
 #include "charge_controller.h"
+#include "alarm.h"
 #include "debug_log.h"
 #include "bsp_can.h"
 #include "bsp_sys.h"
@@ -351,6 +352,37 @@ uint16_t DebugProtocol_BuildChargeConfig(uint8_t *data, uint16_t max_len)
     return sizeof(config);
 }
 
+_Static_assert(sizeof(AlarmLogEntry_t) == 8, "AlarmLogEntry_t wire size must be 8 bytes");
+
+uint16_t DebugProtocol_BuildAlarmInfo(uint8_t *data, uint16_t max_len)
+{
+    if (max_len < sizeof(DebugAlarmInfo_t)) {
+        return 0;
+    }
+
+    AlarmView_t view;
+    Alarm_GetView(&view);
+
+    /* Fit as many newest-first log entries as the buffer allows. */
+    uint16_t room = (uint16_t)((max_len - sizeof(DebugAlarmInfo_t)) / sizeof(AlarmLogEntry_t));
+    uint8_t want = (room < ALARM_LOG_DEPTH) ? (uint8_t)room : ALARM_LOG_DEPTH;
+
+    AlarmLogEntry_t entries[ALARM_LOG_DEPTH];
+    uint8_t n = Alarm_GetLog(entries, want);
+
+    DebugAlarmInfo_t hdr;
+    hdr.active_mask     = view.active_mask;
+    hdr.latched_mask    = view.latched_mask;
+    hdr.highest_action  = (uint8_t)view.highest_action;
+    hdr.worst_code      = (uint8_t)view.worst_code;
+    hdr.active_count    = view.active_count;
+    hdr.log_count       = n;
+
+    memcpy(data, &hdr, sizeof(hdr));
+    memcpy(data + sizeof(hdr), entries, (size_t)n * sizeof(AlarmLogEntry_t));
+    return (uint16_t)(sizeof(hdr) + (uint16_t)n * sizeof(AlarmLogEntry_t));
+}
+
 void DebugProtocol_SendStream(void)
 {
     if (!g_debug_active) {
@@ -453,6 +485,18 @@ bool DebugProtocol_HandleCommand(uint8_t cmd, const uint8_t *payload, uint16_t l
         uint16_t data_len = DebugProtocol_BuildSystemInfo(reply, sizeof(reply));
         if (data_len > 0) {
             PC_Protocol_SendFrame(DEBUG_RSP_SYSTEM_INFO, reply, data_len);
+        }
+        return true;
+    }
+
+    case DEBUG_CMD_GET_ALARMS: {
+        /* No LOG here — runs in USB ISR context */
+        uint16_t data_len = DebugProtocol_BuildAlarmInfo(reply, sizeof(reply));
+        if (data_len > 0) {
+            PC_Protocol_SendFrame(DEBUG_RSP_ALARMS, reply, data_len);
+        } else {
+            reply[0] = 0x03;
+            PC_Protocol_SendFrame(DEBUG_RSP_ERROR, reply, 1);
         }
         return true;
     }
