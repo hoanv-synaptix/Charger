@@ -64,6 +64,14 @@
 #define ALARM_DB_NO_PACK_CLEAR_MS    1000U
 #define ALARM_DB_AC_MS               1000U
 
+/* Console (LOG) breadcrumb rate-limit. LOG() blocks up to 50 ms
+ * (Utils/Log/debug_log.c); several alarms can flip in a single 20 ms tick
+ * (e.g. a BMS dropping out sets its mirror bits + BMS_COMM_LOST at once), so
+ * emit at most ONE consolidated line per tick and no more than one line per
+ * this interval. The RAM event-log ring + the PC DEBUG_RSP_ALARMS readout keep
+ * the full per-edge history regardless -- the console line is only a bench aid. */
+#define ALARM_LOG_MIN_INTERVAL_MS    1000U
+
 /* ============== Inputs snapshot ============== */
 
 typedef struct {
@@ -95,6 +103,8 @@ typedef struct {
 
 /* ============== Spec table ============== */
 
+/* Plain C function pointer -- each spec row's raw-condition predicate. Not an
+ * interpreter/eval of any kind; the table is fully static (k_specs below). */
 typedef bool (*AlarmEvalFn)(const AlarmInputs_t *in, uint32_t param);
 
 typedef struct {
@@ -203,8 +213,17 @@ static struct {
     uint8_t  log_count;
 
     AlarmView_t view;
+    uint32_t last_console_log_tick;
     bool     inited;
 } g_alarm;
+
+/* Per-tick edge tally, so run_debounce() does no blocking LOG() itself. */
+typedef struct {
+    uint8_t      raised;
+    uint8_t      cleared;
+    const char  *first_raised_desc;
+    const char  *first_cleared_desc;
+} AlarmEdgeTally_t;
 
 /* ============== Derived evals ============== */
 
@@ -353,7 +372,7 @@ static void log_edge(uint32_t now, AlarmCode_t code, AlarmAction_t action, bool 
 
 /* ============== Debounce + aggregate ============== */
 
-static void run_debounce(uint32_t now, const AlarmInputs_t *in) {
+static void run_debounce(uint32_t now, const AlarmInputs_t *in, AlarmEdgeTally_t *tally) {
     for (uint8_t i = 0; i < ALARM_SPEC_COUNT; i++) {
         const AlarmSpec_t *sp = &k_specs[i];
         AlarmRt_t *rt = &g_alarm.rt[i];
@@ -371,7 +390,7 @@ static void run_debounce(uint32_t now, const AlarmInputs_t *in) {
             if (!rt->active && held >= sp->set_ms) {
                 rt->active = true;
                 log_edge(now, sp->code, sp->action, true);
-                LOG("ALARM+ %s\r\n", sp->desc);
+                if (tally->raised++ == 0U) tally->first_raised_desc = sp->desc;
             }
         } else {
             if (rt->active && held >= sp->clear_ms) {
@@ -380,11 +399,26 @@ static void run_debounce(uint32_t now, const AlarmInputs_t *in) {
                 } else {
                     rt->active = false;
                     log_edge(now, sp->code, sp->action, false);
-                    LOG("ALARM- %s\r\n", sp->desc);
+                    if (tally->cleared++ == 0U) tally->first_cleared_desc = sp->desc;
                 }
             }
         }
     }
+}
+
+/* One consolidated, rate-limited console line for a tick that had edges. */
+static void log_tally(uint32_t now, const AlarmEdgeTally_t *t) {
+    if ((t->raised == 0U) && (t->cleared == 0U)) return;
+    if ((now - g_alarm.last_console_log_tick) < ALARM_LOG_MIN_INTERVAL_MS &&
+        g_alarm.last_console_log_tick != 0U) {
+        return;   /* suppressed -- event log ring already has the detail */
+    }
+    g_alarm.last_console_log_tick = now;
+    LOG("ALARM: +%u -%u  %s%s\r\n",
+        (unsigned)t->raised, (unsigned)t->cleared,
+        t->first_raised_desc ? t->first_raised_desc
+                             : (t->first_cleared_desc ? t->first_cleared_desc : ""),
+        (t->raised + t->cleared > 1U) ? " (+more)" : "");
 }
 
 static void aggregate_view(void) {
@@ -466,9 +500,11 @@ void Alarm_Process(uint32_t now_tick) {
         g_alarm.load_established = true;
     }
 
-    run_debounce(now_tick, &in);
+    AlarmEdgeTally_t tally = {0};
+    run_debounce(now_tick, &in, &tally);
     aggregate_view();
     dispatch_action(now_tick);
+    log_tally(now_tick, &tally);
 }
 
 void Alarm_GetView(AlarmView_t *view) {
@@ -480,6 +516,7 @@ void Alarm_Acknowledge(uint32_t now_tick) {
     AlarmInputs_t in;
     gather_inputs(now_tick, &in);
 
+    uint8_t acked = 0;
     for (uint8_t i = 0; i < ALARM_SPEC_COUNT; i++) {
         const AlarmSpec_t *sp = &k_specs[i];
         AlarmRt_t *rt = &g_alarm.rt[i];
@@ -489,8 +526,9 @@ void Alarm_Acknowledge(uint32_t now_tick) {
         rt->active = false;
         rt->raw_prev = false;
         log_edge(now_tick, sp->code, sp->action, false);
-        LOG("ALARM- %s (ack)\r\n", sp->desc);
+        acked++;
     }
+    if (acked > 0U) LOG("ALARM: %u latched cleared by ack\r\n", (unsigned)acked);
     aggregate_view();
     /* let dispatch_action re-arm on the next tick once nothing STOP-level remains */
 }
