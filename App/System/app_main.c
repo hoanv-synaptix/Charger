@@ -17,6 +17,7 @@
 #include "charge_cycle_config.h"
 #include "charge_cycle_storage.h"
 #include "charge_controller.h"
+#include "alarm.h"
 #include "chg_lib.h"
 #include "chg_lib_can_backend.h"
 #include "chg_lib_driver_lianming.h"
@@ -82,10 +83,19 @@ static uint8_t read_btn_start(void) { return BSP_BTN_IsPressed(BSP_BTN_START) ? 
 static uint16_t dwin_status_from_state(const ChargeCtrlView_t *cc,
                                       const CHG_LIB_SystemSummary_t *sum)
 {
-    /* Fault first: any active fault flag or the FAULT state -> ERROR. */
+    /* Fault first: any active fault flag, the FAULT state, or an alarm at
+     * STOP/ESTOP level (covers the debounce/ack window before the controller
+     * itself transitions to FAULT) -> ERROR. */
     if (cc->state == CHARGE_CTRL_STATE_FAULT ||
         cc->fault_flags != CHARGE_CTRL_FAULT_NONE) {
         return DWIN_STATUS_ERROR;
+    }
+    {
+        AlarmView_t av;
+        Alarm_GetView(&av);
+        if (av.highest_action >= ALARM_ACT_STOP) {
+            return DWIN_STATUS_ERROR;
+        }
     }
 
     switch (cc->state) {
@@ -160,6 +170,7 @@ static void app_action_button(uint16_t dwin_status, uint32_t now)
             break;
         case DWIN_STATUS_ERROR:
             LOG("App: button (ERROR) -> clear fault\r\n");
+            Alarm_Acknowledge(now);      /* clear latched alarms whose cause is gone */
             ChargeController_Stop(now);   /* from FAULT: clears fault -> IDLE */
             break;
         case DWIN_STATUS_COMPLETE:
@@ -242,6 +253,10 @@ void App_Init(void)
     ChargeController_Init();
     LOG("App_Init: Charge controller initialized.\r\n");
 
+    /* Initialize the unified alarm subsystem */
+    Alarm_Init();
+    LOG("App_Init: Alarm subsystem initialized.\r\n");
+
     /* Initialize ADC for NTC */
     BSP_ADC_Init();
     LOG("App_Init: NTC ADC initialized.\r\n");
@@ -300,6 +315,12 @@ void App_Loop(void)
         }
 
         ChargeController_Process(now);
+
+        /* Unified alarm evaluation. Runs AFTER the controller (so its view,
+         * plus the BMS / module views, are fresh) and BEFORE the relay GPIO
+         * mirror below -- an alarm that commands a stop this tick is reflected
+         * in the relay write via the ChargeController_GetView() there. */
+        Alarm_Process(now);
 
         /* Cập nhật Rơ-le (Relay) — quyết định đóng/mở được tính trong
          * ChargeController_Process() (relay_should_close: RUNNING + điện áp
@@ -372,8 +393,12 @@ void App_Loop(void)
             led_run_off();
         }
 
-        /* LED_FAULT: co loi hoac mat ket noi module */
-        if (sum.any_critical || sum.modules_fault > 0 || sum.modules_online == 0) {
+        /* LED_FAULT: co loi hoac mat ket noi module, hoac alarm muc STOP/ESTOP
+         * (bao gom ca loi controller/BMS/derived ma summary khong thay) */
+        AlarmView_t av_led;
+        Alarm_GetView(&av_led);
+        if (sum.any_critical || sum.modules_fault > 0 || sum.modules_online == 0 ||
+            av_led.highest_action >= ALARM_ACT_STOP) {
             led_fault_on();
         } else {
             led_fault_off();

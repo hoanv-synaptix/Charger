@@ -52,6 +52,7 @@ BASELINE_PATH = Path(__file__).resolve().parent / "arch_baseline.txt"
 # Longest-prefix-wins mapping of source directory -> layer name.
 LAYER_DIRS = [
     ("App/System", "APP_SYSTEM"),
+    ("App/Alarm", "APP_ALARM"),
     ("App/Charge", "APP_CHARGE"),
     ("App/Protocol", "APP_PROTOCOL"),
     ("Modules", "MODULES"),
@@ -80,9 +81,10 @@ SCAN_DIRS = ["App", "BSP", "Modules", "Utils", "Core", "Drivers", "Middlewares",
 # source_layer -> set of layers it may #include "local_header.h" from.
 # A layer may always include its own layer.
 ALLOWED_TARGETS = {
-    "APP_SYSTEM":   {"APP_CHARGE", "APP_PROTOCOL", "MODULES", "PLATFORM_BSP", "PLATFORM_USB", "UTILS", "GENERATED"},
+    "APP_SYSTEM":   {"APP_ALARM", "APP_CHARGE", "APP_PROTOCOL", "MODULES", "PLATFORM_BSP", "PLATFORM_USB", "UTILS", "GENERATED"},
+    "APP_ALARM":    {"APP_CHARGE", "MODULES", "UTILS"},
     "APP_CHARGE":   {"MODULES", "UTILS"},
-    "APP_PROTOCOL": {"APP_CHARGE", "MODULES", "UTILS", "PLATFORM_USB"},
+    "APP_PROTOCOL": {"APP_ALARM", "APP_CHARGE", "MODULES", "UTILS", "PLATFORM_USB"},
     "MODULES":      {"PLATFORM_BSP", "UTILS"},
     "PLATFORM_BSP": {"GENERATED", "UTILS"},
     "PLATFORM_USB": {"GENERATED", "UTILS"},
