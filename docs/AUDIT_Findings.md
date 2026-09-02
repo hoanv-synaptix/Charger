@@ -462,6 +462,50 @@ Tiếp tục thảo luận sau §8f, người dùng đặt 2 câu hỏi thiết 
 
 **Chưa test được**: toàn bộ thay đổi này CHƯA verify trên hardware thật (chỉ host-sim) — do thời gian buổi làm việc, chưa flash lại board. Cần bạn flash + test lại: (1) quan sát điện áp module lúc chưa đóng relay khớp với điện áp pin BMS báo (không phải target xa), nhảy lên target thật ngay khi relay đóng; (2) bấm Stop lúc module còn dòng thật, xác nhận relay giữ đóng tới khi dòng về gần 0 mới mở (quan sát qua Monitor tab); (3) Emergency Stop vẫn mở tức thời như cũ.
 
+## 8c. Hệ thống alarm/error thống nhất (2026-09-03)
+
+Theo yêu cầu người dùng: gom toàn bộ error/alarm về một chỗ, phủ cả các lỗi
+BMS/module tự báo LẪN các lỗi station-level mà BMS/module **không** tự báo
+(mất CAN BMS giữa chừng, có CAN nhưng không có áp pin, rút nóng/relay sạc
+ngoài nhả, bấm START mà relay sạc không đóng, mất pha/áp thấp AC).
+
+Module mới **`App/Alarm/`** (pure policy, host-test, tick truyền vào — AGENTS.md
+§5-6): một `AlarmCode_t` thống nhất, bảng spec table-driven (giống
+`bms_protocol.c`), debounce set/clear từng alarm, event-log ring 24 bản ghi
+trong RAM, và **một** hành động `INFO/STOP/ESTOP` edge-dispatch qua
+`ChargeController_Stop()/EmergencyStop()` sẵn có (giữ 1 đường dừng). Mirror mọi
+lỗi BMS/module/controller vào cùng danh sách + log.
+
+- Chạy trong `App_Loop` 20ms block ngay sau `ChargeController_Process()`,
+  trước bước ghi GPIO relay.
+- `LED_FAULT` + icon lỗi DWIN + nút RESET/ack giờ có nhìn alarm view (trước
+  `LED_FAULT` bỏ qua hoàn toàn lỗi controller/BMS).
+- PC debug protocol: thêm `DEBUG_CMD_GET_ALARMS 0x1C` / `DEBUG_RSP_ALARMS
+  0x9C` (thuần additive; `debug_app/` — việc song song của người khác — chỉ
+  cần thêm handler).
+- Ngưỡng (`I_LOAD_MIN_A`, `LOAD_LOST_I_FRAC`, `V_PACK_FLOOR_FRAC`, `AC_*_V`,
+  debounce windows) là `#define` có tên, đánh dấu **"HW-TBD"** — cùng trạng
+  thái với `RELAY_OPEN_TIMEOUT_MS` / RS485 TX timeout / POWER_EN delay
+  (I-07/I-10). Không bump `ChargeCycleConfig` version.
+
+**Cố ý KHÔNG đụng**: fallback `batt_voltage<=0 -> vmax` trong
+`compute_voltage_ref()` (`ALARM_BMS_NO_PACK_VOLTAGE` dừng chu trình trước khi
+relay arm; đụng logic arm relay là safety-relevant, không đáng rủi ro). Không
+thêm bit `CHARGE_CTRL_FAULT_*` mới.
+
+**Chưa verify hardware**: 6 ngưỡng tuning cần đo bằng ampe kìm/scope trên bus
+DC + telemetry AC module thật. Đường tính `AC_PHASE_LOSS` từ điện áp 3 pha
+mới chỉ review code (host module sim không phát frame M_C_3); `AC_UNDERVOLT`
+đã test qua đường bit-của-module.
+
+**Verify (host, 2026-09-03)**: `check_architecture.py` (layer `APP_ALARM` mới,
+0 baseline mới), `check_ioc.py`, `test_logic` + `test_charge_e2e` +
+`test_pc_protocol_e2e` + `test_dwin_protocol_e2e` không hồi quy, suite mới
+`test/host_alarm_sim/test_alarm_e2e.c` (9 kịch bản), Release build
+FLASH 76196 B / RAM 21288 B.
+
+---
+
 ## 9. Phụ lục — File tham chiếu & Guard Checklist
 
 ### 9.1 File cần sửa theo Sprint
