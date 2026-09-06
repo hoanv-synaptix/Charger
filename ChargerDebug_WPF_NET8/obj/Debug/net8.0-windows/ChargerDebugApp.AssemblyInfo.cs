@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("ChargerDebugApp")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+3e9d766321522960ad6954f43d469a0442eb3bf7")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+c194d8977876c7aaa7157a2aa72dd1d6ece302ab")]
 [assembly: System.Reflection.AssemblyProductAttribute("ChargerDebugApp")]
 [assembly: System.Reflection.AssemblyTitleAttribute("ChargerDebugApp")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

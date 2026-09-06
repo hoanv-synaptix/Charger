@@ -76,13 +76,14 @@
 
     <Grid Margin="8">
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="5"/>
             <RowDefinition Height="220"/>
         </Grid.RowDefinitions>
 
         <!-- TOP LAYER: 3 COLUMNS -->
-        <Grid Grid.Row="0">
+        <Grid Grid.Row="1">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="340"/>
                 <ColumnDefinition Width="*"/>
@@ -110,11 +111,11 @@
                             </Style>
                         </DataGrid.Resources>
                         <DataGrid.Columns>
-                            <DataGridTextColumn Header="Addr" Width="45" ElementStyle="{StaticResource CenterCellText}"/>
-                            <DataGridTextColumn Header="Driver" Width="65" ElementStyle="{StaticResource CenterCellText}"/>
-                            <DataGridTextColumn Header="Online" Width="50" ElementStyle="{StaticResource CenterCellText}"/>
-                            <DataGridTextColumn Header="V_Out" Width="*" ElementStyle="{StaticResource CenterCellText}"/>
-                            <DataGridTextColumn Header="I_Out" Width="*" ElementStyle="{StaticResource CenterCellText}"/>
+                            <DataGridTextColumn Header="Addr" Binding="{Binding Addr}" Width="45" ElementStyle="{StaticResource CenterCellText}"/>
+                            <DataGridTextColumn Header="Driver" Binding="{Binding DriverName}" Width="65" ElementStyle="{StaticResource CenterCellText}"/>
+                            <DataGridTextColumn Header="Online" Binding="{Binding Online}" Width="50" ElementStyle="{StaticResource CenterCellText}"/>
+                            <DataGridTextColumn Header="V_Out" Binding="{Binding Voltage, StringFormat={}{0:F1}}" Width="*" ElementStyle="{StaticResource CenterCellText}"/>
+                            <DataGridTextColumn Header="I_Out" Binding="{Binding Current, StringFormat={}{0:F1}}" Width="*" ElementStyle="{StaticResource CenterCellText}"/>
                         </DataGrid.Columns>
                     </DataGrid>
                 </GroupBox>
@@ -139,19 +140,19 @@
                                         </Grid.RowDefinitions>
                                         
                                         <TextBlock Grid.Row="0" Grid.Column="0" Text="Driver" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
-                                        <TextBlock Grid.Row="0" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                        <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding BmsVoltage, StringFormat={}{0:F2}}" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
                                         <TextBlock Grid.Row="0" Grid.Column="2" Text="" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
                                         
                                         <TextBlock Grid.Row="1" Grid.Column="0" Text="State" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
-                                        <TextBlock Grid.Row="1" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                        <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding BmsCurrent, StringFormat={}{0:F2}}" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
                                         <TextBlock Grid.Row="1" Grid.Column="2" Text="" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
 
                                         <TextBlock Grid.Row="2" Grid.Column="0" Text="Online" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
-                                        <TextBlock Grid.Row="2" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                        <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding BmsSoc, StringFormat={}{0:F1}}" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
                                         <TextBlock Grid.Row="2" Grid.Column="2" Text="" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
 
                                         <TextBlock Grid.Row="3" Grid.Column="0" Text="Running" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
-                                        <TextBlock Grid.Row="3" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                        <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding BmsSoh, StringFormat={}{0:F1}}" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
                                         <TextBlock Grid.Row="3" Grid.Column="2" Text="" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
                                     </Grid>
                                 </Border>
@@ -172,19 +173,19 @@
                                         </Grid.RowDefinitions>
 
                                         <TextBlock Grid.Row="0" Grid.Column="0" Text="Voltage" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
-                                        <TextBlock Grid.Row="0" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedHighlightStyle}" Foreground="#166534" Margin="0,4,4,0"/>
+                                        <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding BmsMaxCellVolt, StringFormat={}{0:F2}}" Style="{StaticResource RightAlignedHighlightStyle}" Foreground="#166534" Margin="0,4,4,0"/>
                                         <TextBlock Grid.Row="0" Grid.Column="2" Text="V" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
 
                                         <TextBlock Grid.Row="1" Grid.Column="0" Text="Current" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
-                                        <TextBlock Grid.Row="1" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedHighlightStyle}" Foreground="#166534" Margin="0,4,4,0"/>
+                                        <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding BmsMaxCellTemp, StringFormat={}{0:F2}}" Style="{StaticResource RightAlignedHighlightStyle}" Foreground="#166534" Margin="0,4,4,0"/>
                                         <TextBlock Grid.Row="1" Grid.Column="2" Text="A" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
 
                                         <TextBlock Grid.Row="2" Grid.Column="0" Text="Current Limit" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
-                                        <TextBlock Grid.Row="2" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                        <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding BmsMaxCellVolt, StringFormat={}{0:F3}}" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
                                         <TextBlock Grid.Row="2" Grid.Column="2" Text="A" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
 
                                         <TextBlock Grid.Row="3" Grid.Column="0" Text="Temperature" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
-                                        <TextBlock Grid.Row="3" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                        <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding BmsMinCellVolt, StringFormat={}{0:F3}}" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
                                         <TextBlock Grid.Row="3" Grid.Column="2" Text="°C" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
                                     </Grid>
                                 </Border>
@@ -210,15 +211,15 @@
                                             </Grid.RowDefinitions>
 
                                             <TextBlock Grid.Row="0" Grid.Column="0" Text="DCDC" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
-                                            <TextBlock Grid.Row="0" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                            <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding BmsMaxCellTemp, StringFormat={}{0:F1}}" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
                                             <TextBlock Grid.Row="0" Grid.Column="2" Text="°C" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
 
                                             <TextBlock Grid.Row="1" Grid.Column="0" Text="Ambient" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
-                                            <TextBlock Grid.Row="1" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                            <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding BmsMinCellTemp, StringFormat={}{0:F1}}" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
                                             <TextBlock Grid.Row="1" Grid.Column="2" Text="°C" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
 
                                             <TextBlock Grid.Row="2" Grid.Column="0" Text="PFC" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
-                                            <TextBlock Grid.Row="2" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                            <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding BmsVoltage, StringFormat={}{0:F3}}" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
                                             <TextBlock Grid.Row="2" Grid.Column="2" Text="°C" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
                                         </Grid>
                                     </StackPanel>
@@ -244,27 +245,27 @@
                                             </Grid.RowDefinitions>
 
                                             <TextBlock Grid.Row="0" Grid.Column="0" Text="Input Power" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
-                                            <TextBlock Grid.Row="0" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                            <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding BmsVoltage, StringFormat={}{0:F1}}" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
                                             <TextBlock Grid.Row="0" Grid.Column="2" Text="W" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
 
                                             <TextBlock Grid.Row="1" Grid.Column="0" Text="Rated Power" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
-                                            <TextBlock Grid.Row="1" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                            <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding SysState}" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
                                             <TextBlock Grid.Row="1" Grid.Column="2" Text="W" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
 
                                             <TextBlock Grid.Row="2" Grid.Column="0" Text="Phase A" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
-                                            <TextBlock Grid.Row="2" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                            <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding SysLogic}" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
                                             <TextBlock Grid.Row="2" Grid.Column="2" Text="V" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
 
                                             <TextBlock Grid.Row="3" Grid.Column="0" Text="Phase B" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
-                                            <TextBlock Grid.Row="3" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                            <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding SysStatus}" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
                                             <TextBlock Grid.Row="3" Grid.Column="2" Text="V" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
 
                                             <TextBlock Grid.Row="4" Grid.Column="0" Text="Phase C" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
-                                            <TextBlock Grid.Row="4" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                            <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding SysStatus}" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
                                             <TextBlock Grid.Row="4" Grid.Column="2" Text="V" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
 
                                             <TextBlock Grid.Row="5" Grid.Column="0" Text="Rated Current" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
-                                            <TextBlock Grid.Row="5" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                            <TextBlock Grid.Row="5" Grid.Column="1" Text="{Binding SysTargetVoltage, StringFormat={}{0:F1}}" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
                                             <TextBlock Grid.Row="5" Grid.Column="2" Text="A" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
                                         </Grid>
                                     </StackPanel>
@@ -287,15 +288,15 @@
                                             </Grid.RowDefinitions>
 
                                             <TextBlock Grid.Row="0" Grid.Column="0" Text="Positive Bus" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
-                                            <TextBlock Grid.Row="0" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                            <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding SysTargetCurrent, StringFormat={}{0:F1}}" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
                                             <TextBlock Grid.Row="0" Grid.Column="2" Text="V" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
 
                                             <TextBlock Grid.Row="1" Grid.Column="0" Text="Negative Bus" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
-                                            <TextBlock Grid.Row="1" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                            <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding SysStatus}" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
                                             <TextBlock Grid.Row="1" Grid.Column="2" Text="V" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
 
                                             <TextBlock Grid.Row="2" Grid.Column="0" Text="PFC Fault Status" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
-                                            <TextBlock Grid.Row="2" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Foreground="#DC2626" Margin="0,4,4,0"/>
+                                            <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding SysStopReason}" Style="{StaticResource RightAlignedValueStyle}" Foreground="#DC2626" Margin="0,4,4,0"/>
                                             <TextBlock Grid.Row="2" Grid.Column="2" Text="" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
                                         </Grid>
                                     </StackPanel>
@@ -328,9 +329,9 @@
                         
                         <Border Grid.Row="0" Background="#F8FAFC" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="4" Padding="10" Margin="0,0,0,8">
                             <UniformGrid Columns="4">
-                                <StackPanel Orientation="Horizontal"><TextBlock Text="Controller State:" Style="{StaticResource LabelStyle}"/><TextBlock Text="---" Style="{StaticResource ValueStyle}" Foreground="#0284C7"/></StackPanel>
-                                <StackPanel Orientation="Horizontal"><TextBlock Text="Control Mode:" Style="{StaticResource LabelStyle}"/><TextBlock Text="---" Style="{StaticResource ValueStyle}"/></StackPanel>
-                                <StackPanel Orientation="Horizontal"><TextBlock Text="Process Summary:" Style="{StaticResource LabelStyle}"/><TextBlock Text="---" Style="{StaticResource ValueStyle}"/></StackPanel>
+                                <StackPanel Orientation="Horizontal"><TextBlock Text="Controller State:" Style="{StaticResource LabelStyle}"/><TextBlock Text="{Binding SysLogic}" Style="{StaticResource ValueStyle}" Foreground="#0284C7"/></StackPanel>
+                                <StackPanel Orientation="Horizontal"><TextBlock Text="Control Mode:" Style="{StaticResource LabelStyle}"/><TextBlock Text="{Binding SysStage}" Style="{StaticResource ValueStyle}"/></StackPanel>
+                                <StackPanel Orientation="Horizontal"><TextBlock Text="Process Summary:" Style="{StaticResource LabelStyle}"/><TextBlock Text="{Binding SysLimitC, StringFormat={}{0:F1}}" Style="{StaticResource ValueStyle}"/></StackPanel>
                                 <StackPanel Orientation="Horizontal"><TextBlock Text="Modules Online:" Style="{StaticResource LabelStyle}"/><TextBlock Text="0" Style="{StaticResource ValueStyle}"/></StackPanel>
                             </UniformGrid>
                         </Border>
@@ -360,19 +361,19 @@
                                         </Grid.RowDefinitions>
 
                                         <TextBlock Grid.Row="0" Grid.Column="0" Text="Status:" Style="{StaticResource LabelStyle}"/>
-                                        <TextBlock Grid.Row="0" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}"/>
+                                        <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding SysStopReason}" Style="{StaticResource RightAlignedValueStyle}"/>
                                         <TextBlock Grid.Row="0" Grid.Column="2" Text="" Style="{StaticResource UnitStyle}"/>
 
                                         <TextBlock Grid.Row="1" Grid.Column="0" Text="Voltage Target:" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
-                                        <TextBlock Grid.Row="1" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                        <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding SysTotalVoltage, StringFormat={}{0:F1}}" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
                                         <TextBlock Grid.Row="1" Grid.Column="2" Text="V" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
 
                                         <TextBlock Grid.Row="2" Grid.Column="0" Text="Current Limit:" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
-                                        <TextBlock Grid.Row="2" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                        <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding SysTotalCurrent, StringFormat={}{0:F1}}" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
                                         <TextBlock Grid.Row="2" Grid.Column="2" Text="A" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
 
                                         <TextBlock Grid.Row="3" Grid.Column="0" Text="Maximum Temp:" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
-                                        <TextBlock Grid.Row="3" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                        <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding SysMaxTemp, StringFormat={}{0:F1}}" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
                                         <TextBlock Grid.Row="3" Grid.Column="2" Text="°C" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
                                     </Grid>
                                 </StackPanel>
@@ -660,10 +661,10 @@
         </Grid>
 
         <!-- SPLITTER -->
-        <GridSplitter Grid.Row="1" Height="5" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Background="#CBD5E1" Cursor="SizeNS" Margin="4,0,4,0"/>
+        <GridSplitter Grid.Row="2" Height="5" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Background="#CBD5E1" Cursor="SizeNS" Margin="4,0,4,0"/>
 
-        <!-- ROW 2: BOTTOM TERMINAL -->
-        <GroupBox Grid.Row="2" Margin="4,4,4,4">
+        <!-- ROW 3: BOTTOM TERMINAL -->
+        <GroupBox Grid.Row="3" Margin="4,4,4,4">
             <GroupBox.Header>
                 <Grid>
                     <Grid.ColumnDefinitions>
@@ -673,10 +674,10 @@
                     <TextBlock Grid.Column="0" Text="Traffic Log" VerticalAlignment="Center" Margin="0,0,24,0"/>
                     <Grid Grid.Column="1">
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Center">
-                            <CheckBox Content="TX" IsChecked="True" Foreground="#2563EB" FontWeight="Bold" Margin="0,0,16,0" VerticalContentAlignment="Center" FontSize="11"/>
-                            <CheckBox Content="RX" IsChecked="True" Foreground="#16A34A" FontWeight="Bold" Margin="0,0,16,0" VerticalContentAlignment="Center" FontSize="11"/>
-                            <CheckBox Content="SYS" IsChecked="True" Foreground="#475569" FontWeight="Bold" Margin="0,0,16,0" VerticalContentAlignment="Center" FontSize="11"/>
-                            <CheckBox Content="WARN" IsChecked="True" Foreground="#EA580C" FontWeight="Bold" Margin="0,0,16,0" VerticalContentAlignment="Center" FontSize="11"/>
+                            <CheckBox x:Name="chkTx" Content="TX" IsChecked="True" Foreground="#2563EB" FontWeight="Bold" Margin="0,0,16,0" VerticalContentAlignment="Center" FontSize="11"/>
+                            <CheckBox x:Name="chkRx" Content="RX" IsChecked="True" Foreground="#16A34A" FontWeight="Bold" Margin="0,0,16,0" VerticalContentAlignment="Center" FontSize="11"/>
+                            <CheckBox x:Name="chkSys" Content="SYS" IsChecked="True" Foreground="#475569" FontWeight="Bold" Margin="0,0,16,0" VerticalContentAlignment="Center" FontSize="11"/>
+                            <CheckBox x:Name="chkWarn" Content="WARN" IsChecked="True" Foreground="#EA580C" FontWeight="Bold" Margin="0,0,16,0" VerticalContentAlignment="Center" FontSize="11"/>
                         </StackPanel>
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
                             <Button Content="Clear" Width="60" Height="22" Margin="0,0,8,0" Background="White" BorderBrush="#CBD5E1" Cursor="Hand" FontSize="11" FontWeight="Normal"/>
@@ -687,7 +688,7 @@
             </GroupBox.Header>
             <Grid>
                 <!-- Log Viewer -->
-                <DataGrid AutoGenerateColumns="False" HeadersVisibility="Column" Background="White" BorderThickness="0" GridLinesVisibility="Horizontal" HorizontalGridLinesBrush="#F1F5F9" VerticalGridLinesBrush="Transparent" RowHeight="22" FontSize="11" FontFamily="Consolas" ScrollViewer.VerticalScrollBarVisibility="Visible" IsReadOnly="True" SelectionMode="Single">
+                <DataGrid x:Name="TrafficLogGrid" AutoGenerateColumns="False" HeadersVisibility="Column" Background="White" BorderThickness="0" GridLinesVisibility="Horizontal" HorizontalGridLinesBrush="#F1F5F9" VerticalGridLinesBrush="Transparent" RowHeight="22" FontSize="11" FontFamily="Consolas" ScrollViewer.VerticalScrollBarVisibility="Visible" IsReadOnly="True" SelectionMode="Single" ItemsSource="{Binding TrafficLogs}">
                     <DataGrid.Resources>
                         <Style TargetType="DataGridColumnHeader">
                             <Setter Property="Background" Value="#F1F5F9"/>
@@ -708,15 +709,17 @@
                         </Style>
                     </DataGrid.Resources>
                     <DataGrid.Columns>
-                        <DataGridTextColumn Header="TIME" Width="80" ElementStyle="{StaticResource LeftCellText}"/>
-                        <DataGridTextColumn Header="TYPE" Width="55" ElementStyle="{StaticResource LeftCellText}"/>
-                        <DataGridTextColumn Header="ID" Width="60" ElementStyle="{StaticResource LeftCellText}"/>
-                        <DataGridTextColumn Header="DLC" Width="40" ElementStyle="{StaticResource LeftCellText}"/>
-                        <DataGridTextColumn Header="DATA" Width="220" ElementStyle="{StaticResource LeftCellText}"/>
-                        <DataGridTextColumn Header="INFO" Width="*" ElementStyle="{StaticResource LeftCellText}"/>
+                        <DataGridTextColumn Header="TIME" Binding="{Binding Time}" Width="80" ElementStyle="{StaticResource LeftCellText}"/>
+                        <DataGridTextColumn Header="TYPE" Binding="{Binding Type}" Width="55" ElementStyle="{StaticResource LeftCellText}"/>
+                        <DataGridTextColumn Header="ID" Binding="{Binding Id}" Width="60" ElementStyle="{StaticResource LeftCellText}"/>
+                        <DataGridTextColumn Header="DLC" Binding="{Binding Dlc}" Width="40" ElementStyle="{StaticResource LeftCellText}"/>
+                        <DataGridTextColumn Header="DATA" Binding="{Binding Data}" Width="220" ElementStyle="{StaticResource LeftCellText}"/>
+                        <DataGridTextColumn Header="INFO" Binding="{Binding Info}" Width="*" ElementStyle="{StaticResource LeftCellText}"/>
                     </DataGrid.Columns>
                 </DataGrid>
             </Grid>
         </GroupBox>
     </Grid>
 </Window>
+
+

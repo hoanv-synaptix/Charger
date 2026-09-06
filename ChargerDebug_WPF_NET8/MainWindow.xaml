@@ -150,24 +150,26 @@
 
         <!-- QUICK ACTION TOOLBAR -->
         <Border Grid.Row="1" Background="White" BorderBrush="#94A3B8" BorderThickness="0,0,0,1" Padding="10,6">
-            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="5">
                 <!-- Connection -->
-                <TextBlock Text="Port:" Style="{StaticResource LabelStyle}"/>
-                <ComboBox Width="120"/>
-                <Button Content="Refresh"/>
-                <Button Content="Connect" Style="{StaticResource PrimaryButton}" Width="90"/>
+                <TextBlock Text="Port:" Style="{StaticResource LabelStyle}" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                <ComboBox x:Name="cmbMainPort" Width="110" Height="30" VerticalContentAlignment="Center" Margin="0,0,6,0"/>
+                <Button Content="Refresh" Click="BtnRefresh_Click" Height="30" Width="85" Padding="0" Margin="0,0,6,0"/>
+                <Button x:Name="btnMainConnect" Content="Connect" Style="{StaticResource PrimaryButton}" Height="30" Width="105" Padding="0" Click="BtnMainConnect_Click" Margin="0,0,12,0"/>
                 
-                <Rectangle Width="2" Fill="#E2E8F0" Margin="15,0"/>
+                <Rectangle Width="1" Height="22" Fill="#CBD5E1" Margin="0,0,12,0" VerticalAlignment="Center"/>
                 
                 <!-- Config Actions -->
-                <Button Content="Import Config" Padding="10,4"/>
-                <Button Content="Export Config" Padding="10,4"/>
-                <Button Content="Read MCU" Style="{StaticResource PrimaryButton}" Padding="10,4" Margin="15,4,4,4" Click="SyncMCU_Click"/>
-                <Button Content="Write MCU" Background="#10B981" Foreground="White" BorderBrush="#059669" Padding="10,4" Click="SyncMCU_Click"/>
-                <Button Content="Defaults" Padding="10,4"/>
+                <Button Content="Import Config" Height="30" Padding="14,0" Margin="0,0,6,0" Click="ImportConfig_Click"/>
+                <Button Content="Export Config" Height="30" Padding="14,0" Margin="0,0,6,0" Click="ExportConfig_Click"/>
+                <Button Content="Read MCU" Style="{StaticResource PrimaryButton}" Height="30" Padding="14,0" Margin="6,0,6,0" Click="SyncMCU_Click"/>
+                <Button Content="Write MCU" Background="#10B981" Foreground="White" BorderBrush="#059669" Height="30" Padding="14,0" Margin="0,0,6,0" Click="SyncMCU_Click"/>
+                <Button Content="Defaults" Height="30" Padding="14,0" Margin="0,0,12,0" Click="Defaults_Click"/>
                 
+                <Rectangle Width="1" Height="22" Fill="#CBD5E1" Margin="0,0,12,0" VerticalAlignment="Center"/>
+
                 <!-- SCADA Monitor -->
-                <Button Content="📊 Live Monitor (SCADA)" Margin="50,4,0,4" Background="#10B981" Foreground="White" BorderBrush="#059669" Click="OpenMonitor_Click"/>
+                <Button Content="📊 Live Monitor (SCADA)" Height="30" Padding="16,0" Margin="0" Background="#10B981" Foreground="White" BorderBrush="#059669" Click="OpenMonitor_Click"/>
             </StackPanel>
         </Border>
 

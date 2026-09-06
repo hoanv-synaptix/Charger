@@ -1,19 +1,27 @@
 using System;
 using System.IO.Ports;
 using System.Threading;
+using System.Collections.Generic;
 
 namespace ChargerDebugApp.Protocol
 {
     public class SerialService
     {
         private SerialPort _serialPort;
-        private Thread _readThread;
+        private Thread? _readThread;
         private bool _keepReading;
+        
+        private const byte SOF1 = 0xAA;
+        private const byte SOF2 = 0x55;
+        private const byte CRC_POLY = 0x07;
 
-        public event Action<byte[]> OnDataReceived;
-        public event Action<string> OnError;
+        public event Action<byte, byte[]>? OnFrameReceived;
+        public event Action<string>? OnLog;
+        public event Action<string>? OnError;
 
-        public SerialService()
+        public static SerialService Instance { get; } = new SerialService();
+
+        private SerialService()
         {
             _serialPort = new SerialPort();
         }
@@ -32,15 +40,11 @@ namespace ChargerDebugApp.Protocol
 
                 _serialPort.PortName = portName;
                 _serialPort.BaudRate = baudRate;
-                _serialPort.DataBits = 8;
-                _serialPort.Parity = Parity.None;
-                _serialPort.StopBits = StopBits.One;
-                _serialPort.ReadTimeout = 500;
-
+                _serialPort.ReadTimeout = 100;
                 _serialPort.Open();
-                
+
                 _keepReading = true;
-                _readThread = new Thread(ReadPort);
+                _readThread = new Thread(ReadLoop);
                 _readThread.IsBackground = true;
                 _readThread.Start();
 
@@ -48,7 +52,7 @@ namespace ChargerDebugApp.Protocol
             }
             catch (Exception ex)
             {
-                OnError?.Invoke(ex.Message);
+                OnError?.Invoke($"Connect Error: {ex.Message}");
                 return false;
             }
         }
@@ -56,32 +60,78 @@ namespace ChargerDebugApp.Protocol
         public void Disconnect()
         {
             _keepReading = false;
+            if (_readThread != null && _readThread.IsAlive)
+                _readThread.Join(500);
+
             if (_serialPort.IsOpen)
+                _serialPort.Close();
+        }
+
+        public bool IsConnected => _serialPort.IsOpen;
+
+        public void SendFrame(byte cmd, byte[]? payload = null)
+        {
+            if (!_serialPort.IsOpen) return;
+            
+            payload ??= Array.Empty<byte>();
+            int len = payload.Length;
+            if (len > 255) throw new ArgumentException("Payload too large");
+
+            byte[] frame = new byte[5 + len];
+            frame[0] = SOF1;
+            frame[1] = SOF2;
+            frame[2] = cmd;
+            frame[3] = (byte)len;
+            
+            Array.Copy(payload, 0, frame, 4, len);
+            
+            byte crc = 0;
+            crc = ComputeCrc8(crc, cmd);
+            crc = ComputeCrc8(crc, (byte)len);
+            for (int i = 0; i < len; i++)
+                crc = ComputeCrc8(crc, payload[i]);
+
+            frame[4 + len] = crc;
+
+            try
             {
-                try
-                {
-                    _serialPort.Close();
-                }
-                catch { }
+                _serialPort.Write(frame, 0, frame.Length);
+            }
+            catch (Exception ex)
+            {
+                OnError?.Invoke($"Write Error: {ex.Message}");
             }
         }
 
-        private void ReadPort()
+        private byte ComputeCrc8(byte initialCrc, byte data)
         {
-            byte[] buffer = new byte[4096];
+            int crc = initialCrc ^ data;
+            for (int i = 0; i < 8; i++)
+            {
+                if ((crc & 0x80) != 0)
+                    crc = ((crc << 1) ^ CRC_POLY) & 0xFF;
+                else
+                    crc = (crc << 1) & 0xFF;
+            }
+            return (byte)crc;
+        }
+
+        private void ReadLoop()
+        {
+            List<byte> buffer = new List<byte>();
+            byte[] readBuf = new byte[1024];
+
             while (_keepReading)
             {
                 try
                 {
-                    if (_serialPort.IsOpen && _serialPort.BytesToRead > 0)
+                    if (_serialPort.BytesToRead > 0)
                     {
-                        int bytesRead = _serialPort.Read(buffer, 0, buffer.Length);
-                        if (bytesRead > 0)
-                        {
-                            byte[] data = new byte[bytesRead];
-                            Array.Copy(buffer, data, bytesRead);
-                            OnDataReceived?.Invoke(data);
-                        }
+                        int bytesRead = _serialPort.Read(readBuf, 0, Math.Min(readBuf.Length, _serialPort.BytesToRead));
+                        for (int i = 0; i < bytesRead; i++)
+                            buffer.Add(readBuf[i]);
+
+                        ProcessBuffer(buffer);
                     }
                     else
                     {
@@ -89,14 +139,77 @@ namespace ChargerDebugApp.Protocol
                     }
                 }
                 catch (TimeoutException) { }
-                catch (Exception)
+                catch (Exception ex)
                 {
-                    // Serial port disconnected or error
-                    _keepReading = false;
+                    if (_keepReading)
+                        OnError?.Invoke($"Read Loop Error: {ex.Message}");
                 }
             }
         }
 
-        public bool IsConnected => _serialPort != null && _serialPort.IsOpen;
+        private void ProcessBuffer(List<byte> buffer)
+        {
+            while (buffer.Count >= 5)
+            {
+                // Find SOF
+                int sofIndex = -1;
+                for (int i = 0; i < buffer.Count - 1; i++)
+                {
+                    if (buffer[i] == SOF1 && buffer[i + 1] == SOF2)
+                    {
+                        sofIndex = i;
+                        break;
+                    }
+                }
+
+                if (sofIndex == -1)
+                {
+                    // No SOF found, keep last byte just in case it's SOF1
+                    byte lastByte = buffer[buffer.Count - 1];
+                    buffer.Clear();
+                    if (lastByte == SOF1) buffer.Add(SOF1);
+                    return;
+                }
+
+                // Discard garbage before SOF
+                if (sofIndex > 0)
+                    buffer.RemoveRange(0, sofIndex);
+
+                // Now buffer[0] = SOF1, buffer[1] = SOF2
+                if (buffer.Count < 4) return; // Wait for CMD and LEN
+
+                byte cmd = buffer[2];
+                byte len = buffer[3];
+
+                int frameLength = 5 + len; // SOF1, SOF2, CMD, LEN, payload..., CRC
+                if (buffer.Count < frameLength) return; // Wait for full frame
+
+                // Extract payload
+                byte[] payload = new byte[len];
+                for (int i = 0; i < len; i++)
+                    payload[i] = buffer[4 + i];
+
+                byte receivedCrc = buffer[4 + len];
+
+                // Verify CRC
+                byte crc = 0;
+                crc = ComputeCrc8(crc, cmd);
+                crc = ComputeCrc8(crc, len);
+                for (int i = 0; i < len; i++)
+                    crc = ComputeCrc8(crc, payload[i]);
+
+                if (crc == receivedCrc)
+                {
+                    OnFrameReceived?.Invoke(cmd, payload);
+                }
+                else
+                {
+                    OnLog?.Invoke($"[WARN] CRC Mismatch. Cmd: {cmd:X2}, Len: {len}, Expected: {crc:X2}, Got: {receivedCrc:X2}");
+                }
+
+                // Remove processed frame
+                buffer.RemoveRange(0, frameLength);
+            }
+        }
     }
 }

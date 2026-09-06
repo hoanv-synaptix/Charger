@@ -1,125 +1,278 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 
-namespace ChargerDebug_WPF.Protocol
+namespace ChargerDebugApp.Protocol
 {
-    public class SystemInfo
+    public enum DebugCmd : byte
     {
-        public int FwMajor { get; set; }
-        public int FwMinor { get; set; }
-        public int FwPatch { get; set; }
-        public int DriverId { get; set; }
-        public int ModulesTotal { get; set; }
-        public int ModulesOnline { get; set; }
-        public int ModulesFault { get; set; }
-        public bool Charging { get; set; }
-        public int ControllerState { get; set; }
-        public bool ControllerDerating { get; set; }
-        public bool ControllerInhibit { get; set; }
-        public int ChargeSourceMode { get; set; }
-        public int ActiveLimitSource { get; set; }
-        public int ActiveStageBand { get; set; }
-        
-        public float TargetVoltage { get; set; }
-        public float TargetCurrent { get; set; }
-        
-        public int ChargeStatus { get; set; }
-        public int ActiveLogic { get; set; }
-        public int ChargeLevel { get; set; }
-        public int StopReason { get; set; }
-        public uint ControllerFaultFlags { get; set; }
-        public float ActiveLimitCurrentC { get; set; }
-        
-        public float TotalVoltage { get; set; }
-        public float TotalCurrent { get; set; }
-        public float MaxTempDcdc { get; set; }
+        ENTER = 0x10,
+        EXIT = 0x11,
+        READ_ALL = 0x12,
+        READ_ONE = 0x13,
+        READ_STATS = 0x14,
+        WRITE_REG = 0x15,
+        SEND_RAW_CAN = 0x16,
+        READ_BMS = 0x17,
+        GET_SYSTEM = 0x18,
+        GET_CHARGE_CFG = 0x19,
+        SET_CHARGE_CFG = 0x1A
+    }
 
-        public string GetControllerStateName()
-        {
-            return ControllerState switch
-            {
-                0 => "Idle",
-                1 => "Precharge",
-                2 => "Charging",
-                3 => "Stop Delay",
-                4 => "Fault",
-                5 => "Offline",
-                _ => $"State {ControllerState}"
-            };
-        }
+    public enum DebugRsp : byte
+    {
+        MODULE_DATA = 0x90,
+        ALL_MODULES = 0x91,
+        COMM_STATS = 0x92,
+        BMS_DATA = 0x93,
+        SYSTEM_INFO = 0x94,
+        RAW_CAN_TX = 0x95,
+        ERROR = 0x96,
+        CHARGE_CFG = 0x97
+    }
 
-        public string GetChargeStatusName()
-        {
-            return ChargeStatus switch
-            {
-                0 => "Normal",
-                1 => "Stopping",
-                2 => "Fault",
-                3 => "Completed",
-                _ => "Unknown"
-            };
-        }
+    public class ModuleData
+    {
+        public byte ModuleIdx;
+        public byte DriverId;
+        public bool Enabled;
+        public bool Online;
+        public bool Running;
+        public byte State;
+        public float Voltage;
+        public float Current;
+        public float CurrentLimit;
+        public float TempDcdc;
+        public float TempAmbient;
+        public float TempPfc;
+        public float AcPhaseAVoltage;
+        public float AcPhaseBVoltage;
+        public float AcPhaseCVoltage;
+        public float PfcBusPosVoltage;
+        public float PfcBusNegVoltage;
+        public uint InputPower;
+        public float RatedPower;
+        public float RatedCurrent;
+        public uint AlarmStatus;
+        public uint AlarmFlags;
+        public byte PfcFault;
+        public byte Addr;
+        public byte Group;
+        public uint LastRxTick;
+        public uint LastTxTick;
+        public uint TxCount;
+        public uint RxCount;
+        public uint ErrorCount;
+        public uint TimeoutCount;
+        public uint RecoveryCount;
+        public byte VendorDataLen;
+        public byte[] VendorData = new byte[21];
 
-        public string GetChargeSourceModeName()
+        public static ModuleData? FromBytes(byte[] data, int offset = 0)
         {
-            return ChargeSourceMode switch
-            {
-                0 => "CAN Override",
-                1 => "Manual Override",
-                2 => "Auto (BMS)",
-                _ => "Unknown"
-            };
+            if (data.Length - offset < 123) return null;
+            using var ms = new MemoryStream(data, offset, 123);
+            using var br = new BinaryReader(ms);
+            
+            var m = new ModuleData();
+            m.ModuleIdx = br.ReadByte();
+            m.DriverId = br.ReadByte();
+            m.Enabled = br.ReadByte() != 0;
+            m.Online = br.ReadByte() != 0;
+            m.Running = br.ReadByte() != 0;
+            m.State = br.ReadByte();
+            m.Voltage = br.ReadSingle();
+            m.Current = br.ReadSingle();
+            m.CurrentLimit = br.ReadSingle();
+            m.TempDcdc = br.ReadSingle();
+            m.TempAmbient = br.ReadSingle();
+            m.TempPfc = br.ReadSingle();
+            m.AcPhaseAVoltage = br.ReadSingle();
+            m.AcPhaseBVoltage = br.ReadSingle();
+            m.AcPhaseCVoltage = br.ReadSingle();
+            m.PfcBusPosVoltage = br.ReadSingle();
+            m.PfcBusNegVoltage = br.ReadSingle();
+            m.InputPower = br.ReadUInt32();
+            m.RatedPower = br.ReadSingle();
+            m.RatedCurrent = br.ReadSingle();
+            m.AlarmStatus = br.ReadUInt32();
+            m.AlarmFlags = br.ReadUInt32();
+            m.PfcFault = br.ReadByte();
+            m.Addr = br.ReadByte();
+            m.Group = br.ReadByte();
+            m.LastRxTick = br.ReadUInt32();
+            m.LastTxTick = br.ReadUInt32();
+            m.TxCount = br.ReadUInt32();
+            m.RxCount = br.ReadUInt32();
+            m.ErrorCount = br.ReadUInt32();
+            m.TimeoutCount = br.ReadUInt32();
+            m.RecoveryCount = br.ReadUInt32();
+            m.VendorDataLen = br.ReadByte();
+            m.VendorData = br.ReadBytes(21);
+            return m;
         }
     }
 
     public class BMSData
     {
-        public bool Online { get; set; }
-        public int State { get; set; }
-        public float Soc { get; set; }
-        public float Soh { get; set; }
-        public float BattVoltage { get; set; }
-        public float BattCurrent { get; set; }
-        public float CapRemain { get; set; }
-        public float RateCap { get; set; }
-        public float ChgVoltRequest { get; set; }
-        public float ChgCurrRequest { get; set; }
-        public float MaxCellVolt { get; set; }
-        public float MinCellVolt { get; set; }
-        public float MaxCellTemp { get; set; }
-        public float MinCellTemp { get; set; }
-        public bool ChargeRelayClosed { get; set; }
-        public bool DischargeRelayClosed { get; set; }
-        public uint AlarmFlags { get; set; }
-        
-        public string GetStateName()
+        public byte State;
+        public bool Online;
+        public bool ChargeRelayClosed;
+        public bool DischargeRelayClosed;
+        public float BattVoltage;
+        public float BattCurrent;
+        public float CapRemain;
+        public float RateCap;
+        public byte Soc;
+        public byte Soh;
+        public ushort MaxCellVolt;
+        public ushort MinCellVolt;
+        public float MaxCellTemp;
+        public float MinCellTemp;
+        public float ChgVoltRequest;
+        public float ChgCurrRequest;
+        public uint AlarmFlags;
+        public uint LastRxTick;
+
+        public static BMSData? FromBytes(byte[] data)
         {
-            return State switch
-            {
-                0 => "Idle",
-                1 => "Precharge",
-                2 => "Charging",
-                3 => "Stop Delay",
-                4 => "Fault",
-                5 => "Offline",
-                _ => $"State {State}"
-            };
+            if (data.Length < 50) return null;
+            using var ms = new MemoryStream(data);
+            using var br = new BinaryReader(ms);
+
+            var b = new BMSData();
+            b.State = br.ReadByte();
+            b.Online = br.ReadByte() != 0;
+            b.ChargeRelayClosed = br.ReadByte() != 0;
+            b.DischargeRelayClosed = br.ReadByte() != 0;
+            b.BattVoltage = br.ReadSingle();
+            b.BattCurrent = br.ReadSingle();
+            b.CapRemain = br.ReadSingle();
+            b.RateCap = br.ReadSingle();
+            b.Soc = br.ReadByte();
+            b.Soh = br.ReadByte();
+            b.MaxCellVolt = br.ReadUInt16();
+            b.MinCellVolt = br.ReadUInt16();
+            b.MaxCellTemp = br.ReadSingle();
+            b.MinCellTemp = br.ReadSingle();
+            b.ChgVoltRequest = br.ReadSingle();
+            b.ChgCurrRequest = br.ReadSingle();
+            b.AlarmFlags = br.ReadUInt32();
+            b.LastRxTick = br.ReadUInt32();
+            return b;
         }
     }
 
-    public class ModuleData
+    public class SystemInfo
     {
-        public int Address { get; set; }
-        public int Driver { get; set; }
-        public bool Online { get; set; }
-        public int State { get; set; }
-        public uint StatusFlags { get; set; }
-        public float Voltage { get; set; }
-        public float Current { get; set; }
-        public float TempDcdc { get; set; }
-        public float TempPfc { get; set; }
-        public float VAcA { get; set; }
-        public float VAcB { get; set; }
-        public float VAcC { get; set; }
+        public byte FwMajor;
+        public byte FwMinor;
+        public byte FwPatch;
+        public byte DriverId;
+        public byte ModulesTotal;
+        public byte ModulesOnline;
+        public byte ModulesFault;
+        public bool Charging;
+        public byte ControllerState;
+        public bool ControllerDerating;
+        public bool ControllerInhibit;
+        public byte ChargeSourceMode;
+        public byte ActiveLimitSource;
+        public byte ActiveStageBand;
+        public float TotalVoltage;
+        public float TotalCurrent;
+        public float TotalPowerIn;
+        public float MaxTempDcdc;
+        public float ControllerTargetVoltage;
+        public float ControllerTargetCurrentTotal;
+        public float ActiveLimitCurrentC;
+        public uint UptimeTicks;
+        // CAN stats skipped (5x uint32 = 20 bytes)
+        public uint ControllerFaultFlags;
+        public byte ControllerStopReason;
+        public bool BmsStale;
+
+        public static SystemInfo? FromBytes(byte[] data)
+        {
+            if (data.Length < 68) return null; // We only support the new format with diagnostics
+            using var ms = new MemoryStream(data);
+            using var br = new BinaryReader(ms);
+
+            var s = new SystemInfo();
+            s.FwMajor = br.ReadByte();
+            s.FwMinor = br.ReadByte();
+            s.FwPatch = br.ReadByte();
+            s.DriverId = br.ReadByte();
+            s.ModulesTotal = br.ReadByte();
+            s.ModulesOnline = br.ReadByte();
+            s.ModulesFault = br.ReadByte();
+            s.Charging = br.ReadByte() != 0;
+            s.ControllerState = br.ReadByte();
+            s.ControllerDerating = br.ReadByte() != 0;
+            s.ControllerInhibit = br.ReadByte() != 0;
+            s.ChargeSourceMode = br.ReadByte();
+            s.ActiveLimitSource = br.ReadByte();
+            s.ActiveStageBand = br.ReadByte();
+            s.TotalVoltage = br.ReadSingle();
+            s.TotalCurrent = br.ReadSingle();
+            s.TotalPowerIn = br.ReadSingle();
+            s.MaxTempDcdc = br.ReadSingle();
+            s.ControllerTargetVoltage = br.ReadSingle();
+            s.ControllerTargetCurrentTotal = br.ReadSingle();
+            s.ActiveLimitCurrentC = br.ReadSingle();
+            s.UptimeTicks = br.ReadUInt32();
+            br.ReadBytes(20); // skip 5x uint32 CAN stats
+            s.ControllerFaultFlags = br.ReadUInt32();
+            s.ControllerStopReason = br.ReadByte();
+            s.BmsStale = br.ReadByte() != 0;
+            return s;
+        }
+    }
+
+    public class DebugProtocolParser
+    {
+        public event Action<List<ModuleData>>? OnAllModulesReceived;
+        public event Action<ModuleData>? OnModuleReceived;
+        public event Action<BMSData>? OnBmsReceived;
+        public event Action<SystemInfo>? OnSystemInfoReceived;
+        public event Action<byte[]>? OnChargeCfgReceived;
+        public event Action<byte, byte[]>? OnErrorReceived;
+
+        public void ParseFrame(byte cmdByte, byte[] payload)
+        {
+            if (!Enum.IsDefined(typeof(DebugRsp), cmdByte)) return;
+            DebugRsp cmd = (DebugRsp)cmdByte;
+
+            switch (cmd)
+            {
+                case DebugRsp.ALL_MODULES:
+                    if (payload.Length < 2) return;
+                    byte seq = payload[0];
+                    byte count = payload[1];
+                    var list = new List<ModuleData>();
+                    int offset = 2;
+                    for (int i = 0; i < count; i++)
+                    {
+                        var m = ModuleData.FromBytes(payload, offset);
+                        if (m != null) list.Add(m);
+                        offset += 123;
+                    }
+                    OnAllModulesReceived?.Invoke(list);
+                    break;
+                case DebugRsp.MODULE_DATA:
+                    var singleMod = ModuleData.FromBytes(payload, 0);
+                    if (singleMod != null) OnModuleReceived?.Invoke(singleMod);
+                    break;
+                case DebugRsp.BMS_DATA:
+                    var bms = BMSData.FromBytes(payload);
+                    if (bms != null) OnBmsReceived?.Invoke(bms);
+                    break;
+                case DebugRsp.SYSTEM_INFO:
+                    var sys = SystemInfo.FromBytes(payload);
+                    if (sys != null) OnSystemInfoReceived?.Invoke(sys);
+                    break;
+            }
+        }
     }
 }

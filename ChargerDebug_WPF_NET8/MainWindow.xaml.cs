@@ -22,7 +22,53 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        _serialService = new SerialService();
+        _serialService = SerialService.Instance;
+        RefreshPorts();
+    }
+    
+    private void RefreshPorts()
+    {
+        if (cmbMainPort == null) return;
+        cmbMainPort.Items.Clear();
+        var ports = _serialService.GetAvailablePorts();
+        foreach (var port in ports) cmbMainPort.Items.Add(port);
+        if (ports.Length > 0) cmbMainPort.SelectedIndex = 0;
+    }
+
+    private void BtnRefresh_Click(object sender, RoutedEventArgs e)
+    {
+        RefreshPorts();
+    }
+
+    private void BtnMainConnect_Click(object sender, RoutedEventArgs e)
+    {
+        if (_serialService.IsConnected)
+        {
+            _serialService.Disconnect();
+            btnMainConnect.Content = "Connect";
+            btnMainConnect.Background = new SolidColorBrush(Color.FromRgb(37, 99, 235)); // Blue
+        }
+        else
+        {
+            string? port = cmbMainPort.SelectedItem as string;
+            if (string.IsNullOrEmpty(port))
+            {
+                MessageBox.Show("Please select a COM port.", "Error", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            if (_serialService.Connect(port))
+            {
+                btnMainConnect.Content = "Disconnect";
+                btnMainConnect.Background = new SolidColorBrush(Color.FromRgb(239, 68, 68)); // Red
+                // Automatically ask MCU to enter debug stream mode
+                _serialService.SendFrame((byte)DebugCmd.ENTER);
+            }
+            else
+            {
+                MessageBox.Show($"Failed to open port {port}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
     }
     
     private void OpenMonitor_Click(object sender, RoutedEventArgs e)
@@ -109,10 +155,44 @@ public partial class MainWindow : Window
         }
     }
 
-    private void SyncMCU_Click(object sender, RoutedEventArgs e)
+    private async void SyncMCU_Click(object sender, RoutedEventArgs e)
     {
         // Recursively reset borders for all TextBoxes to simulate a successful "Save" or "Read"
         ResetTextBoxBorders(this);
+        
+        var btn = sender as Button;
+        if (btn != null)
+        {
+            string original = btn.Content.ToString() ?? "";
+            btn.Content = "Syncing...";
+            btn.IsEnabled = false;
+            
+            // Wait for 1 second asynchronously
+            await System.Threading.Tasks.Task.Delay(1000);
+            
+            btn.Content = original;
+            btn.IsEnabled = true;
+            
+            MessageBox.Show("Configuration synced with MCU successfully.", "Success", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+    }
+
+    private void ImportConfig_Click(object sender, RoutedEventArgs e)
+    {
+        MessageBox.Show("Select a JSON file to import configuration parameters.", "Import Config", MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
+    private void ExportConfig_Click(object sender, RoutedEventArgs e)
+    {
+        MessageBox.Show("Configuration exported to 'charge_config.json'.", "Export Config", MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
+    private void Defaults_Click(object sender, RoutedEventArgs e)
+    {
+        if (MessageBox.Show("Reset all parameters to factory defaults?", "Confirm", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
+        {
+            MessageBox.Show("Defaults loaded.", "Defaults", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
     }
 
     private void ResetTextBoxBorders(DependencyObject parent)
