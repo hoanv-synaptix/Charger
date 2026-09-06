@@ -1,14 +1,13 @@
-using System.Text;
+﻿using System;
+using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Data;
-using System.Windows.Documents;
-using System.Windows.Input;
 using System.Windows.Media;
-using System.Windows.Media.Imaging;
-using System.Windows.Navigation;
-using System.Windows.Shapes;
+using Microsoft.Win32;
 using ChargerDebugApp.Protocol;
+using ChargerDebugApp.ViewModels;
 
 namespace ChargerDebugApp;
 
@@ -17,15 +16,24 @@ namespace ChargerDebugApp;
 /// </summary>
 public partial class MainWindow : Window
 {
-    private SerialService _serialService;
+    private readonly SerialService _serialService;
+    public ChargeConfigViewModel ViewModel { get; } = new ChargeConfigViewModel();
+    private TaskCompletionSource<ChargeCycleConfig>? _cfgReadTcs;
 
     public MainWindow()
     {
         InitializeComponent();
+        DataContext = ViewModel;
         _serialService = SerialService.Instance;
+
+        // Register protocol events
+        _serialService.Parser.OnChargeConfigReceived += OnChargeConfigReceived;
+        _serialService.Parser.OnErrorReceived += OnMcuErrorReceived;
+
         RefreshPorts();
+        UpdateConnectionUi();
     }
-    
+
     private void RefreshPorts()
     {
         if (cmbMainPort == null) return;
@@ -40,108 +48,224 @@ public partial class MainWindow : Window
         RefreshPorts();
     }
 
+    private void UpdateConnectionUi()
+    {
+        if (_serialService.IsConnected)
+        {
+            btnMainConnect.Content = "Disconnect";
+            btnMainConnect.Background = new SolidColorBrush(Color.FromRgb(239, 68, 68)); // Red
+            elpStatusDot.Fill = new SolidColorBrush(Color.FromRgb(16, 185, 129)); // Green
+            lblConnectionStatus.Text = "Connected";
+            lblConnectionStatus.Foreground = new SolidColorBrush(Color.FromRgb(16, 185, 129));
+            lblStatusPrompt.Text = "Connected to MCU";
+        }
+        else
+        {
+            btnMainConnect.Content = "Connect";
+            btnMainConnect.Background = new SolidColorBrush(Color.FromRgb(37, 99, 235)); // Blue
+            elpStatusDot.Fill = new SolidColorBrush(Color.FromRgb(239, 68, 68)); // Red
+            lblConnectionStatus.Text = "Disconnected";
+            lblConnectionStatus.Foreground = new SolidColorBrush(Color.FromRgb(239, 68, 68));
+            lblStatusPrompt.Text = "Ready";
+        }
+    }
+
     private void BtnMainConnect_Click(object sender, RoutedEventArgs e)
     {
         if (_serialService.IsConnected)
         {
             _serialService.Disconnect();
-            btnMainConnect.Content = "Connect";
-            btnMainConnect.Background = new SolidColorBrush(Color.FromRgb(37, 99, 235)); // Blue
+            UpdateConnectionUi();
         }
         else
         {
             string? port = cmbMainPort.SelectedItem as string;
             if (string.IsNullOrEmpty(port))
             {
-                MessageBox.Show("Please select a COM port.", "Error", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MessageBox.Show("Please select a COM port.", "Warning", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 
             if (_serialService.Connect(port))
             {
-                btnMainConnect.Content = "Disconnect";
-                btnMainConnect.Background = new SolidColorBrush(Color.FromRgb(239, 68, 68)); // Red
-                // Automatically ask MCU to enter debug stream mode
+                UpdateConnectionUi();
+                // Send ENTER command to wake up MCU debug stream
                 _serialService.SendFrame((byte)DebugCmd.ENTER);
             }
             else
             {
-                MessageBox.Show($"Failed to open port {port}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show($"Failed to open port {port}. Please check if another app is using it.", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
     }
-    
+
     private void OpenMonitor_Click(object sender, RoutedEventArgs e)
     {
         var monitorWindow = new MonitorWindow();
         monitorWindow.Show();
     }
 
-    private void CboModuleType_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private async void BtnReadMcu_Click(object sender, RoutedEventArgs e)
     {
-        if (cboModuleType == null || txtUMin == null || txtUMax == null || txtIMin == null || txtIMax == null) return;
-        
-        var selectedItem = cboModuleType.SelectedItem as ComboBoxItem;
-        if (selectedItem == null) return;
-
-        string moduleName = selectedItem.Content.ToString() ?? "";
-        
-        // Reset defaults
-        txtUMin.Text = "0";
-        txtIMin.Text = "0";
-
-        switch (moduleName)
+        if (!_serialService.IsConnected)
         {
-            case "EVR_10KW_100A_100V":
-                txtUMax.Text = "100";
-                txtIMax.Text = "100";
-                break;
-            case "TR48_9KW_150A_48V":
-                txtUMax.Text = "48";
-                txtIMax.Text = "150";
-                break;
-            case "ICR100_20KW_200A_100V":
-                txtUMax.Text = "100";
-                txtIMax.Text = "200";
-                break;
-            case "MXR100200_20KW_200A_120V":
-                txtUMax.Text = "120";
-                txtIMax.Text = "200";
-                break;
-            case "ICR65_6.5KW_100A_65V":
-                txtUMax.Text = "65";
-                txtIMax.Text = "100";
-                break;
-            case "LA100_6KW_60A_100V":
-                txtUMax.Text = "100";
-                txtIMax.Text = "60";
-                break;
-            case "LA4500_4.5KW_50A_80V":
-                txtUMax.Text = "80";
-                txtIMax.Text = "50";
-                break;
-            default:
-                // Unknown, Maxwell, Lainming, Tonhe -> Reset to 0
-                txtUMax.Text = "0";
-                txtIMax.Text = "0";
-                break;
+            MessageBox.Show("Please connect to MCU first.", "Not Connected", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
         }
-    }
 
-    private void CboChargeSource_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (txtBmsCanId == null || cboChargeSource == null) return;
-        
-        var selectedItem = cboChargeSource.SelectedItem as ComboBoxItem;
-        if (selectedItem != null && selectedItem.Content.ToString() == "No BMS")
+        btnReadMcu.IsEnabled = false;
+        btnReadMcu.Content = "Reading...";
+        lblStatusPrompt.Text = "Requesting charge configuration from MCU...";
+
+        _cfgReadTcs = new TaskCompletionSource<ChargeCycleConfig>();
+
+        // Send GET_CHARGE_CFG (0x19)
+        bool sent = _serialService.SendFrame((byte)DebugCmd.GET_CHARGE_CFG);
+        if (!sent)
         {
-            txtBmsCanId.IsEnabled = false;
-            txtBmsCanId.Opacity = 0.5;
+            btnReadMcu.IsEnabled = true;
+            btnReadMcu.Content = "Read MCU";
+            lblStatusPrompt.Text = "Failed to send read command";
+            MessageBox.Show("Failed to transmit command to MCU.", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            return;
+        }
+
+        // Wait with 3-second timeout
+        var delayTask = Task.Delay(3000);
+        var completedTask = await Task.WhenAny(_cfgReadTcs.Task, delayTask);
+
+        btnReadMcu.IsEnabled = true;
+        btnReadMcu.Content = "Read MCU";
+
+        if (completedTask == _cfgReadTcs.Task)
+        {
+            var config = await _cfgReadTcs.Task;
+            ViewModel.LoadConfig(config);
+            ResetTextBoxBorders(this);
+            lblStatusPrompt.Text = "Config loaded from MCU successfully";
+            MessageBox.Show("Charge cycle config read from MCU successfully!", "Read MCU", MessageBoxButton.OK, MessageBoxImage.Information);
         }
         else
         {
-            txtBmsCanId.IsEnabled = true;
-            txtBmsCanId.Opacity = 1.0;
+            lblStatusPrompt.Text = "Timeout waiting for MCU response";
+            MessageBox.Show("No response from MCU within 3 seconds. Check connection and firmware status.", "Timeout", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+
+        _cfgReadTcs = null;
+    }
+
+    private void OnChargeConfigReceived(ChargeCycleConfig config)
+    {
+        Dispatcher.Invoke(() =>
+        {
+            _cfgReadTcs?.TrySetResult(config);
+        });
+    }
+
+    private void OnMcuErrorReceived(byte code, string msg)
+    {
+        Dispatcher.Invoke(() =>
+        {
+            lblStatusPrompt.Text = $"MCU Error: {msg}";
+        });
+    }
+
+    private void BtnWriteMcu_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_serialService.IsConnected)
+        {
+            MessageBox.Show("Please connect to MCU first.", "Not Connected", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        try
+        {
+            byte[] payload = ViewModel.GetBytes();
+            if (payload.Length != ChargeCycleConfig.EXPECTED_BINARY_SIZE)
+            {
+                MessageBox.Show($"Config serialization error: expected {ChargeCycleConfig.EXPECTED_BINARY_SIZE} bytes, got {payload.Length}", "Validation Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+
+            lblStatusPrompt.Text = "Writing configuration to MCU flash...";
+            bool sent = _serialService.SendFrame((byte)DebugCmd.SET_CHARGE_CFG, payload);
+
+            if (sent)
+            {
+                ResetTextBoxBorders(this);
+                lblStatusPrompt.Text = "Configuration saved to MCU flash successfully";
+                MessageBox.Show("Configuration successfully sent and written to MCU Flash!", "Write MCU", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            else
+            {
+                lblStatusPrompt.Text = "Failed to transmit config to MCU";
+                MessageBox.Show("Failed to transmit configuration packet to MCU.", "Write Failed", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Error packing configuration: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private void ImportConfig_Click(object sender, RoutedEventArgs e)
+    {
+        var dlg = new OpenFileDialog
+        {
+            Filter = "JSON Files (*.json)|*.json|All Files (*.*)|*.*",
+            Title = "Import Charge Configuration"
+        };
+
+        if (dlg.ShowDialog() == true)
+        {
+            try
+            {
+                string json = File.ReadAllText(dlg.FileName);
+                ViewModel.LoadFromJson(json);
+                ResetTextBoxBorders(this);
+                lblStatusPrompt.Text = $"Config imported from {Path.GetFileName(dlg.FileName)}";
+                MessageBox.Show($"Configuration imported successfully from:\n{dlg.FileName}", "Import Config", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Failed to parse config file:\n{ex.Message}", "Import Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+    }
+
+    private void ExportConfig_Click(object sender, RoutedEventArgs e)
+    {
+        var dlg = new SaveFileDialog
+        {
+            Filter = "JSON Files (*.json)|*.json|All Files (*.*)|*.*",
+            FileName = "charge_config.json",
+            Title = "Export Charge Configuration"
+        };
+
+        if (dlg.ShowDialog() == true)
+        {
+            try
+            {
+                string json = ViewModel.GetJson();
+                File.WriteAllText(dlg.FileName, json);
+                lblStatusPrompt.Text = $"Config exported to {Path.GetFileName(dlg.FileName)}";
+                MessageBox.Show($"Configuration exported successfully to:\n{dlg.FileName}", "Export Config", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Failed to save config file:\n{ex.Message}", "Export Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+    }
+
+    private void Defaults_Click(object sender, RoutedEventArgs e)
+    {
+        if (MessageBox.Show("Reset all parameters to factory defaults?", "Confirm Defaults", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
+        {
+            ViewModel.ResetToDefaults();
+            ResetTextBoxBorders(this);
+            lblStatusPrompt.Text = "Factory default configuration loaded";
+            MessageBox.Show("Default configuration parameters loaded.", "Defaults", MessageBoxButton.OK, MessageBoxImage.Information);
         }
     }
 
@@ -152,46 +276,6 @@ public partial class MainWindow : Window
             // Set orange border to indicate unsaved changes
             tb.BorderBrush = new SolidColorBrush(Color.FromRgb(249, 115, 22)); // #F97316
             tb.BorderThickness = new Thickness(2);
-        }
-    }
-
-    private async void SyncMCU_Click(object sender, RoutedEventArgs e)
-    {
-        // Recursively reset borders for all TextBoxes to simulate a successful "Save" or "Read"
-        ResetTextBoxBorders(this);
-        
-        var btn = sender as Button;
-        if (btn != null)
-        {
-            string original = btn.Content.ToString() ?? "";
-            btn.Content = "Syncing...";
-            btn.IsEnabled = false;
-            
-            // Wait for 1 second asynchronously
-            await System.Threading.Tasks.Task.Delay(1000);
-            
-            btn.Content = original;
-            btn.IsEnabled = true;
-            
-            MessageBox.Show("Configuration synced with MCU successfully.", "Success", MessageBoxButton.OK, MessageBoxImage.Information);
-        }
-    }
-
-    private void ImportConfig_Click(object sender, RoutedEventArgs e)
-    {
-        MessageBox.Show("Select a JSON file to import configuration parameters.", "Import Config", MessageBoxButton.OK, MessageBoxImage.Information);
-    }
-
-    private void ExportConfig_Click(object sender, RoutedEventArgs e)
-    {
-        MessageBox.Show("Configuration exported to 'charge_config.json'.", "Export Config", MessageBoxButton.OK, MessageBoxImage.Information);
-    }
-
-    private void Defaults_Click(object sender, RoutedEventArgs e)
-    {
-        if (MessageBox.Show("Reset all parameters to factory defaults?", "Confirm", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
-        {
-            MessageBox.Show("Defaults loaded.", "Defaults", MessageBoxButton.OK, MessageBoxImage.Information);
         }
     }
 

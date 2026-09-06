@@ -20,6 +20,7 @@ namespace ChargerDebugApp.Protocol
         public event Action<string>? OnError;
 
         public static SerialService Instance { get; } = new SerialService();
+        public DebugProtocolParser Parser { get; } = new DebugProtocolParser();
 
         private SerialService()
         {
@@ -69,9 +70,9 @@ namespace ChargerDebugApp.Protocol
 
         public bool IsConnected => _serialPort.IsOpen;
 
-        public void SendFrame(byte cmd, byte[]? payload = null)
+        public bool SendFrame(byte cmd, byte[]? payload = null)
         {
-            if (!_serialPort.IsOpen) return;
+            if (!_serialPort.IsOpen) return false;
             
             payload ??= Array.Empty<byte>();
             int len = payload.Length;
@@ -96,10 +97,12 @@ namespace ChargerDebugApp.Protocol
             try
             {
                 _serialPort.Write(frame, 0, frame.Length);
+                return true;
             }
             catch (Exception ex)
             {
                 OnError?.Invoke($"Write Error: {ex.Message}");
+                return false;
             }
         }
 
@@ -201,6 +204,7 @@ namespace ChargerDebugApp.Protocol
                 if (crc == receivedCrc)
                 {
                     OnFrameReceived?.Invoke(cmd, payload);
+                    Parser.ParseFrame(cmd, payload);
                 }
                 else
                 {

@@ -1,25 +1,26 @@
 using System;
+using System.IO;
+using System.Linq;
+using System.Text;
 using System.Windows;
 using System.Windows.Threading;
-using System.Linq;
+using Microsoft.Win32;
 using OxyPlot;
-using OxyPlot.Series;
 using OxyPlot.Axes;
-using ChargerDebugApp.ViewModels;
+using OxyPlot.Series;
 using ChargerDebugApp.Protocol;
-using System.Collections.Generic;
+using ChargerDebugApp.ViewModels;
 
 namespace ChargerDebugApp
 {
     public partial class MonitorWindow : Window
     {
         public MainViewModel ViewModel { get; } = new MainViewModel();
-        public PlotModel PlotModel { get; private set; }
         
         private LineSeries _voltageSeries;
         private LineSeries _currentSeries;
-        private SerialService _serialService;
-        private DebugProtocolParser _parser;
+        private readonly SerialService _serialService;
+        private readonly DebugProtocolParser _parser;
         
         private DispatcherTimer _plotTimer;
         private double _timeCounter = 0;
@@ -29,28 +30,24 @@ namespace ChargerDebugApp
             InitializeComponent();
             
             // OxyPlot Setup
-            PlotModel = new PlotModel { Title = "Charging Profile" };
-            PlotModel.Axes.Add(new LinearAxis { Position = AxisPosition.Bottom, Title = "Time (s)" });
-            PlotModel.Axes.Add(new LinearAxis { Position = AxisPosition.Left, Title = "Voltage (V)", Key = "VoltageAxis", Minimum = 0, Maximum = 70 });
-            PlotModel.Axes.Add(new LinearAxis { Position = AxisPosition.Right, Title = "Current (A)", Key = "CurrentAxis", Minimum = 0, Maximum = 100 });
+            ViewModel.PlotModel = new PlotModel { Title = "Charging Profile" };
+            ViewModel.PlotModel.Axes.Add(new LinearAxis { Position = AxisPosition.Bottom, Title = "Time (s)" });
+            ViewModel.PlotModel.Axes.Add(new LinearAxis { Position = AxisPosition.Left, Title = "Voltage (V)", Key = "VoltageAxis", Minimum = 0, Maximum = 70 });
+            ViewModel.PlotModel.Axes.Add(new LinearAxis { Position = AxisPosition.Right, Title = "Current (A)", Key = "CurrentAxis", Minimum = 0, Maximum = 100 });
             
             _voltageSeries = new LineSeries { Title = "Voltage", Color = OxyColors.Blue, YAxisKey = "VoltageAxis" };
             _currentSeries = new LineSeries { Title = "Current", Color = OxyColors.Red, YAxisKey = "CurrentAxis" };
-            PlotModel.Series.Add(_voltageSeries);
-            PlotModel.Series.Add(_currentSeries);
+            ViewModel.PlotModel.Series.Add(_voltageSeries);
+            ViewModel.PlotModel.Series.Add(_currentSeries);
 
-            DataContext = this;
+            DataContext = ViewModel;
             
             // Backend Setup
             _serialService = SerialService.Instance;
-            _parser = new DebugProtocolParser();
+            _parser = _serialService.Parser;
             
-            _serialService.OnFrameReceived += (cmd, payload) => 
+            Action<byte, byte[]> frameHandler = (cmd, payload) => 
             {
-                // Parse it
-                _parser.ParseFrame(cmd, payload);
-                
-                // Add to traffic log
                 Dispatcher.InvokeAsync(() => {
                     if (chkRx != null && chkRx.IsChecked == true) {
                         AddTrafficLog("RX", cmd.ToString("X2"), payload.Length.ToString(), BitConverter.ToString(payload).Replace("-", " "), "");
@@ -58,17 +55,17 @@ namespace ChargerDebugApp
                 });
             };
             
-            _serialService.OnLog += msg => Dispatcher.InvokeAsync(() => {
+            Action<string> logHandler = msg => Dispatcher.InvokeAsync(() => {
                 if (chkWarn != null && chkWarn.IsChecked == true) AddTrafficLog("WARN", "-", "-", "-", msg);
             });
             
-            _serialService.OnError += msg => Dispatcher.InvokeAsync(() => {
+            Action<string> errorHandler = msg => Dispatcher.InvokeAsync(() => {
                 if (chkWarn != null && chkWarn.IsChecked == true) AddTrafficLog("ERROR", "-", "-", "-", msg);
             });
             
-            _parser.OnSystemInfoReceived += sys => Dispatcher.InvokeAsync(() => ViewModel.UpdateSystem(sys));
-            _parser.OnBmsReceived += bms => Dispatcher.InvokeAsync(() => ViewModel.UpdateBMS(bms));
-            _parser.OnAllModulesReceived += mods => Dispatcher.InvokeAsync(() => {
+            Action<SystemInfo> sysHandler = sys => Dispatcher.InvokeAsync(() => ViewModel.UpdateSystem(sys));
+            Action<BMSData> bmsHandler = bms => Dispatcher.InvokeAsync(() => ViewModel.UpdateBMS(bms));
+            Action<System.Collections.Generic.List<ModuleData>> modsHandler = mods => Dispatcher.InvokeAsync(() => {
                 foreach (var mod in mods)
                 {
                     var vm = ViewModel.Modules.FirstOrDefault(m => m.ModuleIdx == mod.ModuleIdx);
@@ -81,7 +78,14 @@ namespace ChargerDebugApp
                 }
             });
 
-            // Demo timer for plot
+            _serialService.OnFrameReceived += frameHandler;
+            _serialService.OnLog += logHandler;
+            _serialService.OnError += errorHandler;
+            _parser.OnSystemInfoReceived += sysHandler;
+            _parser.OnBmsReceived += bmsHandler;
+            _parser.OnAllModulesReceived += modsHandler;
+
+            // Timer for plot
             _plotTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1000) };
             _plotTimer.Tick += (s, e) =>
             {
@@ -92,10 +96,21 @@ namespace ChargerDebugApp
                     _voltageSeries.Points.RemoveAt(0);
                     _currentSeries.Points.RemoveAt(0);
                 }
-                PlotModel.InvalidatePlot(true);
+                ViewModel.PlotModel.InvalidatePlot(true);
                 _timeCounter++;
             };
             _plotTimer.Start();
+
+            Closed += (s, e) =>
+            {
+                _plotTimer.Stop();
+                _serialService.OnFrameReceived -= frameHandler;
+                _serialService.OnLog -= logHandler;
+                _serialService.OnError -= errorHandler;
+                _parser.OnSystemInfoReceived -= sysHandler;
+                _parser.OnBmsReceived -= bmsHandler;
+                _parser.OnAllModulesReceived -= modsHandler;
+            };
         }
         
         private void AddTrafficLog(string type, string id, string dlc, string data, string info)
@@ -116,9 +131,39 @@ namespace ChargerDebugApp
                 
             if (TrafficLogGrid != null && ViewModel.TrafficLogs.Count > 0)
                 TrafficLogGrid.ScrollIntoView(ViewModel.TrafficLogs[^1]);
+        }
+
+        private void ClearLogs_Click(object sender, RoutedEventArgs e)
+        {
+            ViewModel.TrafficLogs.Clear();
+        }
+
+        private void SaveLogs_Click(object sender, RoutedEventArgs e)
+        {
+            var dlg = new SaveFileDialog
+            {
+                Filter = "CSV Files (*.csv)|*.csv|All Files (*.*)|*.*",
+                FileName = $"traffic_log_{DateTime.Now:yyyyMMdd_HHmmss}.csv",
+                Title = "Save Traffic Log"
+            };
+
+            if (dlg.ShowDialog() == true)
+            {
+                try
+                {
+                    using var sw = new StreamWriter(dlg.FileName, false, Encoding.UTF8);
+                    sw.WriteLine("Time,Type,ID,DLC,Data,Info");
+                    foreach (var log in ViewModel.TrafficLogs)
+                    {
+                        sw.WriteLine($"\"{log.Time}\",\"{log.Type}\",\"{log.Id}\",\"{log.Dlc}\",\"{log.Data}\",\"{log.Info}\"");
+                    }
+                    MessageBox.Show($"Traffic log saved successfully to:\n{dlg.FileName}", "Saved", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"Failed to save log:\n{ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                }
+            }
+        }
     }
-}
-
-
-
 }

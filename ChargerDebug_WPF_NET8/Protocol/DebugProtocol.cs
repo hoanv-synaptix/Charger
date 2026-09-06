@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -236,8 +236,8 @@ namespace ChargerDebugApp.Protocol
         public event Action<ModuleData>? OnModuleReceived;
         public event Action<BMSData>? OnBmsReceived;
         public event Action<SystemInfo>? OnSystemInfoReceived;
-        public event Action<byte[]>? OnChargeCfgReceived;
-        public event Action<byte, byte[]>? OnErrorReceived;
+        public event Action<ChargeCycleConfig>? OnChargeConfigReceived;
+        public event Action<byte, string>? OnErrorReceived;
 
         public void ParseFrame(byte cmdByte, byte[] payload)
         {
@@ -271,6 +271,29 @@ namespace ChargerDebugApp.Protocol
                 case DebugRsp.SYSTEM_INFO:
                     var sys = SystemInfo.FromBytes(payload);
                     if (sys != null) OnSystemInfoReceived?.Invoke(sys);
+                    break;
+                case DebugRsp.CHARGE_CFG:
+                    try
+                    {
+                        var cfg = ChargeCycleConfig.FromBytes(payload);
+                        OnChargeConfigReceived?.Invoke(cfg);
+                    }
+                    catch (Exception ex)
+                    {
+                        OnErrorReceived?.Invoke(0xFF, $"Failed to parse ChargeConfig: {ex.Message}");
+                    }
+                    break;
+                case DebugRsp.ERROR:
+                    byte errCode = payload.Length > 0 ? payload[0] : (byte)0;
+                    string errMsg = errCode switch
+                    {
+                        0x01 => "BAD_PARAM (Tham số không hợp lệ)",
+                        0x02 => "MODULE_OFFLINE (Mô-đun không phản hồi)",
+                        0x03 => "NOT_SUPPORTED (Không hỗ trợ)",
+                        0x04 => "FLASH_SAVE_FAIL (Lưu Flash thất bại)",
+                        _ => $"Lỗi mã 0x{errCode:X2}"
+                    };
+                    OnErrorReceived?.Invoke(errCode, errMsg);
                     break;
             }
         }

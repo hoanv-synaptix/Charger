@@ -162,8 +162,8 @@
                 <!-- Config Actions -->
                 <Button Content="Import Config" Height="30" Padding="14,0" Margin="0,0,6,0" Click="ImportConfig_Click"/>
                 <Button Content="Export Config" Height="30" Padding="14,0" Margin="0,0,6,0" Click="ExportConfig_Click"/>
-                <Button Content="Read MCU" Style="{StaticResource PrimaryButton}" Height="30" Padding="14,0" Margin="6,0,6,0" Click="SyncMCU_Click"/>
-                <Button Content="Write MCU" Background="#10B981" Foreground="White" BorderBrush="#059669" Height="30" Padding="14,0" Margin="0,0,6,0" Click="SyncMCU_Click"/>
+                <Button x:Name="btnReadMcu" Content="Read MCU" Style="{StaticResource PrimaryButton}" Height="30" Padding="14,0" Margin="6,0,6,0" Click="BtnReadMcu_Click"/>
+                <Button x:Name="btnWriteMcu" Content="Write MCU" Background="#10B981" Foreground="White" BorderBrush="#059669" Height="30" Padding="14,0" Margin="0,0,6,0" Click="BtnWriteMcu_Click"/>
                 <Button Content="Defaults" Height="30" Padding="14,0" Margin="0,0,12,0" Click="Defaults_Click"/>
                 
                 <Rectangle Width="1" Height="22" Fill="#CBD5E1" Margin="0,0,12,0" VerticalAlignment="Center"/>
@@ -191,20 +191,20 @@
                                     <StackPanel>
                                         <GroupBox Header="Pack Parameters">
                                             <UniformGrid Columns="4">
-                                                <StackPanel Margin="0,5"><TextBlock Text="Battery Cap (Ah)" Style="{StaticResource LabelStyle}"/><TextBox Text="0"/></StackPanel>
-                                                <StackPanel Margin="0,5"><TextBlock Text="Temp Limit (C)" Style="{StaticResource LabelStyle}"/><TextBox Text="0"/></StackPanel>
-                                                <StackPanel Margin="0,5"><TextBlock Text="V Min (V)" Style="{StaticResource LabelStyle}"/><TextBox Text="0"/></StackPanel>
-                                                <StackPanel Margin="0,5"><TextBlock Text="V Max (V)" Style="{StaticResource LabelStyle}"/><TextBox Text="0"/></StackPanel>
-                                                <StackPanel Margin="0,5"><TextBlock Text="I Min (C)" Style="{StaticResource LabelStyle}"/><TextBox Text="0"/></StackPanel>
-                                                <StackPanel Margin="0,5"><TextBlock Text="I Max (C)" Style="{StaticResource LabelStyle}"/><TextBox Text="0"/></StackPanel>
+                                                <StackPanel Margin="0,5"><TextBlock Text="Battery Cap (Ah)" Style="{StaticResource LabelStyle}"/><TextBox Text="{Binding Config.BatteryCapacityAh, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
+                                                <StackPanel Margin="0,5"><TextBlock Text="Temp Limit (C)" Style="{StaticResource LabelStyle}"/><TextBox Text="{Binding Config.TempLimitC, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
+                                                <StackPanel Margin="0,5"><TextBlock Text="V Min (V)" Style="{StaticResource LabelStyle}"/><TextBox Text="{Binding Config.VMinV, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
+                                                <StackPanel Margin="0,5"><TextBlock Text="V Max (V)" Style="{StaticResource LabelStyle}"/><TextBox Text="{Binding Config.VMaxV, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
+                                                <StackPanel Margin="0,5"><TextBlock Text="I Min (C)" Style="{StaticResource LabelStyle}"/><TextBox Text="{Binding Config.IMinC, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
+                                                <StackPanel Margin="0,5"><TextBlock Text="I Max (C)" Style="{StaticResource LabelStyle}"/><TextBox Text="{Binding Config.IMaxC, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
                                             </UniformGrid>
                                         </GroupBox>
                                         <GroupBox Header="Charge Window">
                                             <UniformGrid Columns="4">
-                                                <StackPanel Margin="0,5"><TextBlock Text="V Precharge (V)" Style="{StaticResource LabelStyle}"/><TextBox Text="0"/></StackPanel>
-                                                <StackPanel Margin="0,5"><TextBlock Text="V Low (V)" Style="{StaticResource LabelStyle}"/><TextBox Text="0"/></StackPanel>
-                                                <StackPanel Margin="0,5"><TextBlock Text="I Precharge (C)" Style="{StaticResource LabelStyle}"/><TextBox Text="0"/></StackPanel>
-                                                <StackPanel Margin="0,5"><TextBlock Text="I Low (C)" Style="{StaticResource LabelStyle}"/><TextBox Text="0"/></StackPanel>
+                                                <StackPanel Margin="0,5"><TextBlock Text="V Precharge (V)" Style="{StaticResource LabelStyle}"/><TextBox Text="{Binding Config.VPreV, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
+                                                <StackPanel Margin="0,5"><TextBlock Text="V Low (V)" Style="{StaticResource LabelStyle}"/><TextBox Text="{Binding Config.VLowV, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
+                                                <StackPanel Margin="0,5"><TextBlock Text="I Precharge (C)" Style="{StaticResource LabelStyle}"/><TextBox Text="{Binding Config.IPreC, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
+                                                <StackPanel Margin="0,5"><TextBlock Text="I Low (C)" Style="{StaticResource LabelStyle}"/><TextBox Text="{Binding Config.ILowC, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
                                             </UniformGrid>
                                         </GroupBox>
                                     </StackPanel>
@@ -217,9 +217,9 @@
                                             <StackPanel>
                                                 <Border Background="#F8FAFC" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="4" Padding="10" Margin="0,0,0,10">
                                                     <StackPanel Orientation="Horizontal">
-                                                        <CheckBox Content="Enabled" Margin="0,0,30,0" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                                        <CheckBox Content="Enabled" IsChecked="{Binding Config.CellVoltEnabled, Mode=TwoWay}" Margin="0,0,30,0" FontWeight="SemiBold" VerticalAlignment="Center"/>
                                                         <TextBlock Text="Delta (V):" Style="{StaticResource LabelStyle}"/>
-                                                        <TextBox Text="0" Width="80"/>
+                                                        <TextBox Text="{Binding Config.CellVoltDeltaV, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="80"/>
                                                     </StackPanel>
                                                 </Border>
                                                 
@@ -248,11 +248,11 @@
                                                     
                                                     <!-- Thresholds Inputs -->
                                                     <TextBlock Grid.Row="1" Grid.Column="0" Text="Thresholds" Style="{StaticResource LabelStyle}"/>
-                                                    <TextBox Grid.Row="1" Grid.Column="1" Text="0"/>
-                                                    <TextBox Grid.Row="1" Grid.Column="2" Text="0"/>
-                                                    <TextBox Grid.Row="1" Grid.Column="3" Text="0"/>
-                                                    <TextBox Grid.Row="1" Grid.Column="4" Text="0"/>
-                                                    <TextBox Grid.Row="1" Grid.Column="5" Text="0"/>
+                                                    <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding Config.CellVolt1V, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                                                    <TextBox Grid.Row="1" Grid.Column="2" Text="{Binding Config.CellVolt2V, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                                                    <TextBox Grid.Row="1" Grid.Column="3" Text="{Binding Config.CellVolt3V, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                                                    <TextBox Grid.Row="1" Grid.Column="4" Text="{Binding Config.CellVolt4V, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                                                    <TextBox Grid.Row="1" Grid.Column="5" Text="{Binding Config.CellVolt5V, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
 
                                                     <!-- Currents Header -->
                                                     <TextBlock Grid.Row="2" Grid.Column="1" Text="Current 1-2" Foreground="#7C3AED" FontWeight="Bold" HorizontalAlignment="Center" Margin="0,15,0,0"/>
@@ -262,10 +262,10 @@
                                                     
                                                     <!-- Currents Inputs -->
                                                     <TextBlock Grid.Row="3" Grid.Column="0" Text="Current Limits" Style="{StaticResource LabelStyle}"/>
-                                                    <TextBox Grid.Row="3" Grid.Column="1" Text="0"/>
-                                                    <TextBox Grid.Row="3" Grid.Column="2" Text="0"/>
-                                                    <TextBox Grid.Row="3" Grid.Column="3" Text="0"/>
-                                                    <TextBox Grid.Row="3" Grid.Column="4" Text="0"/>
+                                                    <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding Config.CellCurr1C, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                                                    <TextBox Grid.Row="3" Grid.Column="2" Text="{Binding Config.CellCurr2C, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                                                    <TextBox Grid.Row="3" Grid.Column="3" Text="{Binding Config.CellCurr3C, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                                                    <TextBox Grid.Row="3" Grid.Column="4" Text="{Binding Config.CellCurr4C, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
                                                 </Grid>
                                             </StackPanel>
                                         </GroupBox>
@@ -274,9 +274,9 @@
                                             <StackPanel>
                                                 <Border Background="#F8FAFC" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="4" Padding="10" Margin="0,0,0,10">
                                                     <StackPanel Orientation="Horizontal">
-                                                        <CheckBox Content="Enabled" Margin="0,0,30,0" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                                        <CheckBox Content="Enabled" IsChecked="{Binding Config.TempEnabled, Mode=TwoWay}" Margin="0,0,30,0" FontWeight="SemiBold" VerticalAlignment="Center"/>
                                                         <TextBlock Text="Delta (C):" Style="{StaticResource LabelStyle}"/>
-                                                        <TextBox Text="0" Width="80"/>
+                                                        <TextBox Text="{Binding Config.TempDeltaC, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="80"/>
                                                     </StackPanel>
                                                 </Border>
                                                 
@@ -305,11 +305,11 @@
                                                     
                                                     <!-- Thresholds Inputs -->
                                                     <TextBlock Grid.Row="1" Grid.Column="0" Text="Thresholds" Style="{StaticResource LabelStyle}"/>
-                                                    <TextBox Grid.Row="1" Grid.Column="1" Text="0"/>
-                                                    <TextBox Grid.Row="1" Grid.Column="2" Text="0"/>
-                                                    <TextBox Grid.Row="1" Grid.Column="3" Text="0"/>
-                                                    <TextBox Grid.Row="1" Grid.Column="4" Text="0"/>
-                                                    <TextBox Grid.Row="1" Grid.Column="5" Text="0"/>
+                                                    <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding Config.Temp1C, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                                                    <TextBox Grid.Row="1" Grid.Column="2" Text="{Binding Config.Temp2C, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                                                    <TextBox Grid.Row="1" Grid.Column="3" Text="{Binding Config.Temp3C, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                                                    <TextBox Grid.Row="1" Grid.Column="4" Text="{Binding Config.Temp4C, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                                                    <TextBox Grid.Row="1" Grid.Column="5" Text="{Binding Config.Temp5C, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
 
                                                     <!-- Currents Header -->
                                                     <TextBlock Grid.Row="2" Grid.Column="1" Text="Current 1-2" Foreground="#7C3AED" FontWeight="Bold" HorizontalAlignment="Center" Margin="0,15,0,0"/>
@@ -319,10 +319,10 @@
                                                     
                                                     <!-- Currents Inputs -->
                                                     <TextBlock Grid.Row="3" Grid.Column="0" Text="Current Limits" Style="{StaticResource LabelStyle}"/>
-                                                    <TextBox Grid.Row="3" Grid.Column="1" Text="0"/>
-                                                    <TextBox Grid.Row="3" Grid.Column="2" Text="0"/>
-                                                    <TextBox Grid.Row="3" Grid.Column="3" Text="0"/>
-                                                    <TextBox Grid.Row="3" Grid.Column="4" Text="0"/>
+                                                    <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding Config.TempCurr1C, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                                                    <TextBox Grid.Row="3" Grid.Column="2" Text="{Binding Config.TempCurr2C, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                                                    <TextBox Grid.Row="3" Grid.Column="3" Text="{Binding Config.TempCurr3C, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                                                    <TextBox Grid.Row="3" Grid.Column="4" Text="{Binding Config.TempCurr4C, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
                                                 </Grid>
                                             </StackPanel>
                                         </GroupBox>
@@ -331,9 +331,9 @@
                                             <StackPanel>
                                                 <Border Background="#F8FAFC" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="4" Padding="10" Margin="0,0,0,10">
                                                     <StackPanel Orientation="Horizontal">
-                                                        <CheckBox Content="Enabled" Margin="0,0,30,0" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                                        <CheckBox Content="Enabled" IsChecked="{Binding Config.SocEnabled, Mode=TwoWay}" Margin="0,0,30,0" FontWeight="SemiBold" VerticalAlignment="Center"/>
                                                         <TextBlock Text="Delta (%):" Style="{StaticResource LabelStyle}"/>
-                                                        <TextBox Text="0" Width="80"/>
+                                                        <TextBox Text="{Binding Config.SocDeltaPct, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="80"/>
                                                     </StackPanel>
                                                 </Border>
                                                 
@@ -362,11 +362,11 @@
                                                     
                                                     <!-- Thresholds Inputs -->
                                                     <TextBlock Grid.Row="1" Grid.Column="0" Text="Thresholds" Style="{StaticResource LabelStyle}"/>
-                                                    <TextBox Grid.Row="1" Grid.Column="1" Text="0"/>
-                                                    <TextBox Grid.Row="1" Grid.Column="2" Text="0"/>
-                                                    <TextBox Grid.Row="1" Grid.Column="3" Text="0"/>
-                                                    <TextBox Grid.Row="1" Grid.Column="4" Text="0"/>
-                                                    <TextBox Grid.Row="1" Grid.Column="5" Text="0"/>
+                                                    <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding Config.Soc1Pct, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                                                    <TextBox Grid.Row="1" Grid.Column="2" Text="{Binding Config.Soc2Pct, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                                                    <TextBox Grid.Row="1" Grid.Column="3" Text="{Binding Config.Soc3Pct, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                                                    <TextBox Grid.Row="1" Grid.Column="4" Text="{Binding Config.Soc4Pct, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                                                    <TextBox Grid.Row="1" Grid.Column="5" Text="{Binding Config.Soc5Pct, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
 
                                                     <!-- Currents Header -->
                                                     <TextBlock Grid.Row="2" Grid.Column="1" Text="Current 1-2" Foreground="#7C3AED" FontWeight="Bold" HorizontalAlignment="Center" Margin="0,15,0,0"/>
@@ -376,10 +376,10 @@
                                                     
                                                     <!-- Currents Inputs -->
                                                     <TextBlock Grid.Row="3" Grid.Column="0" Text="Current Limits" Style="{StaticResource LabelStyle}"/>
-                                                    <TextBox Grid.Row="3" Grid.Column="1" Text="0"/>
-                                                    <TextBox Grid.Row="3" Grid.Column="2" Text="0"/>
-                                                    <TextBox Grid.Row="3" Grid.Column="3" Text="0"/>
-                                                    <TextBox Grid.Row="3" Grid.Column="4" Text="0"/>
+                                                    <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding Config.SocCurr1C, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                                                    <TextBox Grid.Row="3" Grid.Column="2" Text="{Binding Config.SocCurr2C, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                                                    <TextBox Grid.Row="3" Grid.Column="3" Text="{Binding Config.SocCurr3C, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                                                    <TextBox Grid.Row="3" Grid.Column="4" Text="{Binding Config.SocCurr4C, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
                                                 </Grid>
                                             </StackPanel>
                                         </GroupBox>
@@ -393,11 +393,11 @@
                                     <StackPanel>
                                         <GroupBox Header="System Mapping">
                                             <UniformGrid Columns="2">
-                                                <StackPanel Margin="0,5"><TextBlock Text="BMS CAN ID:" Style="{StaticResource LabelStyle}"/><TextBox x:Name="txtBmsCanId" Text="0x1801F456"/></StackPanel>
+                                                <StackPanel Margin="0,5"><TextBlock Text="BMS CAN ID:" Style="{StaticResource LabelStyle}"/><TextBox Text="{Binding Config.CanBatteryId, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
                                                 <StackPanel Margin="0,5"><TextBlock Text="Charge Source:" Style="{StaticResource LabelStyle}"/>
-                                                    <ComboBox x:Name="cboChargeSource" SelectedIndex="0" SelectionChanged="CboChargeSource_SelectionChanged">
-                                                        <ComboBoxItem>BMS</ComboBoxItem>
-                                                        <ComboBoxItem>No BMS</ComboBoxItem>
+                                                    <ComboBox SelectedIndex="{Binding Config.ChargeSourceMode, Mode=TwoWay}">
+                                                        <ComboBoxItem>BMS Controlled</ComboBoxItem>
+                                                        <ComboBoxItem>Standalone (No BMS)</ComboBoxItem>
                                                     </ComboBox>
                                                 </StackPanel>
                                             </UniformGrid>
@@ -405,46 +405,38 @@
                                         
                                         <GroupBox Header="Charge Jack Protection">
                                             <UniformGrid Columns="2">
-                                                <CheckBox Content="Enabled" VerticalAlignment="Center" FontWeight="SemiBold" Margin="5,0"/> <TextBlock Text=""/>
-                                                <StackPanel Margin="0,5"><TextBlock Text="Delta V (V):" Style="{StaticResource LabelStyle}"/><TextBox Text="0"/></StackPanel>
-                                                <StackPanel Margin="0,5"><TextBlock Text="Delay (s):" Style="{StaticResource LabelStyle}"/><TextBox Text="0"/></StackPanel>
+                                                <CheckBox Content="Enabled" IsChecked="{Binding Config.ProtectJackChargeEnabled, Mode=TwoWay}" VerticalAlignment="Center" FontWeight="SemiBold" Margin="5,0"/> <TextBlock Text=""/>
+                                                <StackPanel Margin="0,5"><TextBlock Text="Delta V (V):" Style="{StaticResource LabelStyle}"/><TextBox Text="{Binding Config.ProtectJackChargeDeltaV, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
+                                                <StackPanel Margin="0,5"><TextBlock Text="Delay (s):" Style="{StaticResource LabelStyle}"/><TextBox Text="{Binding Config.ProtectJackChargeDelayS, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
                                             </UniformGrid>
                                         </GroupBox>
 
                                         <GroupBox Header="Jack Temperature Protection">
                                             <UniformGrid Columns="2">
-                                                <CheckBox Content="Enabled" VerticalAlignment="Center" FontWeight="SemiBold" Margin="5,0"/> <TextBlock Text=""/>
-                                                <StackPanel Margin="0,5"><TextBlock Text="Threshold (C):" Style="{StaticResource LabelStyle}"/><TextBox Text="0"/></StackPanel>
-                                                <StackPanel Margin="0,5"><TextBlock Text="Delta (C):" Style="{StaticResource LabelStyle}"/><TextBox Text="0"/></StackPanel>
-                                                <StackPanel Margin="0,5"><TextBlock Text="Delay (s):" Style="{StaticResource LabelStyle}"/><TextBox Text="0"/></StackPanel>
-                                                <StackPanel Margin="0,5"><TextBlock Text="Power Limit (%):" Style="{StaticResource LabelStyle}"/><TextBox Text="0"/></StackPanel>
+                                                <CheckBox Content="Enabled" IsChecked="{Binding Config.ProtectJackTempEnabled, Mode=TwoWay}" VerticalAlignment="Center" FontWeight="SemiBold" Margin="5,0"/> <TextBlock Text=""/>
+                                                <StackPanel Margin="0,5"><TextBlock Text="Threshold (C):" Style="{StaticResource LabelStyle}"/><TextBox Text="{Binding Config.ProtectJackTempThresholdC, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
+                                                <StackPanel Margin="0,5"><TextBlock Text="Delta (C):" Style="{StaticResource LabelStyle}"/><TextBox Text="{Binding Config.ProtectJackTempDeltaC, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
+                                                <StackPanel Margin="0,5"><TextBlock Text="Delay (s):" Style="{StaticResource LabelStyle}"/><TextBox Text="{Binding Config.ProtectJackTempDelayS, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
+                                                <StackPanel Margin="0,5"><TextBlock Text="Power Limit (%):" Style="{StaticResource LabelStyle}"/><TextBox Text="{Binding Config.ProtectJackTempPowerLimitPct, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
                                             </UniformGrid>
                                         </GroupBox>
 
                                         <GroupBox Header="Charger Module Envelope">
                                             <UniformGrid Columns="2">
                                                 <StackPanel Margin="0,5"><TextBlock Text="Module Type:" Style="{StaticResource LabelStyle}"/>
-                                                    <ComboBox x:Name="cboModuleType" SelectedIndex="0" SelectionChanged="CboModuleType_SelectionChanged">
-                                                        <ComboBoxItem>Unknown (Không xác định)</ComboBoxItem>
-                                                        <ComboBoxItem>Maxwell</ComboBoxItem>
-                                                        <ComboBoxItem>Lainming</ComboBoxItem>
-                                                        <ComboBoxItem>Tonhe</ComboBoxItem>
+                                                    <ComboBox SelectedIndex="{Binding Config.ModuleType, Mode=TwoWay}">
+                                                        <ComboBoxItem>Unknown</ComboBoxItem>
                                                         <ComboBoxItem>EVR_10KW_100A_100V</ComboBoxItem>
-                                                        <ComboBoxItem>TR48_9KW_150A_48V</ComboBoxItem>
-                                                        <ComboBoxItem>ICR100_20KW_200A_100V</ComboBoxItem>
-                                                        <ComboBoxItem>MXR100200_20KW_200A_120V</ComboBoxItem>
-                                                        <ComboBoxItem>ICR65_6.5KW_100A_65V</ComboBoxItem>
-                                                        <ComboBoxItem>LA100_6KW_60A_100V</ComboBoxItem>
-                                                        <ComboBoxItem>LA4500_4.5KW_50A_80V</ComboBoxItem>
+                                                        <ComboBoxItem>Maxwell</ComboBoxItem>
+                                                        <ComboBoxItem>Lianming</ComboBoxItem>
+                                                        <ComboBoxItem>TonHe</ComboBoxItem>
                                                     </ComboBox>
                                                 </StackPanel>
-                                                <StackPanel Margin="0,5"><TextBlock Text="Module CAN Address:" Style="{StaticResource LabelStyle}"/><TextBox x:Name="txtModuleAddress" Text="0x01"/></StackPanel>
-                                                <StackPanel Margin="0,5"><TextBlock Text="Source Modules:" Style="{StaticResource LabelStyle}"/><TextBox Text="2"/></StackPanel>
-                                                <TextBlock Text="" /> <!-- Empty space to keep layout aligned -->
-                                                <StackPanel Margin="0,5"><TextBlock Text="U Min (V):" Style="{StaticResource LabelStyle}"/><TextBox x:Name="txtUMin" Text="0"/></StackPanel>
-                                                <StackPanel Margin="0,5"><TextBlock Text="U Max (V):" Style="{StaticResource LabelStyle}"/><TextBox x:Name="txtUMax" Text="0"/></StackPanel>
-                                                <StackPanel Margin="0,5"><TextBlock Text="I Min (A):" Style="{StaticResource LabelStyle}"/><TextBox x:Name="txtIMin" Text="0"/></StackPanel>
-                                                <StackPanel Margin="0,5"><TextBlock Text="I Max (A):" Style="{StaticResource LabelStyle}"/><TextBox x:Name="txtIMax" Text="0"/></StackPanel>
+                                                <StackPanel Margin="0,5"><TextBlock Text="Source Modules:" Style="{StaticResource LabelStyle}"/><TextBox Text="{Binding Config.SourceModuleCount, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
+                                                <StackPanel Margin="0,5"><TextBlock Text="U Min (V):" Style="{StaticResource LabelStyle}"/><TextBox Text="{Binding Config.ModuleUMinV, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
+                                                <StackPanel Margin="0,5"><TextBlock Text="U Max (V):" Style="{StaticResource LabelStyle}"/><TextBox Text="{Binding Config.ModuleUMaxV, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
+                                                <StackPanel Margin="0,5"><TextBlock Text="I Min (A):" Style="{StaticResource LabelStyle}"/><TextBox Text="{Binding Config.ModuleIMinA, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
+                                                <StackPanel Margin="0,5"><TextBlock Text="I Max (A):" Style="{StaticResource LabelStyle}"/><TextBox Text="{Binding Config.ModuleIMaxA, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
                                             </UniformGrid>
                                         </GroupBox>
                                     </StackPanel>
@@ -462,14 +454,14 @@
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
                 <StackPanel Grid.Column="0" Orientation="Horizontal">
-                    <TextBlock Text="Ready" Foreground="#94A3B8" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="lblStatusPrompt" Text="Ready" Foreground="#94A3B8" FontWeight="SemiBold" VerticalAlignment="Center"/>
                     <Rectangle Width="1" Fill="#334155" Margin="10,2"/>
                     <TextBlock Text="Baudrate: 115200" Foreground="#94A3B8" VerticalAlignment="Center"/>
                 </StackPanel>
                 
                 <StackPanel Grid.Column="1" Orientation="Horizontal">
-                    <Ellipse Width="10" Height="10" Fill="#EF4444" Margin="0,0,6,0" VerticalAlignment="Center"/>
-                    <TextBlock Text="Disconnected" Foreground="#EF4444" FontWeight="Bold" VerticalAlignment="Center"/>
+                    <Ellipse x:Name="elpStatusDot" Width="10" Height="10" Fill="#EF4444" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="lblConnectionStatus" Text="Disconnected" Foreground="#EF4444" FontWeight="Bold" VerticalAlignment="Center"/>
                 </StackPanel>
             </Grid>
         </Border>

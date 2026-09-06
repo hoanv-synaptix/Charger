@@ -26,3 +26,8 @@ Thumbs.db
 
 # Debug app runtime logs
 debug_app/*.log
+
+# .NET WPF build outputs
+**/[Bb]in/
+**/[Oo]bj/
+
