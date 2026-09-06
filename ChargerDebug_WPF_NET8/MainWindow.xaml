@@ -1,7 +1,8 @@
 <Window x:Class="ChargerDebugApp.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="PKG Battery - Charger Debug App - UI v3 BMS (WPF Port)" Height="900" Width="1400"
+        Title="PKG Battery – Charger Controller Debug" Height="900" Width="1400"
+        Icon="app.ico"
         Background="#E2E8F0" WindowStartupLocation="CenterScreen" FontFamily="Segoe UI">
     
     <Window.Resources>

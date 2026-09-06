@@ -2,7 +2,8 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:oxy="http://oxyplot.org/wpf"
-        Title="Live Monitor &amp; SCADA Debugger" Height="950" Width="1500"
+        Title="PKG Battery – Live Monitor &amp; SCADA" Height="950" Width="1500"
+        Icon="app.ico"
         Background="#F4F6F9" WindowStartupLocation="CenterScreen" FontFamily="Segoe UI">
         
     <Window.Resources>
@@ -98,7 +99,13 @@
                 </Grid.RowDefinitions>
                 
                 <GroupBox Grid.Row="0" Header="Observed Modules">
-                    <DataGrid Height="120" ItemsSource="{Binding Modules}" SelectedItem="{Binding SelectedModule, Mode=TwoWay}" AutoGenerateColumns="False" HeadersVisibility="Column" Background="White" BorderBrush="#94A3B8" BorderThickness="1">
+                    <DataGrid Height="200"
+                              ItemsSource="{Binding Modules}"
+                              SelectedItem="{Binding SelectedModule, Mode=TwoWay}"
+                              AutoGenerateColumns="False" HeadersVisibility="Column"
+                              IsReadOnly="True" CanUserAddRows="False" CanUserDeleteRows="False"
+                              SelectionMode="Single"
+                              Background="White" BorderBrush="#94A3B8" BorderThickness="1">
                         <DataGrid.Resources>
                             <Style TargetType="DataGridColumnHeader">
                                 <Setter Property="HorizontalContentAlignment" Value="Center"/>

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
@@ -72,6 +72,14 @@ namespace ChargerDebugApp.ViewModels
         public ObservableCollection<ModuleViewModel> Modules { get; } = new ObservableCollection<ModuleViewModel>();
         public ObservableCollection<TrafficLogItem> TrafficLogs { get; } = new ObservableCollection<TrafficLogItem>();
         public PlotModel PlotModel { get; set; } = new PlotModel();
+
+        /// <summary>True when at least one module has been received from MCU.</summary>
+        public bool HasModules => Modules.Count > 0;
+
+        public MainViewModel()
+        {
+            Modules.CollectionChanged += (_, __) => OnPropertyChanged(nameof(HasModules));
+        }
 
         private ModuleViewModel? _selectedModule;
         public ModuleViewModel? SelectedModule
