@@ -1,6 +1,8 @@
 using System;
 using System.IO;
+using System.Threading;
 using ChargerDebugApp.Protocol;
+using ChargerDebugApp.Services;
 
 namespace ChargerDebugApp
 {
@@ -140,6 +142,115 @@ namespace ChargerDebugApp
                 throw new Exception("Deselection did not restore '---' defaults!");
             }
             Console.WriteLine("[PASS] Deselection correctly restores '---' defaults.");
+
+            // ── TEST 6: Auto-Update Logic ──────────────────────────────────────
+            Console.WriteLine("[TEST 6] Testing Auto-Update Service Logic...");
+
+            var currentVer = new Version(1, 0, 0);
+            var asset = new UpdateService.GitHubAsset
+            {
+                Name = "ChargerDebugApp.exe",
+                BrowserDownloadUrl = "https://github.com/hoanv-synaptix/Charger/releases/download/v1.1.0/ChargerDebugApp.exe"
+            };
+
+            // 6a. Newer version available → should return UpdateInfo
+            var releaseNewer = new UpdateService.GitHubRelease
+            {
+                TagName    = "v1.1.0",
+                Body       = "- Fix BMS bug\n- Improve SCADA display",
+                Prerelease = false,
+                Draft      = false,
+                Assets     = [asset]
+            };
+            var result = UpdateService.EvaluateRelease(releaseNewer, currentVer);
+            if (result is null)
+                throw new Exception("6a FAIL: Expected UpdateInfo for newer version v1.1.0, got null");
+            if (result.LatestVersion != new Version(1, 1, 0))
+                throw new Exception($"6a FAIL: Expected v1.1.0, got {result.LatestVersion}");
+            if (result.DownloadUrl != asset.BrowserDownloadUrl)
+                throw new Exception($"6a FAIL: DownloadUrl mismatch: {result.DownloadUrl}");
+            if (!result.ReleaseNotes.Contains("Fix BMS bug"))
+                throw new Exception("6a FAIL: ReleaseNotes not forwarded correctly");
+            Console.WriteLine("[PASS] 6a: Newer version (v1.1.0) correctly detected and UpdateInfo returned.");
+
+            // 6b. Same version → no update
+            var releaseSame = new UpdateService.GitHubRelease
+            {
+                TagName = "v1.0.0", Prerelease = false, Draft = false, Assets = [asset]
+            };
+            if (UpdateService.EvaluateRelease(releaseSame, currentVer) is not null)
+                throw new Exception("6b FAIL: Same version should return null (no update needed)");
+            Console.WriteLine("[PASS] 6b: Same version (v1.0.0) → no update.");
+
+            // 6c. Older version → no update
+            var releaseOlder = new UpdateService.GitHubRelease
+            {
+                TagName = "v0.9.0", Prerelease = false, Draft = false, Assets = [asset]
+            };
+            if (UpdateService.EvaluateRelease(releaseOlder, currentVer) is not null)
+                throw new Exception("6c FAIL: Older version should return null");
+            Console.WriteLine("[PASS] 6c: Older version (v0.9.0) → no update.");
+
+            // 6d. Prerelease → ignored
+            var releasePrerelease = new UpdateService.GitHubRelease
+            {
+                TagName = "v2.0.0-beta", Prerelease = true, Draft = false, Assets = [asset]
+            };
+            if (UpdateService.EvaluateRelease(releasePrerelease, currentVer) is not null)
+                throw new Exception("6d FAIL: Prerelease should be ignored");
+            Console.WriteLine("[PASS] 6d: Prerelease tag → ignored.");
+
+            // 6e. Draft → ignored
+            var releaseDraft = new UpdateService.GitHubRelease
+            {
+                TagName = "v1.1.0", Prerelease = false, Draft = true, Assets = [asset]
+            };
+            if (UpdateService.EvaluateRelease(releaseDraft, currentVer) is not null)
+                throw new Exception("6e FAIL: Draft release should be ignored");
+            Console.WriteLine("[PASS] 6e: Draft release → ignored.");
+
+            // 6f. No .exe asset → return null
+            var releaseNoAsset = new UpdateService.GitHubRelease
+            {
+                TagName = "v1.1.0", Prerelease = false, Draft = false,
+                Assets = [new UpdateService.GitHubAsset { Name = "source.zip", BrowserDownloadUrl = "https://example.com/source.zip" }]
+            };
+            if (UpdateService.EvaluateRelease(releaseNoAsset, currentVer) is not null)
+                throw new Exception("6f FAIL: No .exe asset should return null");
+            Console.WriteLine("[PASS] 6f: No .exe asset in release → null (safe fallback).");
+
+            // 6g. Null release (network error / no releases) → null
+            if (UpdateService.EvaluateRelease(null, currentVer) is not null)
+                throw new Exception("6g FAIL: Null release should return null");
+            Console.WriteLine("[PASS] 6g: Null release (no internet / no releases) → null (safe).");
+
+            // 6h. Tag without 'v' prefix → still parsed correctly
+            var releaseNoPrefix = new UpdateService.GitHubRelease
+            {
+                TagName = "1.2.0", Prerelease = false, Draft = false, Assets = [asset]
+            };
+            var resultNoPrefix = UpdateService.EvaluateRelease(releaseNoPrefix, currentVer);
+            if (resultNoPrefix is null || resultNoPrefix.LatestVersion != new Version(1, 2, 0))
+                throw new Exception($"6h FAIL: Tag without 'v' prefix not parsed correctly. Got: {resultNoPrefix?.LatestVersion}");
+            Console.WriteLine("[PASS] 6h: Tag without 'v' prefix (1.2.0) → parsed correctly.");
+
+            // 6i. Malformed tag → null (safe fallback)
+            var releaseBadTag = new UpdateService.GitHubRelease
+            {
+                TagName = "latest", Prerelease = false, Draft = false, Assets = [asset]
+            };
+            if (UpdateService.EvaluateRelease(releaseBadTag, currentVer) is not null)
+                throw new Exception("6i FAIL: Malformed tag should return null");
+            Console.WriteLine("[PASS] 6i: Malformed tag ('latest') → null (safe fallback).");
+
+            // 6j. Network timeout simulation → CheckForUpdateAsync returns null (not throw)
+            var cts = new CancellationTokenSource();
+            cts.Cancel(); // Pre-cancelled token simulates timeout
+            var timeoutResult = UpdateService.CheckForUpdateAsync(cts.Token).GetAwaiter().GetResult();
+            if (timeoutResult is not null)
+                throw new Exception("6j FAIL: Cancelled token should return null, not throw");
+            Console.WriteLine("[PASS] 6j: Network timeout/cancel → null returned (app won't crash).");
+
             Console.WriteLine("[ALL TESTS PASSED SUCCESSFULLY]");
         }
     }

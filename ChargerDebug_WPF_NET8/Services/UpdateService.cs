@@ -58,31 +58,7 @@ public class UpdateService
         try
         {
             var release = await _http.GetFromJsonAsync<GitHubRelease>(ApiUrl, ct);
-            if (release is null || release.Prerelease || release.Draft)
-                return null;
-
-            // Parse version từ tag (vd: "v1.2.0" → 1.2.0)
-            var tagVersion = release.TagName?.TrimStart('v', 'V');
-            if (!Version.TryParse(tagVersion, out var latestVersion))
-                return null;
-
-            if (latestVersion <= CurrentVersion)
-                return null;
-
-            // Tìm asset .exe trong release
-            var asset = Array.Find(release.Assets ?? [],
-                a => a.Name?.Equals(AssetName, StringComparison.OrdinalIgnoreCase) == true
-                  || a.Name?.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) == true);
-
-            if (asset?.BrowserDownloadUrl is null)
-                return null;
-
-            return new UpdateInfo(
-                LatestVersion: latestVersion,
-                TagName:       release.TagName ?? $"v{latestVersion}",
-                DownloadUrl:   asset.BrowserDownloadUrl,
-                ReleaseNotes:  release.Body ?? string.Empty
-            );
+            return EvaluateRelease(release, CurrentVersion);
         }
         catch (OperationCanceledException)
         {
@@ -94,6 +70,39 @@ public class UpdateService
             return null; // Không có mạng — bỏ qua im lặng
         }
     }
+
+    /// <summary>
+    /// Tách logic đánh giá release ra để có thể test không cần HTTP.
+    /// </summary>
+    internal static UpdateInfo? EvaluateRelease(GitHubRelease? release, Version currentVersion)
+    {
+        if (release is null || release.Prerelease || release.Draft)
+            return null;
+
+        // Parse version từ tag (vd: "v1.2.0" → 1.2.0)
+        var tagVersion = release.TagName?.TrimStart('v', 'V');
+        if (!Version.TryParse(tagVersion, out var latestVersion))
+            return null;
+
+        if (latestVersion <= currentVersion)
+            return null;
+
+        // Tìm asset .exe trong release
+        var asset = Array.Find(release.Assets ?? [],
+            a => a.Name?.Equals(AssetName, StringComparison.OrdinalIgnoreCase) == true
+              || a.Name?.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) == true);
+
+        if (asset?.BrowserDownloadUrl is null)
+            return null;
+
+        return new UpdateInfo(
+            LatestVersion: latestVersion,
+            TagName:       release.TagName ?? $"v{latestVersion}",
+            DownloadUrl:   asset.BrowserDownloadUrl,
+            ReleaseNotes:  release.Body ?? string.Empty
+        );
+    }
+
 
     /// <summary>
     /// Download file update về thư mục temp.
@@ -172,7 +181,7 @@ public class UpdateService
 
     // ── GitHub API DTOs ──────────────────────────────────────────────────────
 
-    private sealed class GitHubRelease
+    internal sealed class GitHubRelease
     {
         [JsonPropertyName("tag_name")]   public string?        TagName    { get; init; }
         [JsonPropertyName("body")]       public string?        Body       { get; init; }
@@ -181,7 +190,7 @@ public class UpdateService
         [JsonPropertyName("assets")]     public GitHubAsset[]? Assets     { get; init; }
     }
 
-    private sealed class GitHubAsset
+    internal sealed class GitHubAsset
     {
         [JsonPropertyName("name")]                  public string? Name               { get; init; }
         [JsonPropertyName("browser_download_url")] public string? BrowserDownloadUrl { get; init; }
