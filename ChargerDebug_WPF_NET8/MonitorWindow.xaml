@@ -1,0 +1,722 @@
+<Window x:Class="ChargerDebugApp.MonitorWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:oxy="http://oxyplot.org/wpf"
+        Title="Live Monitor &amp; SCADA Debugger" Height="950" Width="1500"
+        Background="#F4F6F9" WindowStartupLocation="CenterScreen" FontFamily="Segoe UI">
+        
+    <Window.Resources>
+        <Style TargetType="GroupBox">
+            <Setter Property="Margin" Value="4"/>
+            <Setter Property="Padding" Value="8"/>
+            <Setter Property="Background" Value="White"/>
+            <Setter Property="BorderBrush" Value="#94A3B8"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="GroupBox">
+                        <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="4">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="*"/>
+                                </Grid.RowDefinitions>
+                                <Border Grid.Row="0" Background="#F1F5F9" BorderBrush="#94A3B8" BorderThickness="0,0,0,1" CornerRadius="4,4,0,0" Padding="10,6">
+                                    <ContentPresenter ContentSource="Header" TextElement.FontWeight="Bold" TextElement.Foreground="#0F172A" TextElement.FontSize="12" HorizontalAlignment="Stretch"/>
+                                </Border>
+                                <ContentPresenter Grid.Row="1" Margin="{TemplateBinding Padding}"/>
+                            </Grid>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style TargetType="TextBlock" x:Key="LabelStyle">
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Foreground" Value="#475569"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Margin" Value="2,0,4,0"/>
+            <Setter Property="FontSize" Value="12"/>
+        </Style>
+
+        <Style TargetType="TextBlock" x:Key="ValueStyle">
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Foreground" Value="#0F172A"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="FontSize" Value="13"/>
+        </Style>
+        
+        <Style TargetType="TextBlock" x:Key="HighlightStyle">
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Foreground" Value="#2563EB"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="FontSize" Value="16"/>
+        </Style>
+
+        <Style TargetType="TextBlock" x:Key="RightAlignedValueStyle" BasedOn="{StaticResource ValueStyle}">
+            <Setter Property="HorizontalAlignment" Value="Right"/>
+            <Setter Property="Margin" Value="0,0,4,0"/>
+        </Style>
+
+        <Style TargetType="TextBlock" x:Key="RightAlignedHighlightStyle" BasedOn="{StaticResource HighlightStyle}">
+            <Setter Property="HorizontalAlignment" Value="Right"/>
+            <Setter Property="Margin" Value="0,0,4,0"/>
+        </Style>
+
+        <Style TargetType="TextBlock" x:Key="UnitStyle">
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="HorizontalAlignment" Value="Right"/>
+            <Setter Property="Foreground" Value="#64748B"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Margin" Value="0,0,8,0"/>
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="8">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="5"/>
+            <RowDefinition Height="220"/>
+        </Grid.RowDefinitions>
+
+        <!-- TOP LAYER: 3 COLUMNS -->
+        <Grid Grid.Row="0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="340"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="380"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- COLUMN 0: CHARGER MODULES -->
+            <Grid Grid.Column="0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+                
+                <GroupBox Grid.Row="0" Header="Observed Modules">
+                    <DataGrid Height="120" AutoGenerateColumns="False" HeadersVisibility="Column" Background="White" BorderBrush="#94A3B8" BorderThickness="1">
+                        <DataGrid.Resources>
+                            <Style TargetType="DataGridColumnHeader">
+                                <Setter Property="HorizontalContentAlignment" Value="Center"/>
+                                <Setter Property="FontWeight" Value="SemiBold"/>
+                                <Setter Property="Padding" Value="4,4,4,4"/>
+                            </Style>
+                            <Style TargetType="TextBlock" x:Key="CenterCellText">
+                                <Setter Property="HorizontalAlignment" Value="Center"/>
+                                <Setter Property="VerticalAlignment" Value="Center"/>
+                            </Style>
+                        </DataGrid.Resources>
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Addr" Width="45" ElementStyle="{StaticResource CenterCellText}"/>
+                            <DataGridTextColumn Header="Driver" Width="65" ElementStyle="{StaticResource CenterCellText}"/>
+                            <DataGridTextColumn Header="Online" Width="50" ElementStyle="{StaticResource CenterCellText}"/>
+                            <DataGridTextColumn Header="V_Out" Width="*" ElementStyle="{StaticResource CenterCellText}"/>
+                            <DataGridTextColumn Header="I_Out" Width="*" ElementStyle="{StaticResource CenterCellText}"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </GroupBox>
+                
+                <GroupBox Grid.Row="1" Header="Selected Module Telemetry">
+                    <TabControl Background="#F8FAFC" BorderBrush="#E2E8F0">
+                        <TabItem Header="Electrical &amp; Alarms">
+                            <StackPanel Margin="5">
+                                <!-- Basic Info -->
+                                <Border Background="#F8FAFC" BorderBrush="#CBD5E1" BorderThickness="1" CornerRadius="4" Padding="8" Margin="0,0,0,6">
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="135"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="35"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                        </Grid.RowDefinitions>
+                                        
+                                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Driver" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
+                                        <TextBlock Grid.Row="0" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                        <TextBlock Grid.Row="0" Grid.Column="2" Text="" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
+                                        
+                                        <TextBlock Grid.Row="1" Grid.Column="0" Text="State" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
+                                        <TextBlock Grid.Row="1" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                        <TextBlock Grid.Row="1" Grid.Column="2" Text="" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
+
+                                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Online" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
+                                        <TextBlock Grid.Row="2" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                        <TextBlock Grid.Row="2" Grid.Column="2" Text="" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
+
+                                        <TextBlock Grid.Row="3" Grid.Column="0" Text="Running" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
+                                        <TextBlock Grid.Row="3" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                        <TextBlock Grid.Row="3" Grid.Column="2" Text="" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
+                                    </Grid>
+                                </Border>
+                                
+                                <!-- Output Metrics -->
+                                <Border Background="#F0FDF4" BorderBrush="#BBF7D0" BorderThickness="1" CornerRadius="4" Padding="8" Margin="0,0,0,6">
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="135"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="35"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                        </Grid.RowDefinitions>
+
+                                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Voltage" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
+                                        <TextBlock Grid.Row="0" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedHighlightStyle}" Foreground="#166534" Margin="0,4,4,0"/>
+                                        <TextBlock Grid.Row="0" Grid.Column="2" Text="V" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
+
+                                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Current" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
+                                        <TextBlock Grid.Row="1" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedHighlightStyle}" Foreground="#166534" Margin="0,4,4,0"/>
+                                        <TextBlock Grid.Row="1" Grid.Column="2" Text="A" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
+
+                                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Current Limit" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
+                                        <TextBlock Grid.Row="2" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                        <TextBlock Grid.Row="2" Grid.Column="2" Text="A" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
+
+                                        <TextBlock Grid.Row="3" Grid.Column="0" Text="Temperature" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
+                                        <TextBlock Grid.Row="3" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                        <TextBlock Grid.Row="3" Grid.Column="2" Text="°C" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
+                                    </Grid>
+                                </Border>
+                            </StackPanel>
+                        </TabItem>
+                        
+                        <TabItem Header="Hardware &amp; AC Input">
+                            <StackPanel Margin="5">
+                                <!-- Temperatures -->
+                                <Border Background="#FFF1F2" BorderBrush="#FECDD3" BorderThickness="1" CornerRadius="4" Padding="8" Margin="0,0,0,6">
+                                    <StackPanel>
+                                        <TextBlock Text="Temperatures" FontWeight="Bold" Foreground="#BE123C" Margin="0,0,0,4"/>
+                                        <Grid Margin="0,4">
+                                            <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="135"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="35"/>
+                                        </Grid.ColumnDefinitions>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                            </Grid.RowDefinitions>
+
+                                            <TextBlock Grid.Row="0" Grid.Column="0" Text="DCDC" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
+                                            <TextBlock Grid.Row="0" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                            <TextBlock Grid.Row="0" Grid.Column="2" Text="°C" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
+
+                                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Ambient" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
+                                            <TextBlock Grid.Row="1" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                            <TextBlock Grid.Row="1" Grid.Column="2" Text="°C" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
+
+                                            <TextBlock Grid.Row="2" Grid.Column="0" Text="PFC" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
+                                            <TextBlock Grid.Row="2" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                            <TextBlock Grid.Row="2" Grid.Column="2" Text="°C" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
+                                        </Grid>
+                                    </StackPanel>
+                                </Border>
+
+                                <!-- Power & AC Input -->
+                                <Border Background="#EFF6FF" BorderBrush="#BFDBFE" BorderThickness="1" CornerRadius="4" Padding="8" Margin="0,0,0,6">
+                                    <StackPanel>
+                                        <TextBlock Text="Power &amp; Grid AC" FontWeight="Bold" Foreground="#1D4ED8" Margin="0,0,0,4"/>
+                                        <Grid Margin="0,4">
+                                            <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="135"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="35"/>
+                                        </Grid.ColumnDefinitions>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                            </Grid.RowDefinitions>
+
+                                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Input Power" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
+                                            <TextBlock Grid.Row="0" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                            <TextBlock Grid.Row="0" Grid.Column="2" Text="W" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
+
+                                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Rated Power" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
+                                            <TextBlock Grid.Row="1" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                            <TextBlock Grid.Row="1" Grid.Column="2" Text="W" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
+
+                                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Phase A" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
+                                            <TextBlock Grid.Row="2" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                            <TextBlock Grid.Row="2" Grid.Column="2" Text="V" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
+
+                                            <TextBlock Grid.Row="3" Grid.Column="0" Text="Phase B" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
+                                            <TextBlock Grid.Row="3" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                            <TextBlock Grid.Row="3" Grid.Column="2" Text="V" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
+
+                                            <TextBlock Grid.Row="4" Grid.Column="0" Text="Phase C" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
+                                            <TextBlock Grid.Row="4" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                            <TextBlock Grid.Row="4" Grid.Column="2" Text="V" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
+
+                                            <TextBlock Grid.Row="5" Grid.Column="0" Text="Rated Current" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
+                                            <TextBlock Grid.Row="5" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                            <TextBlock Grid.Row="5" Grid.Column="2" Text="A" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
+                                        </Grid>
+                                    </StackPanel>
+                                </Border>
+
+                                <!-- PFC Bus -->
+                                <Border Background="#FAF5FF" BorderBrush="#E9D5FF" BorderThickness="1" CornerRadius="4" Padding="8">
+                                    <StackPanel>
+                                        <TextBlock Text="PFC Bus Status" FontWeight="Bold" Foreground="#7E22CE" Margin="0,0,0,4"/>
+                                        <Grid Margin="0,4">
+                                            <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="135"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="35"/>
+                                        </Grid.ColumnDefinitions>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                            </Grid.RowDefinitions>
+
+                                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Positive Bus" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
+                                            <TextBlock Grid.Row="0" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                            <TextBlock Grid.Row="0" Grid.Column="2" Text="V" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
+
+                                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Negative Bus" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
+                                            <TextBlock Grid.Row="1" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                            <TextBlock Grid.Row="1" Grid.Column="2" Text="V" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
+
+                                            <TextBlock Grid.Row="2" Grid.Column="0" Text="PFC Fault Status" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
+                                            <TextBlock Grid.Row="2" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Foreground="#DC2626" Margin="0,4,4,0"/>
+                                            <TextBlock Grid.Row="2" Grid.Column="2" Text="" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
+                                        </Grid>
+                                    </StackPanel>
+                                </Border>
+                            </StackPanel>
+                        </TabItem>
+                    </TabControl>
+                </GroupBox>
+            </Grid>
+
+            <!-- COLUMN 1: CENTER STAGE (Process & Graph) -->
+            <Grid Grid.Column="1">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="3.5*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <!-- Chart -->
+                <GroupBox Grid.Row="0" Header="Live Trends (Voltage &amp; Current)">
+                    <oxy:PlotView Model="{Binding PlotModel}" Background="White"/>
+                </GroupBox>
+
+                <!-- Charge Process Controller (The Brain) -->
+                <GroupBox Grid.Row="1" Header="Charge Process (Controller State Machine)">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        
+                        <Border Grid.Row="0" Background="#F8FAFC" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="4" Padding="10" Margin="0,0,0,8">
+                            <UniformGrid Columns="4">
+                                <StackPanel Orientation="Horizontal"><TextBlock Text="Controller State:" Style="{StaticResource LabelStyle}"/><TextBlock Text="---" Style="{StaticResource ValueStyle}" Foreground="#0284C7"/></StackPanel>
+                                <StackPanel Orientation="Horizontal"><TextBlock Text="Control Mode:" Style="{StaticResource LabelStyle}"/><TextBlock Text="---" Style="{StaticResource ValueStyle}"/></StackPanel>
+                                <StackPanel Orientation="Horizontal"><TextBlock Text="Process Summary:" Style="{StaticResource LabelStyle}"/><TextBlock Text="---" Style="{StaticResource ValueStyle}"/></StackPanel>
+                                <StackPanel Orientation="Horizontal"><TextBlock Text="Modules Online:" Style="{StaticResource LabelStyle}"/><TextBlock Text="0" Style="{StaticResource ValueStyle}"/></StackPanel>
+                            </UniformGrid>
+                        </Border>
+
+                        <Grid Grid.Row="1">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="1*"/>
+                                <ColumnDefinition Width="2*"/>
+                                <ColumnDefinition Width="1.1*"/>
+                            </Grid.ColumnDefinitions>
+                            
+                            <!-- BMS Limits -->
+                            <Border Grid.Column="0" Background="#FFFBEB" BorderBrush="#FDE68A" BorderThickness="1" CornerRadius="4" Padding="8" Margin="0,0,4,0">
+                                <StackPanel>
+                                    <TextBlock Text="BMS Limits (Demand)" FontWeight="Bold" Foreground="#92400E" Margin="0,0,0,8"/>
+                                    <Grid Margin="0,2">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="100"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="35"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                        </Grid.RowDefinitions>
+
+                                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Status:" Style="{StaticResource LabelStyle}"/>
+                                        <TextBlock Grid.Row="0" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}"/>
+                                        <TextBlock Grid.Row="0" Grid.Column="2" Text="" Style="{StaticResource UnitStyle}"/>
+
+                                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Voltage Target:" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
+                                        <TextBlock Grid.Row="1" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                        <TextBlock Grid.Row="1" Grid.Column="2" Text="V" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
+
+                                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Current Limit:" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
+                                        <TextBlock Grid.Row="2" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                        <TextBlock Grid.Row="2" Grid.Column="2" Text="A" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
+
+                                        <TextBlock Grid.Row="3" Grid.Column="0" Text="Maximum Temp:" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
+                                        <TextBlock Grid.Row="3" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                        <TextBlock Grid.Row="3" Grid.Column="2" Text="°C" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Controller Logic -->
+                            <Border Grid.Column="1" Background="#EFF6FF" BorderBrush="#BFDBFE" BorderThickness="1" CornerRadius="4" Padding="8" Margin="4,0,4,0">
+                                <StackPanel>
+                                    <TextBlock Text="Controller Target (Logic)" FontWeight="Bold" Foreground="#1E40AF" Margin="0,0,0,8"/>
+                                    <Grid Margin="0,2">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="100"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="35"/>
+                                            <ColumnDefinition Width="10"/>
+                                            <ColumnDefinition Width="100"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="35"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                        </Grid.RowDefinitions>
+
+                                        <!-- Row 0 -->
+                                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Voltage Target:" Style="{StaticResource LabelStyle}"/>
+                                        <TextBlock Grid.Row="0" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}"/>
+                                        <TextBlock Grid.Row="0" Grid.Column="2" Text="V" Style="{StaticResource UnitStyle}"/>
+
+                                        <TextBlock Grid.Row="0" Grid.Column="4" Text="Active Logic:" Style="{StaticResource LabelStyle}"/>
+                                        <TextBlock Grid.Row="0" Grid.Column="5" Text="---" Style="{StaticResource RightAlignedValueStyle}"/>
+                                        <TextBlock Grid.Row="0" Grid.Column="6" Text="" Style="{StaticResource UnitStyle}"/>
+
+                                        <!-- Row 1 -->
+                                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Current Target:" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
+                                        <TextBlock Grid.Row="1" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                        <TextBlock Grid.Row="1" Grid.Column="2" Text="A" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
+
+                                        <TextBlock Grid.Row="1" Grid.Column="4" Text="Charge Level:" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
+                                        <TextBlock Grid.Row="1" Grid.Column="5" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                        <TextBlock Grid.Row="1" Grid.Column="6" Text="" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
+
+                                        <!-- Row 2 -->
+                                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Status:" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
+                                        <TextBlock Grid.Row="2" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                        <TextBlock Grid.Row="2" Grid.Column="2" Text="" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
+
+                                        <TextBlock Grid.Row="2" Grid.Column="4" Text="Current Limit:" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
+                                        <TextBlock Grid.Row="2" Grid.Column="5" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                        <TextBlock Grid.Row="2" Grid.Column="6" Text="C" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
+
+                                        <!-- Row 3 -->
+                                        <TextBlock Grid.Row="3" Grid.Column="0" Text="Stop Reason:" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
+                                        <TextBlock Grid.Row="3" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Foreground="#DC2626" Margin="0,4,4,0"/>
+                                        <TextBlock Grid.Row="3" Grid.Column="2" Text="" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
+
+                                        <TextBlock Grid.Row="3" Grid.Column="4" Text="Fault:" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
+                                        <TextBlock Grid.Row="3" Grid.Column="5" Text="---" Style="{StaticResource RightAlignedValueStyle}" Foreground="#DC2626" Margin="0,4,4,0"/>
+                                        <TextBlock Grid.Row="3" Grid.Column="6" Text="" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Actual Output -->
+                            <Border Grid.Column="2" Background="#F0FDF4" BorderBrush="#BBF7D0" BorderThickness="1" CornerRadius="4" Padding="8" Margin="4,0,0,0">
+                                <StackPanel>
+                                    <TextBlock Text="Actual Charger Output" FontWeight="Bold" Foreground="#166534" Margin="0,0,0,8"/>
+                                    <Grid Margin="0,2">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="110"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="35"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                        </Grid.RowDefinitions>
+
+                                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Charge Voltage:" Style="{StaticResource LabelStyle}"/>
+                                        <TextBlock Grid.Row="0" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Foreground="#166534"/>
+                                        <TextBlock Grid.Row="0" Grid.Column="2" Text="V" Style="{StaticResource UnitStyle}"/>
+
+                                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Charge Current:" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
+                                        <TextBlock Grid.Row="1" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Foreground="#166534" Margin="0,4,4,0"/>
+                                        <TextBlock Grid.Row="1" Grid.Column="2" Text="A" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
+
+                                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Maximum Temp:" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
+                                        <TextBlock Grid.Row="2" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                        <TextBlock Grid.Row="2" Grid.Column="2" Text="°C" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+                        </Grid>
+                    </Grid>
+                </GroupBox>
+            </Grid>
+
+            <!-- COLUMN 2: BMS MONITOR -->
+            <GroupBox Grid.Column="2" Header="BMS Monitor">
+                <TabControl Background="#F8FAFC" BorderBrush="#E2E8F0">
+                    <TabItem Header="Pack &amp; Health">
+                        <StackPanel Margin="5">
+                            <!-- Battery Pack & Health -->
+                            <Border Background="#F0FDF4" BorderBrush="#BBF7D0" BorderThickness="1" CornerRadius="4" Padding="8" Margin="0,0,0,6">
+                                <StackPanel>
+                                    <TextBlock Text="Battery Pack" FontWeight="Bold" Foreground="#166534" Margin="0,0,0,4"/>
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="135"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="35"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                        </Grid.RowDefinitions>
+
+                                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Battery Voltage:" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
+                                        <TextBlock Grid.Row="0" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedHighlightStyle}" Foreground="#166534" Margin="0,4,4,0"/>
+                                        <TextBlock Grid.Row="0" Grid.Column="2" Text="V" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
+
+                                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Battery Current:" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
+                                        <TextBlock Grid.Row="1" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedHighlightStyle}" Foreground="#166534" Margin="0,4,4,0"/>
+                                        <TextBlock Grid.Row="1" Grid.Column="2" Text="A" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
+
+                                        <TextBlock Grid.Row="2" Grid.Column="0" Text="State of Charge:" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
+                                        <TextBlock Grid.Row="2" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedHighlightStyle}" Foreground="#10B981" Margin="0,4,4,0"/>
+                                        <TextBlock Grid.Row="2" Grid.Column="2" Text="%" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
+
+                                        <TextBlock Grid.Row="3" Grid.Column="0" Text="State of Health:" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
+                                        <TextBlock Grid.Row="3" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                        <TextBlock Grid.Row="3" Grid.Column="2" Text="%" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
+
+                                        <TextBlock Grid.Row="4" Grid.Column="0" Text="Remaining Capacity:" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
+                                        <TextBlock Grid.Row="4" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                        <TextBlock Grid.Row="4" Grid.Column="2" Text="Ah" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
+
+                                        <TextBlock Grid.Row="5" Grid.Column="0" Text="Rated Capacity:" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
+                                        <TextBlock Grid.Row="5" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                        <TextBlock Grid.Row="5" Grid.Column="2" Text="Ah" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Cell Extremes -->
+                            <Border Background="#FFFBEB" BorderBrush="#FDE68A" BorderThickness="1" CornerRadius="4" Padding="8" Margin="0,0,0,6">
+                                <StackPanel>
+                                    <TextBlock Text="Cell Extremes" FontWeight="Bold" Foreground="#92400E" Margin="0,0,0,4"/>
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="135"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="35"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                        </Grid.RowDefinitions>
+
+                                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Max Cell Voltage:" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
+                                        <TextBlock Grid.Row="0" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                        <TextBlock Grid.Row="0" Grid.Column="2" Text="mV" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
+
+                                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Min Cell Voltage:" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
+                                        <TextBlock Grid.Row="1" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                        <TextBlock Grid.Row="1" Grid.Column="2" Text="mV" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
+
+                                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Max Cell Temperature:" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
+                                        <TextBlock Grid.Row="2" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Foreground="#DC2626" Margin="0,4,4,0"/>
+                                        <TextBlock Grid.Row="2" Grid.Column="2" Text="°C" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
+
+                                        <TextBlock Grid.Row="3" Grid.Column="0" Text="Min Cell Temperature:" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
+                                        <TextBlock Grid.Row="3" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                        <TextBlock Grid.Row="3" Grid.Column="2" Text="°C" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
+
+                                        <TextBlock Grid.Row="4" Grid.Column="0" Text="Cell Voltage Delta:" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
+                                        <TextBlock Grid.Row="4" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                        <TextBlock Grid.Row="4" Grid.Column="2" Text="mV" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
+
+                                        <TextBlock Grid.Row="5" Grid.Column="0" Text="Cell Temp Delta:" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
+                                        <TextBlock Grid.Row="5" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                        <TextBlock Grid.Row="5" Grid.Column="2" Text="°C" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </TabItem>
+                    
+                    <TabItem Header="System &amp; Relays">
+                        <StackPanel Margin="5">
+                            <!-- Overview -->
+                            <Border Background="#F8FAFC" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="4" Padding="8" Margin="0,0,0,6">
+                                <StackPanel>
+                                    <TextBlock Text="BMS Communication Overview" FontWeight="Bold" Foreground="#334155" Margin="0,0,0,4"/>
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="135"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="35"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                        </Grid.RowDefinitions>
+
+                                        <TextBlock Grid.Row="0" Grid.Column="0" Text="State:" Style="{StaticResource LabelStyle}"/>
+                                        <TextBlock Grid.Row="0" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}"/>
+                                        <TextBlock Grid.Row="0" Grid.Column="2" Text="" Style="{StaticResource UnitStyle}"/>
+
+                                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Online:" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
+                                        <TextBlock Grid.Row="1" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                        <TextBlock Grid.Row="1" Grid.Column="2" Text="" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
+
+                                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Last RX:" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
+                                        <TextBlock Grid.Row="2" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                        <TextBlock Grid.Row="2" Grid.Column="2" Text="ms" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Charge Request -->
+                            <Border Background="#EFF6FF" BorderBrush="#BFDBFE" BorderThickness="1" CornerRadius="4" Padding="8" Margin="0,0,0,6">
+                                <StackPanel>
+                                    <TextBlock Text="Charge Request" FontWeight="Bold" Foreground="#1E40AF" Margin="0,0,0,4"/>
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="135"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="35"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                        </Grid.RowDefinitions>
+
+                                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Request Voltage:" Style="{StaticResource LabelStyle}"/>
+                                        <TextBlock Grid.Row="0" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}"/>
+                                        <TextBlock Grid.Row="0" Grid.Column="2" Text="V" Style="{StaticResource UnitStyle}"/>
+
+                                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Request Current:" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
+                                        <TextBlock Grid.Row="1" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                        <TextBlock Grid.Row="1" Grid.Column="2" Text="A" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Relays -->
+                            <Border Background="#FAF5FF" BorderBrush="#E9D5FF" BorderThickness="1" CornerRadius="4" Padding="8">
+                                <StackPanel>
+                                    <TextBlock Text="Relay Status" FontWeight="Bold" Foreground="#7E22CE" Margin="0,0,0,4"/>
+                                    <Grid Margin="0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="110"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                        </Grid.RowDefinitions>
+
+                                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Charge Relay:" Style="{StaticResource LabelStyle}"/>
+                                        <TextBlock Grid.Row="0" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}"/>
+
+                                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Discharge Relay:" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
+                                        <TextBlock Grid.Row="1" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </TabItem>
+                </TabControl>
+            </GroupBox>
+        </Grid>
+
+        <!-- SPLITTER -->
+        <GridSplitter Grid.Row="1" Height="5" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Background="#CBD5E1" Cursor="SizeNS" Margin="4,0,4,0"/>
+
+        <!-- ROW 2: BOTTOM TERMINAL -->
+        <GroupBox Grid.Row="2" Margin="4,4,4,4">
+            <GroupBox.Header>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="Traffic Log" VerticalAlignment="Center" Margin="0,0,24,0"/>
+                    <Grid Grid.Column="1">
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Center">
+                            <CheckBox Content="TX" IsChecked="True" Foreground="#2563EB" FontWeight="Bold" Margin="0,0,16,0" VerticalContentAlignment="Center" FontSize="11"/>
+                            <CheckBox Content="RX" IsChecked="True" Foreground="#16A34A" FontWeight="Bold" Margin="0,0,16,0" VerticalContentAlignment="Center" FontSize="11"/>
+                            <CheckBox Content="SYS" IsChecked="True" Foreground="#475569" FontWeight="Bold" Margin="0,0,16,0" VerticalContentAlignment="Center" FontSize="11"/>
+                            <CheckBox Content="WARN" IsChecked="True" Foreground="#EA580C" FontWeight="Bold" Margin="0,0,16,0" VerticalContentAlignment="Center" FontSize="11"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                            <Button Content="Clear" Width="60" Height="22" Margin="0,0,8,0" Background="White" BorderBrush="#CBD5E1" Cursor="Hand" FontSize="11" FontWeight="Normal"/>
+                            <Button Content="Save" Width="60" Height="22" Background="White" BorderBrush="#CBD5E1" Cursor="Hand" FontSize="11" FontWeight="Normal"/>
+                        </StackPanel>
+                    </Grid>
+                </Grid>
+            </GroupBox.Header>
+            <Grid>
+                <!-- Log Viewer -->
+                <DataGrid AutoGenerateColumns="False" HeadersVisibility="Column" Background="White" BorderThickness="0" GridLinesVisibility="Horizontal" HorizontalGridLinesBrush="#F1F5F9" VerticalGridLinesBrush="Transparent" RowHeight="22" FontSize="11" FontFamily="Consolas" ScrollViewer.VerticalScrollBarVisibility="Visible" IsReadOnly="True" SelectionMode="Single">
+                    <DataGrid.Resources>
+                        <Style TargetType="DataGridColumnHeader">
+                            <Setter Property="Background" Value="#F1F5F9"/>
+                            <Setter Property="BorderBrush" Value="#CBD5E1"/>
+                            <Setter Property="BorderThickness" Value="0,0,1,1"/>
+                            <Setter Property="Padding" Value="8,4,8,4"/>
+                            <Setter Property="FontWeight" Value="SemiBold"/>
+                            <Setter Property="Foreground" Value="#475569"/>
+                            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+                            <Setter Property="FontSize" Value="10"/>
+                        </Style>
+                        <Style TargetType="TextBlock" x:Key="LeftCellText">
+                            <Setter Property="Padding" Value="6,0,6,0"/>
+                            <Setter Property="VerticalAlignment" Value="Center"/>
+                        </Style>
+                        <Style TargetType="DataGridRow">
+                            <Setter Property="BorderThickness" Value="0"/>
+                        </Style>
+                    </DataGrid.Resources>
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="TIME" Width="80" ElementStyle="{StaticResource LeftCellText}"/>
+                        <DataGridTextColumn Header="TYPE" Width="55" ElementStyle="{StaticResource LeftCellText}"/>
+                        <DataGridTextColumn Header="ID" Width="60" ElementStyle="{StaticResource LeftCellText}"/>
+                        <DataGridTextColumn Header="DLC" Width="40" ElementStyle="{StaticResource LeftCellText}"/>
+                        <DataGridTextColumn Header="DATA" Width="220" ElementStyle="{StaticResource LeftCellText}"/>
+                        <DataGridTextColumn Header="INFO" Width="*" ElementStyle="{StaticResource LeftCellText}"/>
+                    </DataGrid.Columns>
+                </DataGrid>
+            </Grid>
+        </GroupBox>
+    </Grid>
+</Window>
