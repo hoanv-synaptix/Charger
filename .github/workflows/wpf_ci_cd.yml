@@ -1,0 +1,180 @@
+name: WPF App CI/CD – Build, Test & Release
+
+on:
+  push:
+    branches: [ "main", "feat/**" ]
+    tags:     [ "v*.*.*" ]          # vd: v1.0.0 → trigger release
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  PROJECT_DIR: Charger/ChargerDebug_WPF_NET8
+  PROJECT_FILE: Charger/ChargerDebug_WPF_NET8/ChargerDebugApp.csproj
+  DOTNET_VERSION: "8.0.x"
+  RUNTIME: win-x64
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # JOB 1: Build & Run automated tests (headless, console mode via --test flag)
+  # ─────────────────────────────────────────────────────────────────────────────
+  build-and-test:
+    name: 🔨 Build & Test
+    runs-on: windows-latest          # WPF requires Windows
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup .NET ${{ env.DOTNET_VERSION }}
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore NuGet packages
+        run: dotnet restore ${{ env.PROJECT_FILE }}
+
+      - name: Build (Debug)
+        run: dotnet build ${{ env.PROJECT_FILE }} -c Debug --no-restore
+
+      - name: Run automated tests (--test mode)
+        run: dotnet run --project ${{ env.PROJECT_FILE }} -c Debug -- --test
+        # Exits 0 if ALL TESTS PASSED, non-zero on any failure → job fails
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # JOB 2: Publish single-file EXE (chỉ chạy khi test pass + là tag release)
+  # ─────────────────────────────────────────────────────────────────────────────
+  publish:
+    name: 📦 Publish Single-File EXE
+    runs-on: windows-latest
+    needs: build-and-test            # Chỉ chạy nếu build-and-test pass
+    if: startsWith(github.ref, 'refs/tags/v')   # Chỉ khi push tag v*.*.*
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup .NET ${{ env.DOTNET_VERSION }}
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Extract version from tag
+        id: version
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"          # vd: v1.2.0
+          $ver = $tag.TrimStart('v')                # → 1.2.0
+          echo "TAG=$tag" >> $env:GITHUB_OUTPUT
+          echo "VER=$ver" >> $env:GITHUB_OUTPUT
+          Write-Host "Releasing version: $ver (tag: $tag)"
+
+      - name: Update version in .csproj
+        shell: pwsh
+        run: |
+          $ver = "${{ steps.version.outputs.VER }}"
+          $file = "${{ env.PROJECT_FILE }}"
+          (Get-Content $file) `
+            -replace '<Version>.*</Version>',        "<Version>$ver</Version>" `
+            -replace '<AssemblyVersion>.*</AssemblyVersion>', "<AssemblyVersion>$ver.0</AssemblyVersion>" `
+            -replace '<FileVersion>.*</FileVersion>', "<FileVersion>$ver.0</FileVersion>" |
+            Set-Content $file
+          Write-Host "Version set to $ver in $file"
+
+      - name: Publish (Release, single-file, self-contained)
+        run: >
+          dotnet publish ${{ env.PROJECT_FILE }}
+          -c Release
+          -r ${{ env.RUNTIME }}
+          --self-contained true
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:DebugType=embedded
+          -p:EnableCompressionInSingleFile=true
+
+      - name: Show output file info
+        shell: pwsh
+        run: |
+          $exe = "${{ env.PROJECT_DIR }}/bin/Release/net8.0-windows/${{ env.RUNTIME }}/publish/ChargerDebugApp.exe"
+          $item = Get-Item $exe
+          $sizeMB = [math]::Round($item.Length / 1MB, 1)
+          Write-Host "Output: $($item.FullName)"
+          Write-Host "Size:   $sizeMB MB"
+
+      - name: Upload EXE as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ChargerDebugApp-${{ steps.version.outputs.TAG }}
+          path: ${{ env.PROJECT_DIR }}/bin/Release/net8.0-windows/${{ env.RUNTIME }}/publish/ChargerDebugApp.exe
+          if-no-files-found: error
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # JOB 3: Create GitHub Release và upload EXE (sau khi publish thành công)
+  # ─────────────────────────────────────────────────────────────────────────────
+  release:
+    name: 🚀 Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: publish
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    permissions:
+      contents: write    # Cần để tạo release và upload asset
+
+    steps:
+      - name: Checkout (để lấy tag message làm release notes)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0    # Lấy full history để extract tag annotation
+
+      - name: Extract version info
+        id: version
+        run: |
+          TAG="${{ github.ref_name }}"
+          VER="${TAG#v}"
+          echo "TAG=$TAG" >> $GITHUB_OUTPUT
+          echo "VER=$VER" >> $GITHUB_OUTPUT
+
+      - name: Download EXE artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ChargerDebugApp-${{ steps.version.outputs.TAG }}
+          path: ./release-assets/
+
+      - name: Generate release notes from git log
+        id: notes
+        run: |
+          # Lấy commit log từ tag trước đến tag hiện tại
+          PREV_TAG=$(git tag --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed -n '2p')
+          if [ -z "$PREV_TAG" ]; then
+            COMMITS=$(git log --pretty=format:"- %s (%h)" --no-merges | head -20)
+          else
+            COMMITS=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s (%h)" --no-merges | head -20)
+          fi
+          echo "PREV_TAG=$PREV_TAG" >> $GITHUB_OUTPUT
+          # Write multiline output
+          {
+            echo "NOTES<<EOF"
+            echo "## PKG Battery – Charger Controller Debug ${{ steps.version.outputs.TAG }}"
+            echo ""
+            echo "### 📋 Thay đổi"
+            echo "$COMMITS"
+            echo ""
+            echo "### 💻 Cài đặt"
+            echo "Tải file \`ChargerDebugApp.exe\` bên dưới và chạy trực tiếp."
+            echo "Không cần cài đặt .NET runtime."
+            echo ""
+            echo "### 🔄 Auto-Update"
+            echo "Nếu đã có phiên bản cũ, app sẽ tự thông báo khi mở."
+            echo "EOF"
+          } >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name:   ${{ steps.version.outputs.TAG }}
+          name:       "PKG Charger Debug ${{ steps.version.outputs.TAG }}"
+          body:       ${{ steps.notes.outputs.NOTES }}
+          draft:      false
+          prerelease: false
+          files:      ./release-assets/ChargerDebugApp.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
