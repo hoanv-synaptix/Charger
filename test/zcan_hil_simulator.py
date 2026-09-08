@@ -17,6 +17,7 @@ import os
 import sys
 import time
 import struct
+import re
 import threading
 import argparse
 import functools
@@ -520,31 +521,34 @@ class DwinScreenSniffer(threading.Thread):
             if self.state["charge_duration"] != dur:
                 self.state["charge_duration"] = dur
                 updated = True
-        elif vp == 0x1000:  # Output DC (3 words: Voltage, Current, Power)
-            if len(data) >= 2:
-                self.state["dc_voltage"] = struct.unpack(">H", data[0:2])[0] / 10.0
-            if len(data) >= 4:
-                self.state["dc_current"] = struct.unpack(">H", data[2:4])[0] / 10.0
-            if len(data) >= 6:
-                self.state["dc_power_kw"] = struct.unpack(">H", data[4:6])[0] / 10.0
+        elif vp in (0x1000, 0x1004, 0x1008, 0x1010, 0x1014,
+                    0x1018, 0x1020, 0x1024, 0x1028, 0x1030,
+                    0x1034, 0x1038, 0x1048):
+            # Dashboard measurements are independent 8-byte Text Display
+            # fields. Keep numeric values in the monitor state for its
+            # existing assertions; the firmware no longer sends packed words.
+            text = data.decode("latin1", errors="ignore").rstrip("\x00").strip()
+            match = re.match(r"^(-?\d+(?:\.\d+)?)", text)
+            value = float(match.group(1)) if match else 0.0
+            if vp == 0x1000:
+                self.state["dc_voltage"] = value
+            elif vp == 0x1004:
+                self.state["dc_current"] = value
+            elif vp == 0x1008:
+                self.state["dc_power_kw"] = value
+            elif vp == 0x1018:
+                self.state["cap_remain_ah"] = value
+            elif vp == 0x1030:
+                self.state["temp_battery"] = value
+            elif vp == 0x1034:
+                self.state["temp_charge"] = value
+            elif vp == 0x1038:
+                self.state["temp_jack"] = value
+            elif vp == 0x1048:
+                self.state["soc"] = int(value)
             updated = True
-        elif vp == 0x1012:  # Remaining Capacity (uint16 0.1 Ah @ 0x1012)
-            if len(data) >= 2:
-                self.state["cap_remain_ah"] = struct.unpack(">H", data[0:2])[0] / 10.0
-                updated = True
-        elif vp == 0x1030:  # Temperatures (3 words: int16 0.1 degC, 0.0 format)
-            if len(data) >= 2:
-                self.state["temp_battery"] = struct.unpack(">h", data[0:2])[0] / 10.0
-            if len(data) >= 4:
-                self.state["temp_charge"] = struct.unpack(">h", data[2:4])[0] / 10.0
-            if len(data) >= 6:
-                self.state["temp_jack"] = struct.unpack(">h", data[4:6])[0] / 10.0
-            updated = True
-        elif vp == 0x1040:  # SOC & Status Icon (2 words: SOC %, Status Icon)
-            if len(data) >= 2:
-                self.state["soc"] = struct.unpack(">H", data[0:2])[0]
-            if len(data) >= 4:
-                self.state["status_icon"] = struct.unpack(">H", data[2:4])[0]
+        elif vp == 0x1041 and len(data) >= 2:  # Status icon
+            self.state["status_icon"] = struct.unpack(">H", data[:2])[0]
             updated = True
         elif vp == 0x1042 and len(data) >= 2:  # Button icon
             self.state["button_icon"] = struct.unpack(">H", data[:2])[0]

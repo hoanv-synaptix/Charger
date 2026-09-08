@@ -28,6 +28,7 @@ static volatile uint32_t        g_last_ctrl_tx_tick;
 static volatile uint32_t        g_last_data_log_tick;
 static volatile BMS_ChargeCtrl_t g_charge_ctrl;
 static volatile bool            g_initialized;
+static volatile bool            g_bms_data_stale;
 /* ISR → main flag: set in FeedFrame, cleared/logged in Process (no LOG in ISR) */
 static volatile uint32_t        g_isr_rx_count;
 static volatile bool            g_isr_new_data;
@@ -170,15 +171,15 @@ static BMS_AlarmFlag_t map_alarm_field(uint8_t sev, BMS_AlarmFlag_t flag)
 
 static void update_alarm_flags(void)
 {
-    /* BUGFIX BUG-06: BMS_ALARM_BMS_OFFLINE and BMS_ALARM_STALE_DATA are owned
-     * by BMS_Process() (main loop), not by this ISR-context ALM_INFO parse.
+    /* BMS_ALARM_BMS_OFFLINE is owned by BMS_Process() (main loop), not by
+     * this ISR-context ALM_INFO parse.
      * This used to be a full overwrite of g_bms_view.alarm_flags, so every
      * incoming ALM_INFO frame (every ~100ms per protocol) silently clobbered
-     * whichever of those two bits BMS_Process had set -- not a rare timing
-     * race, a guaranteed clobber on every frame. Preserve them explicitly. */
+     * whichever bit BMS_Process had set -- not a rare timing race, a
+     * guaranteed clobber on every frame. Preserve it explicitly. */
     BMS_AlarmFlag_t flags = BMS_ALARM_NONE;
     const volatile BMS_AlmInfo_t *a = &g_bms_data.alm_info;
-    const BMS_AlarmFlag_t preserve_mask = (BMS_AlarmFlag_t)(BMS_ALARM_BMS_OFFLINE | BMS_ALARM_STALE_DATA);
+    const BMS_AlarmFlag_t preserve_mask = BMS_ALARM_BMS_OFFLINE;
 
     if (a->valid) {
         flags |= map_alarm_field(a->low_pack_volt,      BMS_ALARM_LOW_PACK_VOLT);
@@ -248,6 +249,7 @@ void BMS_Init(void)
     g_last_valid_rx_tick = 0U;
     g_last_ctrl_tx_tick  = 0U;
     g_last_data_log_tick = 0U;
+    g_bms_data_stale     = false;
     g_initialized        = true;
 
     LOG("BMS_Init: driver ready.\r\n");
@@ -321,6 +323,7 @@ void BMS_Process(uint32_t now_tick)
             g_bms_state = BMS_STATE_ONLINE;
             g_bms_view.online = true;
             BSP_EnterCritical();
+            g_bms_data_stale = false;
             g_bms_view.alarm_flags &= (BMS_AlarmFlag_t)~BMS_ALARM_BMS_OFFLINE;
             BSP_ExitCritical();
             LOG("BMS: ONLINE (was OFFLINE, now has data)\r\n");
@@ -334,30 +337,19 @@ void BMS_Process(uint32_t now_tick)
              * while OFFLINE. Only flag offline status and raise alarm. */
             g_bms_view.online = false;
             BSP_EnterCritical();
+            g_bms_data_stale = false;
             g_bms_view.alarm_flags |= BMS_ALARM_BMS_OFFLINE;
             BSP_ExitCritical();
             LOG("BMS: OFFLINE (timeout after %lu ms from tick %lu, now %lu)\r\n",
                 (unsigned long)elapsed, (unsigned long)last_rx_snapshot, (unsigned long)now_tick);
         } else {
-            /* Connectivity is based on any valid BMS frame.  STALE is a
-             * data-quality warning, not an offline condition.
-             * BUGFIX BUG-04: this only ever set STALE_DATA and never cleared
-             * it once data quality recovered, unlike the FAULT branch below
-             * (which already has the matching else-clear). Latched forever
-             * within a single ONLINE session otherwise. */
+            /* Connectivity is based on any valid BMS frame. Staleness is a
+             * separate data-quality state, not an alarm flag. */
             g_bms_view.online = true;
-            /* BUGFIX BUG-06: |=/&= is a read-modify-write on a field the ISR
-             * (update_alarm_flags) also writes; without this, the ISR could
-             * fire between the read and the write and have its update
-             * clobbered by this stale snapshot-based store. */
             BSP_EnterCritical();
-            if (is_stale) {
-                g_bms_view.alarm_flags |= BMS_ALARM_STALE_DATA;
-            } else {
-                g_bms_view.alarm_flags &= (BMS_AlarmFlag_t)~BMS_ALARM_STALE_DATA;
-            }
+            g_bms_data_stale = is_stale;
             BSP_ExitCritical();
-            /* Only critical alarms (not STALE_DATA) transition to FAULT */
+            /* Only CAN-reported critical alarms transition to FAULT. */
             BMS_AlarmFlag_t critical_mask = bms_critical_alarm_mask();
             if (g_bms_view.alarm_flags & critical_mask) {
                 g_bms_state = BMS_STATE_FAULT;
@@ -373,23 +365,19 @@ void BMS_Process(uint32_t now_tick)
             g_bms_state = BMS_STATE_OFFLINE;
             g_bms_view.online = false;
             BSP_EnterCritical();
+            g_bms_data_stale = false;
             g_bms_view.alarm_flags |= BMS_ALARM_BMS_OFFLINE;
             BSP_ExitCritical();
             LOG("BMS: OFFLINE (timeout while faulted)\r\n");
         } else {
             g_bms_view.online = true;
-            /* BUGFIX BUG-06: see the matching comment in the ONLINE branch. */
             BSP_EnterCritical();
-            if (is_stale) {
-                g_bms_view.alarm_flags |= BMS_ALARM_STALE_DATA;
-            } else {
-                g_bms_view.alarm_flags &= (BMS_AlarmFlag_t)~BMS_ALARM_STALE_DATA;
-            }
+            g_bms_data_stale = is_stale;
             BSP_ExitCritical();
         }
 
         /* Fault recovery: auto-recover when alarms clear and data resumes */
-        BMS_AlarmFlag_t active_alarms = g_bms_view.alarm_flags & (BMS_AlarmFlag_t)~BMS_ALARM_STALE_DATA;
+        BMS_AlarmFlag_t active_alarms = g_bms_view.alarm_flags;
         if (g_bms_state == BMS_STATE_FAULT &&
             (active_alarms == BMS_ALARM_NONE) &&
             (!is_stale)) {
@@ -474,9 +462,17 @@ bool BMS_IsOnline(void)
     return g_bms_view.online;
 }
 
+bool BMS_IsDataStale(void)
+{
+    bool stale;
+    BSP_EnterCritical();
+    stale = g_bms_data_stale;
+    BSP_ExitCritical();
+    return stale;
+}
+
 bool BMS_HasCriticalAlarm(void)
 {
-    /* STALE is a connectivity warning, not a critical offline condition. */
     BMS_AlarmFlag_t crit = bms_critical_alarm_mask();
     return ((g_bms_view.alarm_flags & crit) != 0U);
 }
@@ -519,7 +515,6 @@ bool BMS_ShouldCloseChargeRelay(void)
 
     return true;
 }
-
 
 
 

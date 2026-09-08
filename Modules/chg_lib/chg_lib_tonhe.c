@@ -169,7 +169,7 @@ static CHG_LIB_AlarmFlag_t tonhe_parse_fault(uint16_t fault_bits, uint8_t pfc_bi
     if (fault_bits & (1U << 0)) flags |= CHG_LIB_ALARM_AC_UNDER_VOLT;      /* Input undervoltage */
     if (fault_bits & (1U << 1)) flags |= CHG_LIB_ALARM_AC_PHASE_LOSS;      /* Input phase loss */
     if (fault_bits & (1U << 2)) flags |= CHG_LIB_ALARM_AC_OVER_VOLT;       /* Input overvoltage */
-    if (fault_bits & (1U << 3)) flags |= CHG_LIB_ALARM_OVER_VOLTAGE_OUT;    /* Output overvoltage */
+    if (fault_bits & (1U << 3)) flags |= CHG_LIB_ALARM_OVER_VOLTAGE_OUT;    /* Output overvoltage protection */
     if (fault_bits & (1U << 4)) flags |= CHG_LIB_ALARM_OVER_CURR_OUT;      /* Output overcurrent */
     if (fault_bits & (1U << 5)) flags |= CHG_LIB_ALARM_OVER_TEMP;          /* Temperature high */
     if (fault_bits & (1U << 6)) flags |= CHG_LIB_ALARM_FAN_FAULT;          /* Fan fault */
@@ -178,11 +178,13 @@ static CHG_LIB_AlarmFlag_t tonhe_parse_fault(uint16_t fault_bits, uint8_t pfc_bi
     if (fault_bits & (1U << 9)) flags |= CHG_LIB_ALARM_COMM_FAIL;          /* SCI communication */
     if (fault_bits & (1U << 10)) flags |= CHG_LIB_ALARM_HW_FAULT;         /* Discharge fault */
     if (fault_bits & (1U << 11)) flags |= CHG_LIB_ALARM_HW_FAULT;         /* PFC shutdown */
-    if (fault_bits & (1U << 13)) flags |= CHG_LIB_ALARM_OVER_VOLTAGE_OUT; /* Output overvoltage warning */
+    if (fault_bits & (1U << 12)) flags |= CHG_LIB_ALARM_OUTPUT_UNDER_VOLT; /* Output undervoltage warning */
+    if (fault_bits & (1U << 13)) flags |= CHG_LIB_ALARM_OUTPUT_OVER_VOLT_WARN; /* Output overvoltage warning */
     if (fault_bits & (1U << 14)) flags |= CHG_LIB_ALARM_OVER_TEMP;        /* Power limit due to high temperature */
     if (fault_bits & (1U << 15)) flags |= CHG_LIB_ALARM_SHORT_CIRCUIT;    /* Short circuit */
 
     /* PFC fault byte (Byte 8) - full mapping */
+    if (pfc_bits != 0U) flags |= CHG_LIB_ALARM_PFC_FAULT;
     if (pfc_bits & (1U << 0)) flags |= CHG_LIB_ALARM_PFC_OVERCURR;        /* Input overcurrent */
     if (pfc_bits & (1U << 1)) flags |= CHG_LIB_ALARM_FREQ_FAULT;           /* Mains frequency fault */
     if (pfc_bits & (1U << 2)) flags |= CHG_LIB_ALARM_PFC_IMBALANCE;       /* Mains imbalance */
@@ -334,7 +336,7 @@ static void parse_status(const uint8_t *data, uint8_t src_addr, uint32_t now)
      * module's self-reported status byte, so a module with active fault bits
      * whose status byte hadn't yet flipped to FAULT_OFF was never stopped.
      * Matches Lianming's unconditional alarm-flags-first pattern. */
-    if (mod->view.alarm_flags != CHG_LIB_ALARM_NONE) {
+    if (CHG_LIB_ALARM_HAS_PROTECTION(mod->view.alarm_flags)) {
         set_state(mod, CHG_LIB_STATE_FAULT, now);
         return;
     }

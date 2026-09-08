@@ -45,6 +45,8 @@ namespace ChargerDebugApp.ViewModels
         public float Voltage => _data.Voltage;
         public float Current => _data.Current;
         public float CurrentLimit => _data.CurrentLimit;
+        public string RatedPower => _data.RatedPower > 0.0f ? $"{_data.RatedPower:F0}" : "---";
+        public string RatedCurrent => _data.RatedCurrent > 0.0f ? $"{_data.RatedCurrent:F1}" : "---";
         public float TempDcdc => _data.TempDcdc;
         public float TempAmbient => _data.TempAmbient;
         public float TempPfc => _data.TempPfc;
@@ -121,6 +123,8 @@ namespace ChargerDebugApp.ViewModels
         public string SelVoltage => SelectedModule != null ? $"{SelectedModule.Voltage:F2}" : "---";
         public string SelCurrent => SelectedModule != null ? $"{SelectedModule.Current:F2}" : "---";
         public string SelCurrentLimit => SelectedModule != null ? $"{SelectedModule.CurrentLimit:F2}" : "---";
+        public string SelRatedPower => SelectedModule?.RatedPower ?? "---";
+        public string SelRatedCurrent => SelectedModule?.RatedCurrent ?? "---";
         public string SelTempDcdc => SelectedModule != null ? $"{SelectedModule.TempDcdc:F1}" : "---";
         public string SelTempAmbient => SelectedModule != null ? $"{SelectedModule.TempAmbient:F1}" : "---";
         public string SelTempPfc => SelectedModule != null ? $"{SelectedModule.TempPfc:F1}" : "---";
@@ -162,8 +166,62 @@ namespace ChargerDebugApp.ViewModels
         }) : "---";
         public string SysStatusText => _sys != null ? (!_sys.Charging ? "Standby" : "Charging") : "---";
         public string SysCurrentLimitC => _sys != null ? $"{_sys.ActiveLimitCurrentC:F2}" : "---";
-        public string SysStopReasonStr => _sys != null ? (_sys.ControllerStopReason == 0 ? "None" : $"0x{_sys.ControllerStopReason:X2}") : "---";
-        public string SysFaultStr => _sys != null ? (_sys.ControllerFaultFlags == 0 ? "Normal" : $"0x{_sys.ControllerFaultFlags:X4}") : "---";
+        public string SysStopReasonStr => _sys == null ? "---" :
+            _sys.Charging ? "Not stopped" : _sys.ControllerStopReason switch
+            {
+                0 => "No stop reason",
+                1 => "User command",
+                2 => "Charge condition blocked",
+                3 => "BMS disconnected",
+                4 => "BMS alarm",
+                5 => "Protection active",
+                6 => "Module timeout",
+                7 => "Module fault",
+                8 => "Module count mismatch",
+                9 => "Emergency stop",
+                10 => "Start precondition failed",
+                11 => "Output voltage reached limit",
+                12 => "Cell voltage reached limit",
+                13 => "SOC target reached",
+                _ => $"Unknown reason ({_sys.ControllerStopReason})"
+            };
+        public string SysStopReasonColor => _sys == null || _sys.Charging || _sys.ControllerStopReason == 0
+            ? "#64748B" : "#DC2626";
+        private static string DescribeControllerFaults(uint flags)
+        {
+            if (flags == 0U)
+                return "Normal";
+
+            string description = "";
+            void Add(string text)
+            {
+                if (description.Length > 0)
+                    description += "; ";
+                description += text;
+            }
+
+            if ((flags & (1U << 0)) != 0U) Add("No charger driver");
+            if ((flags & (1U << 1)) != 0U) Add("No online module");
+            if ((flags & (1U << 2)) != 0U) Add("Module count mismatch");
+            if ((flags & (1U << 3)) != 0U) Add("BMS disconnected");
+            if ((flags & (1U << 4)) != 0U) Add("BMS data stale");
+            if ((flags & (1U << 5)) != 0U) Add("BMS alarm active");
+            if ((flags & (1U << 6)) != 0U) Add("Invalid configuration");
+            if ((flags & (1U << 8)) != 0U) Add("Jack voltage protection");
+            if ((flags & (1U << 9)) != 0U) Add("Jack temperature protection");
+            if ((flags & (1U << 11)) != 0U) Add("Emergency stop");
+
+            uint knownFlags = 0x00000F7FU;
+            uint unknownFlags = flags & ~knownFlags;
+            if (unknownFlags != 0U)
+                Add($"Unknown fault (0x{unknownFlags:X8})");
+
+            return description;
+        }
+
+        public string SysFaultStr => _sys == null ? "---" : DescribeControllerFaults(_sys.ControllerFaultFlags);
+        public string SysFaultColor => _sys == null || _sys.ControllerFaultFlags == 0U
+            ? "#64748B" : "#DC2626";
 
         // Actual Charger Output
         public string SysActualVoltage => _sys != null ? $"{_sys.TotalVoltage:F1}" : "---";
@@ -176,8 +234,21 @@ namespace ChargerDebugApp.ViewModels
         // ==========================================
         // 3. BMS MONITOR PANEL (Default "---")
         // ==========================================
-        public string BmsStateText => _bms != null ? (_bms.Online ? "ONLINE" : "OFFLINE") : "---";
-        public string BmsStateColor => _bms != null && _bms.Online ? "#10B981" : "#EF4444";
+        public string BmsStateText => _bms == null ? "---" : _bms.State switch
+        {
+            0 => "OFFLINE",
+            1 => "ONLINE",
+            2 => "FAULT",
+            _ => $"UNKNOWN ({_bms.State})"
+        };
+        public string BmsOnlineText => _bms == null ? "---" : (_bms.Online ? "ONLINE" : "OFFLINE");
+        public string BmsStateColor => _bms == null ? "#64748B" : _bms.State switch
+        {
+            1 => "#10B981",
+            2 => "#EF4444",
+            _ => "#64748B"
+        };
+        public string BmsOnlineColor => _bms == null ? "#64748B" : (_bms.Online ? "#10B981" : "#EF4444");
         public string BmsBattVoltageStr => _bms != null ? $"{_bms.BattVoltage:F1}" : "---";
         public string BmsBattCurrentStr => _bms != null ? $"{_bms.BattCurrent:F1}" : "---";
         public string BmsSocStr => _bms != null ? $"{_bms.Soc}" : "---";

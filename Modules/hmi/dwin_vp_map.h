@@ -22,40 +22,58 @@
 #define VP_SYS_RTC_SET       0x009CU  /* RTC set (needs a panel RTC IC) -- see DWIN_SetRTC() */
 #define VP_SYS_BUZZER        0x00A0U  /* Music_Play_Set: low byte = beep duration x 8 ms */
 
-/* --- Dashboard: Output DC (0x1000) --- */
-#define VP_DC_VOLTAGE        0x1000U  /* u16, 0.1 V  (521 -> 52.1 V) */
-#define VP_DC_CURRENT        0x1001U  /* u16, 0.1 A */
-#define VP_DC_POWER          0x1002U  /* u16, 0.1 kW (300 -> 30.0 kW - new HTML format) */
+/* --- Dashboard text fields ---
+ * DWIN VP is a 16-bit word address: one 8-byte Text Display occupies
+ * 4 consecutive VPs. Text_Length is measured in bytes, not characters. */
+#define DWIN_TEXT_8_BYTES_WORDS  4U
+
+/* Output DC */
+#define VP_DC_VOLTAGE        0x1000U  /* Text GBK/ASCII, 8 bytes, 0x1000..1003 */
+#define VP_DC_CURRENT        0x1004U  /* Text GBK/ASCII, 8 bytes, 0x1004..1007 */
+#define VP_DC_POWER          0x1008U  /* Text GBK/ASCII, 8 bytes, 0x1008..100B */
 
 /* --- Dashboard: Battery (0x1010) --- */
-#define VP_BAT_PACK_VOLT     0x1010U  /* u16, 0.1 V (legacy numeric) */
-#define VP_BAT_CELL_VOLT     0x1011U  /* u16, 0.01 V (325 -> 3.25 V, legacy numeric) */
-#define VP_BAT_CHARGED_AH    0x1012U  /* u16 @ 0x1012, 0.1 Ah (Label: CAPACITY, legacy numeric) */
-
-/* Dashboard: Battery Text format (for DWIN Text Variable, blanks when no BMS) */
-#define VP_BAT_PACK_VOLT_TEXT  0x1010U  /* ASCII/GBK, 4 VP / 8 chars (e.g. "52.1 V" or "") */
-#define VP_BAT_CELL_VOLT_TEXT  0x1014U  /* ASCII/GBK, 4 VP / 8 chars (e.g. "3.25 V" or "") */
-#define VP_BAT_CHARGED_AH_TEXT 0x1018U  /* ASCII/GBK, 4 VP / 8 chars (e.g. "25.0 Ah" or "") */
+#define VP_BAT_PACK_VOLT_TEXT  0x1010U  /* Text GBK/ASCII, 8 bytes, 0x1010..1013 */
+#define VP_BAT_CELL_VOLT_TEXT  0x1014U  /* Text GBK/ASCII, 8 bytes, 0x1014..1017 */
+#define VP_BAT_CHARGED_AH_TEXT 0x1018U  /* Text GBK/ASCII, 8 bytes, 0x1018..101B */
 
 /* --- Dashboard: Input AC (0x1020) --- */
-#define VP_AC_PHASE_L1       0x1020U  /* u16, 1 V */
-#define VP_AC_PHASE_L2       0x1021U
-#define VP_AC_PHASE_L3       0x1022U
+#define VP_AC_PHASE_L1       0x1020U  /* Text GBK/ASCII, 8 bytes, 0x1020..1023 */
+#define VP_AC_PHASE_L2       0x1024U  /* Text GBK/ASCII, 8 bytes, 0x1024..1027 */
+#define VP_AC_PHASE_L3       0x1028U  /* Text GBK/ASCII, 8 bytes, 0x1028..102B */
 
-/* --- Dashboard: Temperature (0x1030), i16 signed, 0.1 degC (0.0 format) --- */
-#define VP_TEMP_BATTERY      0x1030U  /* BMS max cell temp (0.1 degC, legacy numeric) */
-#define VP_TEMP_CHARGE       0x1031U  /* hottest module DC-DC temp (0.1 degC) */
-#define VP_TEMP_JACK         0x1032U  /* hottest of the 4 connector NTCs (0.1 degC) */
-#define VP_TEMP_BATTERY_TEXT 0x1034U  /* ASCII/GBK, 4 VP / 8 chars (e.g. "28.5 C" or "") */
+/* --- Dashboard: Temperature (0x1030), text fields, 8 bytes each --- */
+#define VP_TEMP_BATTERY_TEXT 0x1030U  /* Text GBK/ASCII, 8 bytes, 0x1030..1033 */
+#define VP_TEMP_CHARGE_TEXT  0x1034U  /* Text GBK/ASCII, 8 bytes, 0x1034..1037 */
+#define VP_TEMP_JACK_TEXT    0x1038U  /* Text GBK/ASCII, 8 bytes, 0x1038..103B */
 
-/* --- Dashboard: centre status + action button + fault code + charge duration (0x1040) --- */
-#define VP_SOC_VALUE         0x1040U  /* MCU->panel: u16, 0..100 % (legacy numeric) */
+/* --- Dashboard: status + action button + fault code + charge duration --- */
 #define VP_SYS_STATUS_ICON   0x1041U  /* MCU->panel: u16 DwinStatusIcon_e -- status-box Variable Icon */
 #define VP_SYS_BTN_ICON      0x1042U  /* MCU->panel: u16 DwinBtnMode_e (0..3) -- button-label Variable Icon */
 #define VP_SYS_BTN_KEY       0x1043U  /* panel->MCU: Return-Key-Code upload on every press */
 #define VP_TOPBAR_FAULT_CODE 0x1044U  /* MCU->panel: Text GBK, 8 bytes = 4 VP @ 0x1044..0x1047 (VD: "0000", "E006") */
-#define VP_SOC_TEXT          0x1048U  /* MCU->panel: Text GBK, 8 bytes = 4 VP @ 0x1048..0x104B (e.g. "85 %" or "") */
+#define DWIN_SOC_TEXT_VP     0x1048U  /* MCU->panel: Text GBK, 8 bytes = 4 VP @ 0x1048..0x104B */
 #define VP_CHG_DURATION      0x1050U  /* MCU->panel: Text GBK, 16 bytes = 8 VP @ 0x1050..0x1057 (VD: "01:25:34") */
+
+/* SOC Text Display style pointer contract from the DWIN project. The color
+ * field is three WORDs after the SP, not a byte or bit offset. */
+#define DWIN_SOC_SP                   0x8000U
+#define DWIN_TEXT_COLOR_OFFSET_WORDS  3U
+#define DWIN_SOC_COLOR_ADDR           (DWIN_SOC_SP + DWIN_TEXT_COLOR_OFFSET_WORDS)
+
+#define DWIN_SOC_COLOR_RGB565_UNAVAILABLE 0x8410U /* neutral gray */
+#define DWIN_SOC_COLOR_RGB565_CRITICAL    0xF800U /* red */
+#define DWIN_SOC_COLOR_RGB565_LOW         0xFD20U /* orange */
+#define DWIN_SOC_COLOR_RGB565_MEDIUM      0xFFE0U /* yellow */
+#define DWIN_SOC_COLOR_RGB565_NORMAL      0x07E0U /* green */
+
+typedef enum {
+    DWIN_SOC_COLOR_UNAVAILABLE = 0,
+    DWIN_SOC_COLOR_CRITICAL,
+    DWIN_SOC_COLOR_LOW,
+    DWIN_SOC_COLOR_MEDIUM,
+    DWIN_SOC_COLOR_NORMAL
+} DwinSocColor_e;
 
 /* --- Setting screen (0x1100) --- */
 #define VP_SET_HW_VER        0x1100U  /* ASCII/GBK, 4 VP / 8 chars (DGUS config len=8) */

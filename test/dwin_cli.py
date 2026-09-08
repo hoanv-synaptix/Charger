@@ -11,7 +11,7 @@ here gets a NACK.
     python test/dwin_cli.py                       # auto-port, run the self-test
     python test/dwin_cli.py --port COM12 version
     python test/dwin_cli.py --port COM12 read 0x1042
-    python test/dwin_cli.py --port COM12 write 0x1000 521 105 3000
+    python test/dwin_cli.py --port COM12 pattern
     python test/dwin_cli.py --port COM12 page 1
     python test/dwin_cli.py --port COM12 poll          # watch the action button
     python test/dwin_cli.py --port COM12 raw A55A0483000F01
@@ -85,6 +85,13 @@ def dwin_write(vp: int, words) -> bytes:
     for w in words:
         body += bytes([(w >> 8) & 0xFF, w & 0xFF])
     p = bytes([0x82]) + body
+    return bytes([H1, H2, len(p)]) + p
+
+
+def dwin_write_text(vp: int, text: str, n_words: int = 4) -> bytes:
+    """Write a fixed-width ASCII-compatible GBK Text Display field."""
+    raw = text.encode("ascii")[: n_words * 2].ljust(n_words * 2, b"\0")
+    p = bytes([0x82, vp >> 8, vp & 0xFF]) + raw
     return bytes([H1, H2, len(p)]) + p
 
 
@@ -188,18 +195,27 @@ def main():
             print("[1] version read")
             show("version", lk.xfer(bytes([H1, H2, 0x04, 0x83, 0x00, 0x0F, 0x01])))
             print("[2] dashboard test pattern")
-            lk.xfer(dwin_write(0x1000, [521, 105, 3000]))
-            lk.xfer(dwin_write(0x1010, [521, 325]))
-            lk.xfer(dwin_write(0x1020, [231, 232, 230]))
-            lk.xfer(dwin_write(0x1030, [27, 33, 0xFFFB]))
-            lk.xfer(dwin_write(0x1040, [66, 2]))       # SOC 66, status CHARGING
-            lk.xfer(dwin_write(0x1043, [1]))           # button = STOP
+            lk.xfer(dwin_write_text(0x1000, "52.1"))
+            lk.xfer(dwin_write_text(0x1004, "10.5"))
+            lk.xfer(dwin_write_text(0x1008, "3.0"))
+            lk.xfer(dwin_write_text(0x1010, "52.1"))
+            lk.xfer(dwin_write_text(0x1014, "3.25"))
+            lk.xfer(dwin_write_text(0x1018, "20.0"))
+            lk.xfer(dwin_write_text(0x1020, "231"))
+            lk.xfer(dwin_write_text(0x1024, "232"))
+            lk.xfer(dwin_write_text(0x1028, "230"))
+            lk.xfer(dwin_write_text(0x1030, "27.0"))
+            lk.xfer(dwin_write_text(0x1034, "33.0"))
+            lk.xfer(dwin_write_text(0x1038, "-5.0"))
+            lk.xfer(dwin_write_text(0x1048, "66%"))      # SOC Text Display
+            lk.xfer(dwin_write(0x1041, [2]))              # status = CHARGING
+            lk.xfer(dwin_write(0x1042, [1]))              # button = STOP
             print("[3] page -> dashboard")
             lk.xfer(dwin_write(0x0084, [0x5A01, 1]))
             print("[4] read back")
             show("0x1000", lk.xfer(dwin_read(0x1000, 3)))
             show("0x1041", lk.xfer(dwin_read(0x1041, 1)))
-            print("\n>>> screen should now show DC 52.1/10.5/3000, PACK 52.1, "
+            print("\n>>> screen should now show DC 52.1/10.5/3.0kW, PACK 52.1, "
                   "CELL 3.25, AC 231/232/230, TEMP 27/33/-5, SOC 66, CHARGING.")
             print(">>> If read-back replies are empty but writes seem ignored on "
                   "screen: CRC is probably ON in the DGUS CFG (firmware sends none).")

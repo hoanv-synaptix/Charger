@@ -19,7 +19,8 @@ namespace ChargerDebugApp.Protocol
         GET_CHARGE_CFG = 0x19,
         SET_CHARGE_CFG = 0x1A,
         SET_RTC = 0x1D,
-        GET_RTC = 0x1E
+        GET_RTC = 0x1E,
+        RESET_TOTALS = 0x1F
     }
 
     public enum DebugRsp : byte

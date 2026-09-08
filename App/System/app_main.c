@@ -16,6 +16,7 @@
 #include "dwin_protocol.h"
 #include "charge_cycle_config.h"
 #include "charge_cycle_storage.h"
+#include "charge_energy_storage.h"
 #include "charge_controller.h"
 #include "alarm.h"
 #include "dwin_alarm_text.h"
@@ -69,6 +70,9 @@ static uint8_t  btn_start_db      = 0;
 /* One-shot: identity strings + initial page pushed to the DWIN panel once
  * it has had time to boot (the panel comes up slower than the MCU). */
 static bool     dwin_boot_sent    = false;
+static double   s_total_charged_ah;
+static double   s_total_energy_kwh;
+static uint32_t s_last_energy_tick;
 
 /* ============== LED control ============== */
 
@@ -76,6 +80,97 @@ static void led_run_on(void)   { BSP_LED_On(BSP_LED_RUN); }
 static void led_run_off(void)  { BSP_LED_Off(BSP_LED_RUN); }
 static void led_fault_on(void) { BSP_LED_On(BSP_LED_FAULT); }
 static void led_fault_off(void){ BSP_LED_Off(BSP_LED_FAULT); }
+
+static void dwin_set_unavailable(char *text, size_t text_size)
+{
+    if (text == NULL || text_size == 0U) return;
+    memset(text, 0, text_size);
+    if (text_size > 3U) {
+        memcpy(text, "---", 3U);
+    }
+}
+
+static void dwin_set_soc_unavailable(char *text, size_t text_size)
+{
+    if (text == NULL || text_size == 0U) return;
+    memset(text, 0, text_size);
+    if (text_size > 3U) {
+        /* SOC keeps its unit in the text field, including while unavailable. */
+        memcpy(text, "--%", 3U);
+    }
+}
+
+static DwinSocColor_e dwin_soc_color_for_bms(const BMS_View_t *bms)
+{
+    if (bms == NULL || !bms->online || bms->soc > 100U) {
+        return DWIN_SOC_COLOR_UNAVAILABLE;
+    }
+    if (bms->soc <= 10U) {
+        return DWIN_SOC_COLOR_CRITICAL;
+    }
+    if (bms->soc <= 30U) {
+        return DWIN_SOC_COLOR_LOW;
+    }
+    if (bms->soc <= 60U) {
+        return DWIN_SOC_COLOR_MEDIUM;
+    }
+    return DWIN_SOC_COLOR_NORMAL;
+}
+
+/* newlib-nano is intentionally linked without float printf support. Keep all
+ * dashboard formatting deterministic and small by converting the already
+ * validated physical float to fixed-point integers before snprintf(). */
+static bool dwin_format_fixed(char *text, size_t text_size, float value,
+                              uint8_t fractional_digits, const char *unit)
+{
+    float scale;
+    float magnitude;
+    uint32_t scaled;
+    uint32_t whole;
+    uint32_t fraction;
+    bool negative;
+    int written;
+
+    if (text == NULL || text_size == 0U || unit == NULL ||
+        !isfinite(value) || fractional_digits > 2U) {
+        return false;
+    }
+
+    scale = (fractional_digits == 0U) ? 1.0f :
+            ((fractional_digits == 1U) ? 10.0f : 100.0f);
+    negative = (value < 0.0f);
+    magnitude = negative ? -value : value;
+    scaled = (uint32_t)(magnitude * scale + 0.5f);
+    whole = scaled / (uint32_t)scale;
+    fraction = scaled % (uint32_t)scale;
+
+    if (unit[0] == '\0') {
+        if (fractional_digits == 0U) {
+            written = snprintf(text, text_size, "%s%lu",
+                               negative ? "-" : "", (unsigned long)whole);
+        } else if (fractional_digits == 1U) {
+            written = snprintf(text, text_size, "%s%lu.%01lu",
+                               negative ? "-" : "", (unsigned long)whole,
+                               (unsigned long)fraction);
+        } else {
+            written = snprintf(text, text_size, "%s%lu.%02lu",
+                               negative ? "-" : "", (unsigned long)whole,
+                               (unsigned long)fraction);
+        }
+    } else if (fractional_digits == 0U) {
+        written = snprintf(text, text_size, "%s%lu %s",
+                           negative ? "-" : "", (unsigned long)whole, unit);
+    } else if (fractional_digits == 1U) {
+        written = snprintf(text, text_size, "%s%lu.%01lu %s",
+                           negative ? "-" : "", (unsigned long)whole,
+                           (unsigned long)fraction, unit);
+    } else {
+        written = snprintf(text, text_size, "%s%lu.%02lu %s",
+                           negative ? "-" : "", (unsigned long)whole,
+                           (unsigned long)fraction, unit);
+    }
+    return written >= 0 && (size_t)written < text_size;
+}
 
 /* ============== Button read ============== */
 
@@ -106,11 +201,6 @@ static uint16_t dwin_status_from_state(const ChargeCtrlView_t *cc,
         if (av.highest_action >= ALARM_ACT_STOP) {
             return DWIN_STATUS_ERROR;
         }
-    }
-
-    /* Module check: if no charging modules are online, station is not ready -> ERROR */
-    if (sum != NULL && sum->modules_online == 0) {
-        return DWIN_STATUS_ERROR;
     }
 
     switch (cc->state) {
@@ -268,6 +358,8 @@ void App_Init(void)
      * blank-flash first boot -- fixed at the source in
      * ChargeCycleStorage_Init() instead of duplicating the mapping here). */
     ChargeCycleStorage_Init();
+    ChargeEnergyStorage_Init();
+    ChargeEnergyStorage_Get(&s_total_charged_ah, &s_total_energy_kwh);
     LOG("App_Init: Driver selected: id=%u\r\n", (unsigned)CHG_LIB_GetActiveDriverId());
 
     /* Initialize charge controller */
@@ -423,7 +515,7 @@ void App_Loop(void)
          * (bao gom ca loi controller/BMS/derived ma summary khong thay) */
         AlarmView_t av_led;
         Alarm_GetView(&av_led);
-        if (sum.any_critical || sum.modules_fault > 0 || sum.modules_online == 0 ||
+        if (sum.any_critical || sum.modules_fault > 0 ||
             av_led.highest_action >= ALARM_ACT_STOP) {
             led_fault_on();
         } else {
@@ -480,56 +572,74 @@ void App_Loop(void)
         DWIN_SystemData_t dd;
         memset(&dd, 0, sizeof(dd));
 
-        /* OUTPUT DC: the modules' actual measured output, same values the PC
-         * app shows (sum.voltage / sum.total_current), NOT the controller's
-         * commanded setpoints (cc_view.applied_*).
-         * dc_power_x10_kw: 0.1 kW (e.g. 30000W / 100 = 300 -> 30.0 kW) */
+        /* OUTPUT DC: show measured module values only when at least one
+         * module is online. Never use zero-init as a validity indication. */
         {
-            float out_v = (isfinite(sum.voltage) && sum.voltage > 0.0f)
-                              ? sum.voltage : 0.0f;
-            float out_i = (isfinite(sum.total_current) && sum.total_current > 0.0f)
-                              ? sum.total_current : 0.0f;
-            dd.dc_voltage_x10   = (uint16_t)(out_v * 10.0f);
-            dd.dc_current_x10   = (uint16_t)(out_i * 10.0f);
-            dd.dc_power_x10_kw  = (uint16_t)((out_v * out_i) / 100.0f);
+            if (sum.modules_online > 0U && isfinite(sum.voltage) && sum.voltage >= 0.0f &&
+                isfinite(sum.total_current) && sum.total_current >= 0.0f) {
+                if (!dwin_format_fixed(dd.dc_voltage_text, sizeof(dd.dc_voltage_text), sum.voltage, 1U, ""))
+                    dwin_set_unavailable(dd.dc_voltage_text, sizeof(dd.dc_voltage_text));
+                if (!dwin_format_fixed(dd.dc_current_text, sizeof(dd.dc_current_text), sum.total_current, 1U, ""))
+                    dwin_set_unavailable(dd.dc_current_text, sizeof(dd.dc_current_text));
+                if (!dwin_format_fixed(dd.dc_power_text, sizeof(dd.dc_power_text),
+                                       (sum.voltage * sum.total_current) / 1000.0f, 1U, ""))
+                    dwin_set_unavailable(dd.dc_power_text, sizeof(dd.dc_power_text));
+            } else {
+                dwin_set_unavailable(dd.dc_voltage_text, sizeof(dd.dc_voltage_text));
+                dwin_set_unavailable(dd.dc_current_text, sizeof(dd.dc_current_text));
+                dwin_set_unavailable(dd.dc_power_text, sizeof(dd.dc_power_text));
+            }
         }
 
-        /* Battery telemetry:
-         * - When BMS is online: populate real values and formatted text strings.
-         * - When BMS is offline: clear text strings ("" -> DWIN Text Variable renders blank)
-         *   and set numeric to 0 so no stale data is shown. */
+        /* Battery telemetry: online is necessary but not sufficient for every
+         * field. An invalid individual value remains unavailable on DWIN. */
         if (bms.online) {
-            (void)snprintf(dd.soc_text, sizeof(dd.soc_text), "%u %%", (unsigned)bms.soc);
-            (void)snprintf(dd.bat_pack_volt_text, sizeof(dd.bat_pack_volt_text), "%.1f V", bms.batt_voltage);
-            (void)snprintf(dd.bat_cell_volt_text, sizeof(dd.bat_cell_volt_text), "%.2f V", (float)bms.max_cell_volt / 1000.0f);
-            (void)snprintf(dd.bat_cap_text, sizeof(dd.bat_cap_text), "%.1f Ah", (float)bms.cap_remain * 0.1f);
-            (void)snprintf(dd.temp_battery_text, sizeof(dd.temp_battery_text), "%.1f C", bms.max_cell_temp);
+            if (bms.soc <= 100U)
+                (void)snprintf(dd.soc_text, sizeof(dd.soc_text), "%u%%", (unsigned)bms.soc);
+            else
+                dwin_set_soc_unavailable(dd.soc_text, sizeof(dd.soc_text));
 
-            dd.soc_pct            = bms.soc;
-            dd.bat_pack_volt_x10  = (uint16_t)(bms.batt_voltage * 10.0f);
-            dd.bat_cell_volt_x100 = (uint16_t)(bms.max_cell_volt / 10U); /* mV -> 0.01V */
-            dd.temp_battery_c_x10 = (int16_t)roundf(bms.max_cell_temp * 10.0f);
-            dd.charged_ah_x10     = bms.cap_remain;
+            if (bms.batt_voltage < 0.0f ||
+                !dwin_format_fixed(dd.bat_pack_volt_text, sizeof(dd.bat_pack_volt_text), bms.batt_voltage, 1U, ""))
+                dwin_set_unavailable(dd.bat_pack_volt_text, sizeof(dd.bat_pack_volt_text));
+
+            if (bms.max_cell_volt == 0U ||
+                !dwin_format_fixed(dd.bat_cell_volt_text, sizeof(dd.bat_cell_volt_text),
+                                   (float)bms.max_cell_volt / 1000.0f, 2U, ""))
+                dwin_set_unavailable(dd.bat_cell_volt_text, sizeof(dd.bat_cell_volt_text));
+
+            if (!dwin_format_fixed(dd.bat_cap_text, sizeof(dd.bat_cap_text),
+                                   (float)bms.cap_remain * 0.1f, 1U, ""))
+                dwin_set_unavailable(dd.bat_cap_text, sizeof(dd.bat_cap_text));
+
+            if (!dwin_format_fixed(dd.temp_battery_text, sizeof(dd.temp_battery_text), bms.max_cell_temp, 1U, ""))
+                dwin_set_unavailable(dd.temp_battery_text, sizeof(dd.temp_battery_text));
+
         } else {
-            dd.soc_text[0]           = '\0';
-            dd.bat_pack_volt_text[0] = '\0';
-            dd.bat_cell_volt_text[0] = '\0';
-            dd.bat_cap_text[0]       = '\0';
-            dd.temp_battery_text[0]  = '\0';
-
-            dd.soc_pct            = 0;
-            dd.bat_pack_volt_x10  = 0;
-            dd.bat_cell_volt_x100 = 0;
-            dd.temp_battery_c_x10 = 0;
-            dd.charged_ah_x10     = 0;
+            dwin_set_soc_unavailable(dd.soc_text, sizeof(dd.soc_text));
+            dwin_set_unavailable(dd.bat_pack_volt_text, sizeof(dd.bat_pack_volt_text));
+            dwin_set_unavailable(dd.bat_cell_volt_text, sizeof(dd.bat_cell_volt_text));
+            dwin_set_unavailable(dd.bat_cap_text, sizeof(dd.bat_cap_text));
+            dwin_set_unavailable(dd.temp_battery_text, sizeof(dd.temp_battery_text));
         }
+        DWIN_SetSocColor(dwin_soc_color_for_bms(&bms));
 
-        /* AC phase voltages: per-module view (the summary carries none). */
-        CHG_LIB_ModuleView_t mv;
-        if (CHG_LIB_GetModuleView(0, &mv)) {
-            dd.ac_l1_v = (uint16_t)mv.ac_phase_a_voltage;
-            dd.ac_l2_v = (uint16_t)mv.ac_phase_b_voltage;
-            dd.ac_l3_v = (uint16_t)mv.ac_phase_c_voltage;
+        dwin_set_unavailable(dd.ac_l1_text, sizeof(dd.ac_l1_text));
+        dwin_set_unavailable(dd.ac_l2_text, sizeof(dd.ac_l2_text));
+        dwin_set_unavailable(dd.ac_l3_text, sizeof(dd.ac_l3_text));
+        for (uint8_t i = 0U; i < CHG_LIB_GetModuleCount(); i++) {
+            CHG_LIB_ModuleView_t mv;
+            if (!CHG_LIB_GetModuleView(i, &mv) || !mv.enabled || !mv.online) continue;
+            if (mv.ac_phase_a_voltage < 0.0f ||
+                !dwin_format_fixed(dd.ac_l1_text, sizeof(dd.ac_l1_text), mv.ac_phase_a_voltage, 0U, ""))
+                dwin_set_unavailable(dd.ac_l1_text, sizeof(dd.ac_l1_text));
+            if (mv.ac_phase_b_voltage < 0.0f ||
+                !dwin_format_fixed(dd.ac_l2_text, sizeof(dd.ac_l2_text), mv.ac_phase_b_voltage, 0U, ""))
+                dwin_set_unavailable(dd.ac_l2_text, sizeof(dd.ac_l2_text));
+            if (mv.ac_phase_c_voltage < 0.0f ||
+                !dwin_format_fixed(dd.ac_l3_text, sizeof(dd.ac_l3_text), mv.ac_phase_c_voltage, 0U, ""))
+                dwin_set_unavailable(dd.ac_l3_text, sizeof(dd.ac_l3_text));
+            break;
         }
 
         /* Dashboard TEMP panel, 0.1 degC (x10) per DWIN DGUS 0.0 format:
@@ -538,25 +648,32 @@ void App_Loop(void)
          *  JACK    = hottest of the 4 connector NTCs (PA0..PA3) */
         {
             float max_dcdc = 0.0f;
+            bool have_dcdc = false;
             uint8_t nmod = CHG_LIB_GetModuleCount();
             for (uint8_t i = 0; i < nmod; i++) {
                 CHG_LIB_ModuleView_t tv;
                 if (CHG_LIB_GetModuleView(i, &tv) && tv.online &&
-                    isfinite(tv.temp_dcdc) && tv.temp_dcdc > max_dcdc) {
+                    isfinite(tv.temp_dcdc) && (!have_dcdc || tv.temp_dcdc > max_dcdc)) {
                     max_dcdc = tv.temp_dcdc;
+                    have_dcdc = true;
                 }
             }
-            dd.temp_charge_c_x10 = (int16_t)roundf(max_dcdc * 10.0f);
+            if (!have_dcdc || !dwin_format_fixed(dd.temp_charge_text, sizeof(dd.temp_charge_text), max_dcdc, 1U, ""))
+                dwin_set_unavailable(dd.temp_charge_text, sizeof(dd.temp_charge_text));
         }
         {
-            float jack_c = -273.15f;
+            float jack_c = 0.0f;
+            bool jack_valid = false;
             for (uint8_t i = 0; i < 4; i++) {
                 float t = BSP_ADC_GetTempC(i);
-                if (isfinite(t) && t > jack_c) {
+                if (isfinite(t) && (!jack_valid || t > jack_c)) {
                     jack_c = t;
+                    jack_valid = true;
                 }
             }
-            dd.temp_jack_c_x10 = (int16_t)((jack_c < -50.0f) ? 0.0f : roundf(jack_c * 10.0f));
+            if (!jack_valid) dwin_set_unavailable(dd.temp_jack_text, sizeof(dd.temp_jack_text));
+            else if (!dwin_format_fixed(dd.temp_jack_text, sizeof(dd.temp_jack_text), jack_c, 1U, ""))
+                dwin_set_unavailable(dd.temp_jack_text, sizeof(dd.temp_jack_text));
         }
 
         dd.status_icon = dwin_status_from_state(&cc_view, &sum);
@@ -592,9 +709,11 @@ void App_Loop(void)
         }
 
         /* Energy & capacity accumulator */
-        static uint32_t s_last_energy_tick = 0U;
-        static double   s_total_charged_ah = 0.0;
-        static double   s_total_energy_kwh = 0.0;
+        if (ChargeEnergyStorage_TakeResetRequest()) {
+            s_total_charged_ah = 0.0;
+            s_total_energy_kwh = 0.0;
+            s_last_energy_tick = now;
+        }
         if (s_last_energy_tick == 0U) {
             s_last_energy_tick = now;
         }
@@ -611,16 +730,14 @@ void App_Loop(void)
         }
         dd.total_charged_ah_x10 = (uint32_t)(s_total_charged_ah * 10.0);
         dd.total_energy_kwh_x10 = (uint32_t)(s_total_energy_kwh * 10.0);
+        ChargeEnergyStorage_Process(now, is_charging, s_total_charged_ah,
+                                    s_total_energy_kwh);
 
         /* Topbar fault code: "0000" if normal, worst code (e.g. "E006") if fault active */
         AlarmView_t av;
         Alarm_GetView(&av);
         if (av.active_count == 0U && av.latched_mask == 0U) {
-            if (sum.modules_online == 0) {
-                strncpy(dd.topbar_fault_code, "E010", sizeof(dd.topbar_fault_code) - 1U);
-            } else {
-                strncpy(dd.topbar_fault_code, "0000", sizeof(dd.topbar_fault_code) - 1U);
-            }
+            strncpy(dd.topbar_fault_code, "0000", sizeof(dd.topbar_fault_code) - 1U);
         } else {
             const char *c_str = DWIN_Alarm_GetCodeString(av.worst_code);
             strncpy(dd.topbar_fault_code, c_str, sizeof(dd.topbar_fault_code) - 1U);

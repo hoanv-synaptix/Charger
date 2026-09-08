@@ -10,6 +10,7 @@
 #include "bms_core.h"
 #include "charge_cycle_config.h"
 #include "charge_cycle_storage.h"
+#include "charge_energy_storage.h"
 #include "charge_controller.h"
 #include "alarm.h"
 #include "debug_log.h"
@@ -260,7 +261,7 @@ uint16_t DebugProtocol_BuildSystemInfo(uint8_t *data, uint16_t max_len)
     
     info->controller_fault_flags = ctrl_view.fault_flags;
     info->controller_stop_reason = (uint8_t)ctrl_view.stop_reason;
-    info->bms_stale = ((bms_view.alarm_flags & BMS_ALARM_STALE_DATA) != 0) ? 1U : 0U;
+    info->bms_stale = BMS_IsDataStale() ? 1U : 0U;
 
 
     return sizeof(DebugSystemInfo_t);
@@ -512,6 +513,20 @@ bool DebugProtocol_HandleCommand(uint8_t cmd, const uint8_t *payload, uint16_t l
         g_rtc_get_pending = true;
         return true;
     }
+
+    case DEBUG_CMD_RESET_TOTALS:
+        if (len != 0U) {
+            reply[0] = 0x01; /* BAD_PARAM */
+            PC_Protocol_SendFrame(DEBUG_RSP_ERROR, reply, 1);
+            return true;
+        }
+        if (!ChargeEnergyStorage_Reset()) {
+            reply[0] = 0x04; /* FLASH_SAVE_FAIL */
+            PC_Protocol_SendFrame(DEBUG_RSP_ERROR, reply, 1);
+            return true;
+        }
+        PC_Protocol_SendFrame(PC_RSP_ACK, &cmd, 1);
+        return true;
 
     case DEBUG_CMD_SET_RTC: {
         if (len != 4U) {

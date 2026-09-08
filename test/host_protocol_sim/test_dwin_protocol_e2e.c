@@ -141,6 +141,13 @@ static bool test_send_string_pads_field(void)
     ASSERT(g_tx_count == 1 && g_tx_len[0] == 6 + 16, "truncated to field width");
     ASSERT(memcmp(&g_tx[0][6], "0123456789ABCDEF", 16) == 0, "first 16 chars kept");
 
+    reset_capture();
+    DWIN_SendString(DWIN_SOC_TEXT_VP, "--%", DWIN_TEXT_8_BYTES_WORDS);
+    ASSERT(g_tx_count == 1 && g_tx_len[0] == 14, "8-byte SOC text emits one 4-VP frame");
+    ASSERT(g_tx[0][2] == 11, "SOC text LEN = 3 + 8 payload bytes");
+    ASSERT(memcmp(&g_tx[0][6], "--%", 3) == 0, "unavailable SOC text with unit is transmitted");
+    ASSERT(g_tx[0][9] == 0x00 && g_tx[0][13] == 0x00, "SOC text is zero-padded to 8 bytes");
+
     printf("[PASS] test_send_string_pads_field\n");
     return true;
 }
@@ -274,8 +281,19 @@ static bool test_update_data_scatter(void)
 
     DWIN_SystemData_t d;
     memset(&d, 0, sizeof(d));
-    d.dc_voltage_x10 = 521;
-    d.temp_battery_c_x10 = -50;  /* -5.0 degC */
+    memcpy(d.dc_voltage_text, "521.0 V", 7U);
+    strncpy(d.dc_current_text, "12.0 A", sizeof(d.dc_current_text) - 1U);
+    strncpy(d.dc_power_text, "6.3 kW", sizeof(d.dc_power_text) - 1U);
+    memcpy(d.bat_pack_volt_text, "400.0 V", 7U);
+    strncpy(d.bat_cell_volt_text, "3.20 V", sizeof(d.bat_cell_volt_text) - 1U);
+    strncpy(d.bat_cap_text, "50.0 Ah", sizeof(d.bat_cap_text) - 1U);
+    strncpy(d.ac_l1_text, "220 V", sizeof(d.ac_l1_text) - 1U);
+    strncpy(d.ac_l2_text, "221 V", sizeof(d.ac_l2_text) - 1U);
+    strncpy(d.ac_l3_text, "219 V", sizeof(d.ac_l3_text) - 1U);
+    strncpy(d.temp_battery_text, "25.0 C", sizeof(d.temp_battery_text) - 1U);
+    strncpy(d.temp_charge_text, "40.0 C", sizeof(d.temp_charge_text) - 1U);
+    strncpy(d.temp_jack_text, "30.0 C", sizeof(d.temp_jack_text) - 1U);
+    strncpy(d.soc_text, "50%", sizeof(d.soc_text) - 1U);
     d.status_icon = DWIN_STATUS_CHARGING;
     d.btn_mode = DWIN_BTN_STOP;
     strncpy(d.topbar_fault_code, "0000", sizeof(d.topbar_fault_code) - 1);
@@ -304,7 +322,7 @@ static bool test_update_data_scatter(void)
     ASSERT(frames_second_cycle == 0, "unchanged data is diff-suppressed");
 
     /* Change one field: exactly one frame next cycle, on the temp step. */
-    d.temp_charge_c_x10 = 425;  /* 42.5 degC */
+    strncpy(d.temp_charge_text, "42.5 C", sizeof(d.temp_charge_text) - 1U);
     int frames_after_change = 0;
     for (int i = 0; i < steps; i++) {
         reset_capture();
@@ -319,20 +337,20 @@ static bool test_update_data_scatter(void)
     for (int i = 0; i < steps; i++) {
         reset_capture();
         DWIN_UpdateData(&d);
-        if (g_tx_count > 0) {
-            uint16_t vp = ((uint16_t)g_tx[0][4] << 8) | g_tx[0][5];
-            if (vp == VP_DC_VOLTAGE)             seen |= 1u << 0;
-            else if (vp == VP_BAT_PACK_VOLT)     seen |= 1u << 1;
-            else if (vp == VP_BAT_CHARGED_AH)    seen |= 1u << 2;
-            else if (vp == VP_AC_PHASE_L1)       seen |= 1u << 3;
-            else if (vp == VP_TEMP_BATTERY)      seen |= 1u << 4;
-            else if (vp == VP_SOC_VALUE)         seen |= 1u << 5;
-            else if (vp == VP_SYS_BTN_ICON)      seen |= 1u << 6;
-            else if (vp == VP_TOPBAR_FAULT_CODE) seen |= 1u << 7;
-            else if (vp == VP_CHG_DURATION)      seen |= 1u << 8;
+        for (int frame = 0; frame < g_tx_count && frame < MAX_FRAMES; frame++) {
+            uint16_t vp = ((uint16_t)g_tx[frame][4] << 8) | g_tx[frame][5];
+            if (vp == VP_DC_VOLTAGE)              seen |= 1u << 0;
+            else if (vp == VP_BAT_PACK_VOLT_TEXT) seen |= 1u << 1;
+            else if (vp == VP_BAT_CHARGED_AH_TEXT) seen |= 1u << 2;
+            else if (vp == VP_AC_PHASE_L1)        seen |= 1u << 3;
+            else if (vp == VP_TEMP_BATTERY_TEXT)  seen |= 1u << 4;
+            else if (vp == DWIN_SOC_TEXT_VP)      seen |= 1u << 5;
+            else if (vp == VP_SYS_BTN_ICON)       seen |= 1u << 6;
+            else if (vp == VP_TOPBAR_FAULT_CODE)  seen |= 1u << 7;
+            else if (vp == VP_CHG_DURATION)       seen |= 1u << 8;
         }
     }
-    ASSERT((seen & 0x01FF) == 0x01FF, "forced refresh re-sends all groups");
+    ASSERT((seen & 0x01FB) == 0x01FB, "forced refresh re-sends all dashboard groups");
 
     /* ForceFullRefresh marks all 4 alarm rows dirty; STEP_ALARM_ROW services 1 row
      * per 11-step cycle to avoid UART congestion. Drain the remaining 3 rows: */
@@ -399,6 +417,48 @@ static bool test_alarm_fifo_push(void)
     return true;
 }
 
+static bool test_soc_color_write_and_cache(void)
+{
+    printf("Running test_soc_color_write_and_cache...\n");
+    reset_capture();
+
+    DWIN_SetSocColor(DWIN_SOC_COLOR_CRITICAL);
+    ASSERT(g_tx_count == 1 && g_tx_len[0] == 8, "SOC color emits one WORD frame");
+    ASSERT(g_tx[0][2] == 5 && g_tx[0][3] == DWIN_CMD_WRITE, "SOC color frame is a DWIN write");
+    ASSERT((((uint16_t)g_tx[0][4] << 8) | g_tx[0][5]) == DWIN_SOC_COLOR_ADDR,
+           "SOC color uses SP WORD offset address");
+    ASSERT(g_tx[0][6] == 0xF8 && g_tx[0][7] == 0x00, "SOC critical color is RGB565 red");
+
+    reset_capture();
+    DWIN_SetSocColor(DWIN_SOC_COLOR_CRITICAL);
+    ASSERT(g_tx_count == 0, "unchanged SOC color is suppressed");
+
+    DWIN_ForceFullRefresh();
+    reset_capture();
+    DWIN_SetSocColor(DWIN_SOC_COLOR_CRITICAL);
+    ASSERT(g_tx_count == 1, "full refresh invalidates cached SOC color");
+
+    reset_capture();
+    DWIN_SetSocColor(DWIN_SOC_COLOR_LOW);
+    ASSERT(g_tx_count == 1 && g_tx[0][6] == 0xFD && g_tx[0][7] == 0x20,
+           "SOC low color is RGB565 orange");
+    reset_capture();
+    DWIN_SetSocColor(DWIN_SOC_COLOR_MEDIUM);
+    ASSERT(g_tx_count == 1 && g_tx[0][6] == 0xFF && g_tx[0][7] == 0xE0,
+           "SOC medium color is RGB565 yellow");
+    reset_capture();
+    DWIN_SetSocColor(DWIN_SOC_COLOR_NORMAL);
+    ASSERT(g_tx_count == 1 && g_tx[0][6] == 0x07 && g_tx[0][7] == 0xE0,
+           "SOC normal color is RGB565 green");
+    reset_capture();
+    DWIN_SetSocColor(DWIN_SOC_COLOR_UNAVAILABLE);
+    ASSERT(g_tx_count == 1 && g_tx[0][6] == 0x84 && g_tx[0][7] == 0x10,
+           "SOC unavailable color is RGB565 gray");
+
+    printf("[PASS] test_soc_color_write_and_cache\n");
+    return true;
+}
+
 /* ================================================================== */
 
 int main(void)
@@ -418,6 +478,7 @@ int main(void)
     pass &= test_parse_rx_rejects_oversized_length();
     pass &= test_update_data_scatter();
     pass &= test_alarm_fifo_push();
+    pass &= test_soc_color_write_and_cache();
 
     if (pass) {
         printf("ALL TESTS PASSED.\n");

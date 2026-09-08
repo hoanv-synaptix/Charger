@@ -255,7 +255,7 @@
                                             <TextBlock Grid.Row="0" Grid.Column="2" Text="W" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
 
                                             <TextBlock Grid.Row="1" Grid.Column="0" Text="Rated Power" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
-                                            <TextBlock Grid.Row="1" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                            <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding SelRatedPower}" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
                                             <TextBlock Grid.Row="1" Grid.Column="2" Text="W" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
 
                                             <TextBlock Grid.Row="2" Grid.Column="0" Text="Phase A" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
@@ -271,7 +271,7 @@
                                             <TextBlock Grid.Row="4" Grid.Column="2" Text="V" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
 
                                             <TextBlock Grid.Row="5" Grid.Column="0" Text="Rated Current" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
-                                            <TextBlock Grid.Row="5" Grid.Column="1" Text="---" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                            <TextBlock Grid.Row="5" Grid.Column="1" Text="{Binding SelRatedCurrent}" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
                                             <TextBlock Grid.Row="5" Grid.Column="2" Text="A" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
                                         </Grid>
                                     </StackPanel>
@@ -435,11 +435,11 @@
 
                                         <!-- Row 3 -->
                                         <TextBlock Grid.Row="3" Grid.Column="0" Text="Stop Reason:" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
-                                        <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding SysStopReasonStr}" Style="{StaticResource RightAlignedValueStyle}" Foreground="#DC2626" Margin="0,4,4,0"/>
+                                        <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding SysStopReasonStr}" Style="{StaticResource RightAlignedValueStyle}" Foreground="{Binding SysStopReasonColor}" Margin="0,4,4,0"/>
                                         <TextBlock Grid.Row="3" Grid.Column="2" Text="" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
 
-                                        <TextBlock Grid.Row="3" Grid.Column="4" Text="Fault:" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
-                                        <TextBlock Grid.Row="3" Grid.Column="5" Text="{Binding SysFaultStr}" Style="{StaticResource RightAlignedValueStyle}" Foreground="#DC2626" Margin="0,4,4,0"/>
+                                        <TextBlock Grid.Row="3" Grid.Column="4" Text="Controller Fault:" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
+                                        <TextBlock Grid.Row="3" Grid.Column="5" Text="{Binding SysFaultStr}" Style="{StaticResource RightAlignedValueStyle}" Foreground="{Binding SysFaultColor}" Margin="0,4,4,0"/>
                                         <TextBlock Grid.Row="3" Grid.Column="6" Text="" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
                                     </Grid>
                                 </StackPanel>
@@ -597,12 +597,12 @@
                                             <RowDefinition Height="Auto"/>
                                         </Grid.RowDefinitions>
 
-                                        <TextBlock Grid.Row="0" Grid.Column="0" Text="State:" Style="{StaticResource LabelStyle}"/>
+                                        <TextBlock Grid.Row="0" Grid.Column="0" Text="BMS State:" Style="{StaticResource LabelStyle}"/>
                                         <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding BmsStateText}" Style="{StaticResource RightAlignedValueStyle}" Foreground="{Binding BmsStateColor}"/>
                                         <TextBlock Grid.Row="0" Grid.Column="2" Text="" Style="{StaticResource UnitStyle}"/>
 
-                                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Online:" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
-                                        <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding BmsStateText}" Style="{StaticResource RightAlignedValueStyle}" Margin="0,4,4,0"/>
+                                        <TextBlock Grid.Row="1" Grid.Column="0" Text="BMS Connection:" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
+                                        <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding BmsOnlineText}" Style="{StaticResource RightAlignedValueStyle}" Foreground="{Binding BmsOnlineColor}" Margin="0,4,4,0"/>
                                         <TextBlock Grid.Row="1" Grid.Column="2" Text="" Style="{StaticResource UnitStyle}" Margin="0,4,8,0"/>
 
                                         <TextBlock Grid.Row="2" Grid.Column="0" Text="Last RX:" Style="{StaticResource LabelStyle}" Margin="2,4,4,0"/>
@@ -680,10 +680,10 @@
                     <TextBlock Grid.Column="0" Text="Traffic Log" VerticalAlignment="Center" Margin="0,0,24,0"/>
                     <Grid Grid.Column="1">
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Center">
-                            <CheckBox x:Name="chkTx" Content="TX" IsChecked="True" Foreground="#2563EB" FontWeight="Bold" Margin="0,0,16,0" VerticalContentAlignment="Center" FontSize="11"/>
-                            <CheckBox x:Name="chkRx" Content="RX" IsChecked="True" Foreground="#16A34A" FontWeight="Bold" Margin="0,0,16,0" VerticalContentAlignment="Center" FontSize="11"/>
-                            <CheckBox x:Name="chkSys" Content="SYS" IsChecked="True" Foreground="#475569" FontWeight="Bold" Margin="0,0,16,0" VerticalContentAlignment="Center" FontSize="11"/>
-                            <CheckBox x:Name="chkWarn" Content="WARN" IsChecked="True" Foreground="#EA580C" FontWeight="Bold" Margin="0,0,16,0" VerticalContentAlignment="Center" FontSize="11"/>
+                            <CheckBox x:Name="chkTx" Content="TX" IsChecked="True" Foreground="#2563EB" FontWeight="Bold" Margin="0,0,16,0" VerticalContentAlignment="Center" FontSize="11" Checked="TrafficFilterChanged" Unchecked="TrafficFilterChanged"/>
+                            <CheckBox x:Name="chkRx" Content="RX" IsChecked="True" Foreground="#16A34A" FontWeight="Bold" Margin="0,0,16,0" VerticalContentAlignment="Center" FontSize="11" Checked="TrafficFilterChanged" Unchecked="TrafficFilterChanged"/>
+                            <CheckBox x:Name="chkSys" Content="SYS" IsChecked="True" Foreground="#475569" FontWeight="Bold" Margin="0,0,16,0" VerticalContentAlignment="Center" FontSize="11" Checked="TrafficFilterChanged" Unchecked="TrafficFilterChanged"/>
+                            <CheckBox x:Name="chkWarn" Content="WARN" IsChecked="True" Foreground="#EA580C" FontWeight="Bold" Margin="0,0,16,0" VerticalContentAlignment="Center" FontSize="11" Checked="TrafficFilterChanged" Unchecked="TrafficFilterChanged"/>
                         </StackPanel>
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
                             <Button Content="Clear" Width="60" Height="22" Margin="0,0,8,0" Background="White" BorderBrush="#CBD5E1" Cursor="Hand" FontSize="11" FontWeight="Normal" Click="ClearLogs_Click"/>

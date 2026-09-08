@@ -570,7 +570,7 @@ static void process_frame(uint8_t cmd, const uint8_t *payload, uint8_t len)
 
     default:
         /* Try debug protocol handler for debug commands */
-        if (cmd >= DEBUG_CMD_ENTER && cmd <= DEBUG_CMD_GET_RTC) {
+        if (cmd >= DEBUG_CMD_ENTER && cmd <= DEBUG_CMD_RESET_TOTALS) {
             if (DebugProtocol_HandleCommand(cmd, payload, len)) {
                 return;
             }
@@ -726,7 +726,6 @@ bool PC_Protocol_PeekTxFrame(uint8_t index, uint8_t *cmd, uint8_t *payload, uint
     }
     return true;
 }
-
 
 
 

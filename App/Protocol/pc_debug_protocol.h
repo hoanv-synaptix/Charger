@@ -26,6 +26,7 @@
 #define DEBUG_CMD_GET_ALARMS      0x1C    /**< Read unified alarm state + recent event log */
 #define DEBUG_CMD_SET_RTC         0x1D    /**< Set real-time clock (payload: uint32_t epoch_sec) */
 #define DEBUG_CMD_GET_RTC         0x1E    /**< Get real-time clock */
+#define DEBUG_CMD_RESET_TOTALS    0x1F    /**< Reset persistent total counters */
 
 /* ============== Debug Responses (MCU -> PC) ============== */
 #define DEBUG_RSP_MODULE_DATA     0x90    /**< Single module data */

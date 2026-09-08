@@ -193,6 +193,16 @@ static const DwinAlarmEntry_t s_alarm_entries[ALARM_CODE_COUNT] = {
         ALARM_MOD_AC_OVER_VOLT,
         "E017",
         (const uint16_t *)u"Qu\u00e1 \u00e1p AC \u0111\u1ea7u v\u00e0o module"
+    },
+    [ALARM_MOD_OUTPUT_UNDER_VOLT] = {
+        ALARM_MOD_OUTPUT_UNDER_VOLT,
+        "W012",
+        (const uint16_t *)u"C\u1ea3nh b\u00e1o th\u1ea5p \u00e1p \u0111\u1ea7u ra module"
+    },
+    [ALARM_MOD_OUTPUT_OVER_VOLT_WARN] = {
+        ALARM_MOD_OUTPUT_OVER_VOLT_WARN,
+        "W013",
+        (const uint16_t *)u"C\u1ea3nh b\u00e1o qu\u00e1 \u00e1p \u0111\u1ea7u ra module"
     }
 };
 

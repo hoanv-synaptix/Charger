@@ -112,18 +112,27 @@ def main() -> int:
 
     # ---- 2. dashboard test pattern ----------------------------------
     print("\n[..] writing dashboard test pattern")
-    send(w_words(0x1000, [521, 105, 3000], crc_mode))   # DC 52.1V 10.5A 3000W
-    send(w_words(0x1010, [521, 325], crc_mode))         # pack 52.1V, cell 3.25V
-    send(w_words(0x1012, [0x0000, 0x00C8], crc_mode))   # charged 20.0 Ah (u32)
-    send(w_words(0x1020, [231, 232, 230], crc_mode))    # AC L1/L2/L3
-    send(w_words(0x1030, [27, 33, 0xFFFB], crc_mode))   # temp 27 / 33 / -5 (i16)
-    send(w_words(0x1040, [66, 2], crc_mode))            # SOC 66%, status=CHARGING
-    send(w_words(0x1043, [1], crc_mode))                # button mode = STOP
-
     def w_str(vp, text, n_words=8):
         raw = text.encode("ascii")[: n_words * 2].ljust(n_words * 2, b"\0")
         body = bytes([(vp >> 8) & 0xFF, vp & 0xFF]) + raw
         send(frame(CMD_WRITE, body, crc_mode))
+
+    # All dashboard measurements are fixed 8-byte Text Display fields.
+    w_str(0x1000, "52.1", 4)
+    w_str(0x1004, "10.5", 4)
+    w_str(0x1008, "3.0", 4)
+    w_str(0x1010, "52.1", 4)
+    w_str(0x1014, "3.25", 4)
+    w_str(0x1018, "20.0", 4)
+    w_str(0x1020, "231", 4)
+    w_str(0x1024, "232", 4)
+    w_str(0x1028, "230", 4)
+    w_str(0x1030, "27.0", 4)
+    w_str(0x1034, "33.0", 4)
+    w_str(0x1038, "-5.0", 4)
+    w_str(0x1048, "66%", 4)
+    send(w_words(0x1041, [2], crc_mode))             # status=CHARGING
+    send(w_words(0x1042, [1], crc_mode))             # button mode = STOP
     w_str(0x1100, "HW V1.0")
     w_str(0x1108, "FW V2.0.0")
     w_str(0x1110, "PKG-0001")
@@ -142,7 +151,7 @@ def main() -> int:
         resp = s.read(32)
         print(f"[<-] read 0x{vp:04X}: {resp.hex(' ') or '(no reply)'}")
 
-    print("\n>>> LOOK AT THE SCREEN NOW. Expect: DC 52.1/10.5/3000, PACK 52.1, "
+    print("\n>>> LOOK AT THE SCREEN NOW. Expect: DC 52.1/10.5/3.0kW, PACK 52.1, "
           "CELL 3.25, AC 231/232/230, TEMP 27/33/-5, SOC 66, CHARGING state, "
           "STOP button, HW/FW/ID strings on the Setting page.")
 

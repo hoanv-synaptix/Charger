@@ -197,12 +197,11 @@ static void dwin_emit_alarm_row(uint8_t row)
 /* ===================== TX: dashboard scatter ===================== */
 
 enum {
-    STEP_DC = 0,         /* 0x1000..0x1002 */
-    STEP_BATT_V,         /* 0x1010..0x1011 */
-    STEP_CHARGED_AH,     /* 0x1012..0x1013 (u32) */
-    STEP_AC,             /* 0x1020..0x1022 */
-    STEP_TEMP,           /* 0x1030..0x1032 (i16) */
-    STEP_SOC_STATUS,     /* 0x1040..0x1041 */
+    STEP_DC = 0,         /* text 0x1000..0x100B */
+    STEP_BATT_V,         /* text 0x1010..0x101B */
+    STEP_AC,             /* text 0x1020..0x102B */
+    STEP_TEMP,           /* text 0x1030..0x103B */
+    STEP_SOC_STATUS,     /* status icon 0x1041 + SOC text 0x1048 */
     STEP_BTN_MODE,       /* 0x1042 */
     STEP_TOPBAR_FAULT,   /* 0x1044..0x1047 (Text GBK, 4 words) */
     STEP_CHG_DURATION,   /* 0x1050..0x1057 (Text GBK, 8 words) */
@@ -212,11 +211,43 @@ enum {
 };
 
 static uint8_t s_force_steps = 0;
+static bool s_soc_color_valid = false;
+static DwinSocColor_e s_soc_color;
+
+static uint16_t dwin_soc_color_to_rgb565(DwinSocColor_e color)
+{
+    switch (color) {
+    case DWIN_SOC_COLOR_CRITICAL: return DWIN_SOC_COLOR_RGB565_CRITICAL;
+    case DWIN_SOC_COLOR_LOW:      return DWIN_SOC_COLOR_RGB565_LOW;
+    case DWIN_SOC_COLOR_MEDIUM:   return DWIN_SOC_COLOR_RGB565_MEDIUM;
+    case DWIN_SOC_COLOR_NORMAL:   return DWIN_SOC_COLOR_RGB565_NORMAL;
+    case DWIN_SOC_COLOR_UNAVAILABLE:
+    default:                      return DWIN_SOC_COLOR_RGB565_UNAVAILABLE;
+    }
+}
+
+void DWIN_SetSocColor(DwinSocColor_e color)
+{
+    uint16_t rgb565;
+
+    if (color > DWIN_SOC_COLOR_NORMAL) {
+        color = DWIN_SOC_COLOR_UNAVAILABLE;
+    }
+    if (s_soc_color_valid && s_soc_color == color) {
+        return;
+    }
+
+    rgb565 = dwin_soc_color_to_rgb565(color);
+    DWIN_SendWords(DWIN_SOC_COLOR_ADDR, &rgb565, 1U);
+    s_soc_color = color;
+    s_soc_color_valid = true;
+}
 
 void DWIN_ForceFullRefresh(void)
 {
     s_force_steps = (uint8_t)STEP_COUNT;
     s_alarm_dirty = (1U << VP_ALARM_ROW_COUNT) - 1U;
+    s_soc_color_valid = false;
 }
 
 void DWIN_UpdateData(const DWIN_SystemData_t *d)
@@ -224,7 +255,6 @@ void DWIN_UpdateData(const DWIN_SystemData_t *d)
     static uint8_t step = 0;
     static DWIN_SystemData_t prev;
     static bool have_prev = false;
-    uint16_t w[3];
     bool first;
 
     if (d == NULL) {
@@ -238,82 +268,58 @@ void DWIN_UpdateData(const DWIN_SystemData_t *d)
 
     switch (step) {
     case STEP_DC:
-        if (first || prev.dc_voltage_x10 != d->dc_voltage_x10 ||
-            prev.dc_current_x10 != d->dc_current_x10 ||
-            prev.dc_power_x10_kw != d->dc_power_x10_kw) {
-            w[0] = d->dc_voltage_x10;
-            w[1] = d->dc_current_x10;
-            w[2] = d->dc_power_x10_kw;
-            DWIN_SendWords(VP_DC_VOLTAGE, w, 3);
-        }
+        if (first || strncmp(prev.dc_voltage_text, d->dc_voltage_text, sizeof(d->dc_voltage_text)) != 0)
+            DWIN_SendString(VP_DC_VOLTAGE, d->dc_voltage_text, DWIN_TEXT_8_BYTES_WORDS);
+        if (first || strncmp(prev.dc_current_text, d->dc_current_text, sizeof(d->dc_current_text)) != 0)
+            DWIN_SendString(VP_DC_CURRENT, d->dc_current_text, DWIN_TEXT_8_BYTES_WORDS);
+        if (first || strncmp(prev.dc_power_text, d->dc_power_text, sizeof(d->dc_power_text)) != 0)
+            DWIN_SendString(VP_DC_POWER, d->dc_power_text, DWIN_TEXT_8_BYTES_WORDS);
         break;
 
     case STEP_BATT_V:
-        if (first || prev.bat_pack_volt_x10 != d->bat_pack_volt_x10 ||
-            prev.bat_cell_volt_x100 != d->bat_cell_volt_x100) {
-            w[0] = d->bat_pack_volt_x10;
-            w[1] = d->bat_cell_volt_x100;
-            DWIN_SendWords(VP_BAT_PACK_VOLT, w, 2);
-        }
         if (first || strncmp(prev.bat_pack_volt_text, d->bat_pack_volt_text, sizeof(d->bat_pack_volt_text)) != 0) {
-            DWIN_SendString(VP_BAT_PACK_VOLT_TEXT, d->bat_pack_volt_text, 4);
+            DWIN_SendString(VP_BAT_PACK_VOLT_TEXT, d->bat_pack_volt_text, DWIN_TEXT_8_BYTES_WORDS);
         }
         if (first || strncmp(prev.bat_cell_volt_text, d->bat_cell_volt_text, sizeof(d->bat_cell_volt_text)) != 0) {
-            DWIN_SendString(VP_BAT_CELL_VOLT_TEXT, d->bat_cell_volt_text, 4);
+            DWIN_SendString(VP_BAT_CELL_VOLT_TEXT, d->bat_cell_volt_text, DWIN_TEXT_8_BYTES_WORDS);
         }
-        break;
-
-    case STEP_CHARGED_AH:
-        if (first || prev.charged_ah_x10 != d->charged_ah_x10) {
-            w[0] = (uint16_t)(d->charged_ah_x10 & 0xFFFFU);
-            w[1] = 0U;
-            DWIN_SendWords(VP_BAT_CHARGED_AH, w, 2);
-        }
-        if (first || strncmp(prev.bat_cap_text, d->bat_cap_text, sizeof(d->bat_cap_text)) != 0) {
-            DWIN_SendString(VP_BAT_CHARGED_AH_TEXT, d->bat_cap_text, 4);
-        }
+        if (first || strncmp(prev.bat_cap_text, d->bat_cap_text, sizeof(d->bat_cap_text)) != 0)
+            DWIN_SendString(VP_BAT_CHARGED_AH_TEXT, d->bat_cap_text, DWIN_TEXT_8_BYTES_WORDS);
         break;
 
     case STEP_AC:
-        if (first || prev.ac_l1_v != d->ac_l1_v || prev.ac_l2_v != d->ac_l2_v ||
-            prev.ac_l3_v != d->ac_l3_v) {
-            w[0] = d->ac_l1_v;
-            w[1] = d->ac_l2_v;
-            w[2] = d->ac_l3_v;
-            DWIN_SendWords(VP_AC_PHASE_L1, w, 3);
-        }
+        if (first || strncmp(prev.ac_l1_text, d->ac_l1_text, sizeof(d->ac_l1_text)) != 0)
+            DWIN_SendString(VP_AC_PHASE_L1, d->ac_l1_text, DWIN_TEXT_8_BYTES_WORDS);
+        if (first || strncmp(prev.ac_l2_text, d->ac_l2_text, sizeof(d->ac_l2_text)) != 0)
+            DWIN_SendString(VP_AC_PHASE_L2, d->ac_l2_text, DWIN_TEXT_8_BYTES_WORDS);
+        if (first || strncmp(prev.ac_l3_text, d->ac_l3_text, sizeof(d->ac_l3_text)) != 0)
+            DWIN_SendString(VP_AC_PHASE_L3, d->ac_l3_text, DWIN_TEXT_8_BYTES_WORDS);
         break;
 
     case STEP_TEMP:
-        if (first || prev.temp_battery_c_x10 != d->temp_battery_c_x10 ||
-            prev.temp_charge_c_x10 != d->temp_charge_c_x10 ||
-            prev.temp_jack_c_x10 != d->temp_jack_c_x10) {
-            w[0] = (uint16_t)d->temp_battery_c_x10;
-            w[1] = (uint16_t)d->temp_charge_c_x10;
-            w[2] = (uint16_t)d->temp_jack_c_x10;
-            DWIN_SendWords(VP_TEMP_BATTERY, w, 3);
-        }
         if (first || strncmp(prev.temp_battery_text, d->temp_battery_text, sizeof(d->temp_battery_text)) != 0) {
-            DWIN_SendString(VP_TEMP_BATTERY_TEXT, d->temp_battery_text, 4);
+            DWIN_SendString(VP_TEMP_BATTERY_TEXT, d->temp_battery_text, DWIN_TEXT_8_BYTES_WORDS);
         }
+        if (first || strncmp(prev.temp_charge_text, d->temp_charge_text, sizeof(d->temp_charge_text)) != 0)
+            DWIN_SendString(VP_TEMP_CHARGE_TEXT, d->temp_charge_text, DWIN_TEXT_8_BYTES_WORDS);
+        if (first || strncmp(prev.temp_jack_text, d->temp_jack_text, sizeof(d->temp_jack_text)) != 0)
+            DWIN_SendString(VP_TEMP_JACK_TEXT, d->temp_jack_text, DWIN_TEXT_8_BYTES_WORDS);
         break;
 
     case STEP_SOC_STATUS:
-        if (first || prev.soc_pct != d->soc_pct ||
-            prev.status_icon != d->status_icon) {
-            w[0] = d->soc_pct;
-            w[1] = d->status_icon;
-            DWIN_SendWords(VP_SOC_VALUE, w, 2);
+        if (first || prev.status_icon != d->status_icon) {
+            uint16_t status = d->status_icon;
+            DWIN_SendWords(VP_SYS_STATUS_ICON, &status, 1);
         }
         if (first || strncmp(prev.soc_text, d->soc_text, sizeof(d->soc_text)) != 0) {
-            DWIN_SendString(VP_SOC_TEXT, d->soc_text, 4);
+            DWIN_SendString(DWIN_SOC_TEXT_VP, d->soc_text, DWIN_TEXT_8_BYTES_WORDS);
         }
         break;
 
     case STEP_BTN_MODE:
         if (first || prev.btn_mode != d->btn_mode) {
-            w[0] = d->btn_mode;
-            DWIN_SendWords(VP_SYS_BTN_ICON, w, 1);
+            uint16_t w = d->btn_mode;
+            DWIN_SendWords(VP_SYS_BTN_ICON, &w, 1);
         }
         break;
 

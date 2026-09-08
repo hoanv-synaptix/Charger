@@ -84,7 +84,19 @@ typedef enum {
     CHG_LIB_ALARM_PFC_OVERCURR      = (1U << 17), /* Input overcurrent */
     CHG_LIB_ALARM_PFC_IMBALANCE     = (1U << 18), /* Bus/phase imbalance */
     CHG_LIB_ALARM_FREQ_FAULT        = (1U << 19), /* Mains frequency fault */
+    CHG_LIB_ALARM_PFC_FAULT         = (1U << 20), /* Vendor PFC fault summary */
+    CHG_LIB_ALARM_OUTPUT_UNDER_VOLT = (1U << 21), /* DC output undervoltage warning */
+    CHG_LIB_ALARM_OUTPUT_OVER_VOLT_WARN = (1U << 22), /* DC output overvoltage warning */
 } CHG_LIB_AlarmFlag_t;
+
+/* Advisory module warnings do not force FAULT or stop charging by themselves. */
+#define CHG_LIB_ALARM_WARNING_MASK \
+    ((uint32_t)CHG_LIB_ALARM_AC_UNDER_VOLT | \
+     (uint32_t)CHG_LIB_ALARM_OUTPUT_UNDER_VOLT | \
+     (uint32_t)CHG_LIB_ALARM_OUTPUT_OVER_VOLT_WARN)
+
+#define CHG_LIB_ALARM_HAS_PROTECTION(flags) \
+    ((((uint32_t)(flags)) & (~CHG_LIB_ALARM_WARNING_MASK)) != 0U)
 
 /** Thống kê truyền thông cho 1 module (chuẩn hoá) */
 typedef struct {

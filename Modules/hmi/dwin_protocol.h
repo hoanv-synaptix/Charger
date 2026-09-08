@@ -26,35 +26,34 @@ extern "C" {
  * @note  Built by the composition root (App/System/app_main.c) each HMI tick
  *        from the charge-controller / BMS / charger views. This module holds
  *        NO policy -- all state->icon/page decisions happen in App.
- *        Temperatures are signed and scaled x10 (270 -> 27.0 degC).
+ *        Dashboard measurements are fixed-width text fields. The composition
+ *        root writes "---" when a source is offline or the individual value
+ *        is invalid; valid values use ASCII-compatible GBK text.
  */
 typedef struct {
     /* --- dashboard --- */
-    uint16_t dc_voltage_x10;
-    uint16_t dc_current_x10;
-    uint16_t dc_power_x10_kw;     /* 0.1 kW (VD: 300 = 30.0 kW) */
-    uint16_t bat_pack_volt_x10;
-    uint16_t bat_cell_volt_x100;
-    uint32_t charged_ah_x10;      /* CAPACITY */
-    uint16_t ac_l1_v;
-    uint16_t ac_l2_v;
-    uint16_t ac_l3_v;
-    int16_t  temp_battery_c_x10;
-    int16_t  temp_charge_c_x10;
-    int16_t  temp_jack_c_x10;
-    uint16_t soc_pct;
+    char     dc_voltage_text[8];
+    char     dc_current_text[8];
+    char     dc_power_text[8];
+    char     bat_pack_volt_text[8];
+    char     bat_cell_volt_text[8];
+    char     bat_cap_text[10];
+    char     ac_l1_text[8];
+    char     ac_l2_text[8];
+    char     ac_l3_text[8];
+    char     temp_battery_text[8];
+    char     temp_charge_text[8];
+    char     temp_jack_text[8];
+    char     soc_text[8];
     uint16_t status_icon;         /* DwinStatusIcon_e */
     uint16_t btn_mode;            /* DwinBtnMode_e */
     char     topbar_fault_code[8];/* "0000" or active fault code like "E006" */
     uint32_t charge_duration_s;   /* elapsed time since charge start in seconds */
     char     footer_time_str[16]; /* optional clock/time string "HH:MM:SS" (e.g. from RTC) */
 
-    /* Battery Text Variable fields (empty string "" when no BMS -> DWIN blanks/hides) */
-    char     soc_text[8];            /* e.g. "85 %" or "" */
-    char     bat_pack_volt_text[8];  /* e.g. "52.1 V" or "" */
-    char     bat_cell_volt_text[8];  /* e.g. "3.25 V" or "" */
-    char     bat_cap_text[10];       /* e.g. "25.0 Ah" or "" */
-    char     temp_battery_text[8];   /* e.g. "28.5 C" or "" */
+    /* Text fields use ASCII-compatible GBK for values and "---" for
+     * unavailable data. Dashboard units are drawn by the DWIN project;
+     * SOC is the only field whose text includes "%" (for example "50%"). */
 
     /* --- setting --- */
     uint32_t uptime_s;
@@ -99,6 +98,13 @@ void DWIN_UpdateData(const DWIN_SystemData_t *data);
  *        unconditionally (one-shot, regardless of which step it is on now).
  */
 void DWIN_ForceFullRefresh(void);
+
+/**
+ * @brief Set the SOC Text Display foreground color through its SP contract.
+ *        The protocol layer maps the semantic color to RGB565 and writes one
+ *        WORD at DWIN_SOC_SP + DWIN_TEXT_COLOR_OFFSET_WORDS.
+ */
+void DWIN_SetSocColor(DwinSocColor_e color);
 
 /**
  * @brief Feed raw RS485 RX bytes (whatever BSP_RS485_Read() returned).

@@ -81,7 +81,6 @@ typedef uint32_t BMS_AlarmFlag_t;
 #define BMS_ALARM_CELL_VOLT_DIFF     (1U << 11)
 #define BMS_ALARM_LOW_SOC            (1U << 12)
 #define BMS_ALARM_BMS_OFFLINE        (1U << 13)
-#define BMS_ALARM_STALE_DATA         (1U << 14)
 
 /* ============== BMS View (public data snapshot) ============== */
 
@@ -171,6 +170,14 @@ void BMS_SendCtrlInfo(const BMS_ChargeCtrl_t *ctrl);
  * @brief  Check if BMS is online and healthy
  */
 bool BMS_IsOnline(void);
+
+/**
+ * @brief  Return the internal data-quality state.
+ *
+ * Stale data is derived from frame timestamps. It is deliberately not a
+ * BMS_AlarmFlag_t bit and must not be promoted to a DWIN alarm code.
+ */
+bool BMS_IsDataStale(void);
 
 /**
  * @brief  Check if any critical alarm is active

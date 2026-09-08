@@ -404,6 +404,61 @@ static bool test_distinct_module_alarm(uint8_t module_type,
     return true;
 }
 
+static bool test_module_warning(uint8_t module_type,
+                                uint32_t maxwell_raw,
+                                uint16_t lianming_raw,
+                                uint16_t tonhe_raw,
+                                CHG_LIB_AlarmFlag_t expected,
+                                CHG_LIB_AlarmFlag_t forbidden,
+                                const char *label)
+{
+    ASSERT(setup_scenario(module_type, NULL), "setup failed");
+    set_healthy_bms(400.0f, 50);
+    ASSERT(warmup_and_start(1500U, 4000U), "module never reached RUNNING");
+
+    g_sim_module.maxwell_alarm_raw = maxwell_raw;
+    g_sim_module.lianming_status_raw = lianming_raw;
+    g_sim_module.tonhe_fault_bits = tonhe_raw;
+    drive_ms(800U);
+
+    CHG_LIB_ModuleView_t mv;
+    ASSERT(CHG_LIB_GetModuleView(0, &mv), "module view unavailable");
+    ASSERT((mv.alarm_flags & expected) != 0U, label);
+    ASSERT((mv.alarm_flags & forbidden) == 0U, "warning collapsed into another alarm");
+    ASSERT(mv.state != CHG_LIB_STATE_FAULT, "warning must not force module FAULT");
+    return true;
+}
+
+static bool test_module_raw_bits_ignored(uint8_t module_type,
+                                         uint16_t lianming_raw,
+                                         const char *label)
+{
+    ASSERT(setup_scenario(module_type, NULL), "setup failed");
+    set_healthy_bms(400.0f, 50);
+    ASSERT(warmup_and_start(1500U, 4000U), "module never reached RUNNING");
+    g_sim_module.lianming_status_raw = lianming_raw;
+    drive_ms(800U);
+
+    CHG_LIB_ModuleView_t mv;
+    ASSERT(CHG_LIB_GetModuleView(0, &mv), "module view unavailable");
+    ASSERT(mv.alarm_flags == CHG_LIB_ALARM_NONE, label);
+    return true;
+}
+
+static bool test_tonhe_pfc_flag(uint8_t pfc_bits, const char *label)
+{
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_TONHE, NULL), "setup failed");
+    set_healthy_bms(400.0f, 50);
+    ASSERT(warmup_and_start(1500U, 4000U), "module never reached RUNNING");
+    g_sim_module.tonhe_pfc_bits = pfc_bits;
+    drive_ms(800U);
+
+    CHG_LIB_ModuleView_t mv;
+    ASSERT(CHG_LIB_GetModuleView(0, &mv), "module view unavailable");
+    ASSERT((mv.alarm_flags & CHG_LIB_ALARM_PFC_FAULT) != 0U, label);
+    return true;
+}
+
 static bool test_distinct_module_alarm_matrix(void)
 {
     printf("Running test_distinct_module_alarm_matrix...\n");
@@ -413,18 +468,50 @@ static bool test_distinct_module_alarm_matrix(void)
     ASSERT(test_distinct_module_alarm(CHARGE_MODULE_TYPE_MAXWELL, (1U << 9), 0, 0,
                                       CHG_LIB_ALARM_AC_OVER_VOLT, CHG_LIB_ALARM_OVER_VOLTAGE_OUT,
                                       "Maxwell AC input overvoltage"), "Maxwell AC OV test failed");
+    ASSERT(test_distinct_module_alarm(CHARGE_MODULE_TYPE_MAXWELL, (1U << 8), 0, 0,
+                                      CHG_LIB_ALARM_PFC_FAULT, CHG_LIB_ALARM_HW_FAULT,
+                                      "Maxwell PFC abnormal"), "Maxwell PFC test failed");
+    ASSERT(test_distinct_module_alarm(CHARGE_MODULE_TYPE_MAXWELL, (1U << 4) | (1U << 5), 0, 0,
+                                      CHG_LIB_ALARM_HW_FAULT, CHG_LIB_ALARM_AC_PHASE_LOSS,
+                                      "Maxwell input mode/wiring fault"), "Maxwell input fault test failed");
+    ASSERT(test_distinct_module_alarm(CHARGE_MODULE_TYPE_MAXWELL, (1U << 7), 0, 0,
+                                      CHG_LIB_ALARM_OVER_VOLTAGE_OUT, CHG_LIB_ALARM_OUTPUT_OVER_VOLT_WARN,
+                                      "Maxwell output OV protection"), "Maxwell output OV test failed");
+    ASSERT(test_distinct_module_alarm(CHARGE_MODULE_TYPE_MAXWELL, (1U << 28), 0, 0,
+                                      CHG_LIB_ALARM_SHORT_CIRCUIT, CHG_LIB_ALARM_HW_FAULT,
+                                      "Maxwell short circuit"), "Maxwell short test failed");
     ASSERT(test_distinct_module_alarm(CHARGE_MODULE_TYPE_LIANMING, 0, (1U << 3), 0,
                                       CHG_LIB_ALARM_FAN_FAULT, CHG_LIB_ALARM_HW_FAULT,
                                       "Lianming fan fault"), "Lianming fan test failed");
     ASSERT(test_distinct_module_alarm(CHARGE_MODULE_TYPE_LIANMING, 0, (1U << 4), 0,
                                       CHG_LIB_ALARM_AC_OVER_VOLT, CHG_LIB_ALARM_HW_FAULT,
                                       "Lianming AC input overvoltage"), "Lianming AC OV test failed");
+    ASSERT(test_module_warning(CHARGE_MODULE_TYPE_LIANMING, 0, (1U << 7), 0,
+                               CHG_LIB_ALARM_OUTPUT_UNDER_VOLT, CHG_LIB_ALARM_HW_FAULT,
+                               "Lianming output undervoltage warning"), "Lianming output UV test failed");
+    ASSERT(test_module_raw_bits_ignored(CHARGE_MODULE_TYPE_LIANMING, (1U << 13) | (1U << 14),
+                                        "Lianming raw bits 13/14 must be ignored"),
+           "Lianming raw bit compatibility test failed");
     ASSERT(test_distinct_module_alarm(CHARGE_MODULE_TYPE_TONHE, 0, 0, (1U << 6),
                                       CHG_LIB_ALARM_FAN_FAULT, CHG_LIB_ALARM_HW_FAULT,
                                       "TonHe fan fault"), "TonHe fan test failed");
     ASSERT(test_distinct_module_alarm(CHARGE_MODULE_TYPE_TONHE, 0, 0, (1U << 2),
                                       CHG_LIB_ALARM_AC_OVER_VOLT, CHG_LIB_ALARM_OVER_VOLTAGE_OUT,
                                       "TonHe AC input overvoltage"), "TonHe AC OV test failed");
+    ASSERT(test_distinct_module_alarm(CHARGE_MODULE_TYPE_TONHE, 0, 0, (1U << 3),
+                                      CHG_LIB_ALARM_OVER_VOLTAGE_OUT, CHG_LIB_ALARM_OUTPUT_OVER_VOLT_WARN,
+                                      "TonHe output OV protection"), "TonHe output OV test failed");
+    ASSERT(test_module_warning(CHARGE_MODULE_TYPE_TONHE, 0, 0, (1U << 12),
+                               CHG_LIB_ALARM_OUTPUT_UNDER_VOLT, CHG_LIB_ALARM_OVER_VOLTAGE_OUT,
+                               "TonHe output undervoltage warning"), "TonHe output UV test failed");
+    ASSERT(test_module_warning(CHARGE_MODULE_TYPE_TONHE, 0, 0, (1U << 13),
+                               CHG_LIB_ALARM_OUTPUT_OVER_VOLT_WARN, CHG_LIB_ALARM_OVER_VOLTAGE_OUT,
+                               "TonHe output overvoltage warning"), "TonHe output OV warning test failed");
+    ASSERT(test_distinct_module_alarm(CHARGE_MODULE_TYPE_TONHE, 0, 0, (1U << 1),
+                                      CHG_LIB_ALARM_AC_PHASE_LOSS, CHG_LIB_ALARM_HW_FAULT,
+                                      "TonHe phase loss"), "TonHe phase-loss test failed");
+    ASSERT(test_tonhe_pfc_flag((1U << 6), "TonHe PFC phase exception must be normalized"),
+           "TonHe PFC phase-loss test failed");
     printf("[PASS] test_distinct_module_alarm_matrix\n");
     return true;
 }
@@ -1144,7 +1231,9 @@ static bool test_bms_stale_but_online(void)
     BMS_View_t bv;
     BMS_GetView(&bv);
     ASSERT(bv.online, "BMS should still be online (under the 5s offline timeout)");
-    ASSERT(bv.alarm_flags & BMS_ALARM_STALE_DATA, "BMS_ALARM_STALE_DATA should be set");
+    ASSERT(BMS_IsDataStale(), "BMS data-status stale should be set");
+    ASSERT((bv.alarm_flags & BMS_ALARM_BMS_OFFLINE) == 0U,
+           "stale data must not be reported as BMS offline");
 
     ChargeCtrlView_t cv;
     ChargeController_GetView(&cv);

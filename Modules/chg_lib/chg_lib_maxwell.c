@@ -365,7 +365,7 @@ static CHG_LIB_AlarmFlag_t parse_maxwell_alarm(uint32_t raw)
  if (raw & MXR_ALARM_INPUT_ERROR) flags |= CHG_LIB_ALARM_HW_FAULT;
  if (raw & MXR_ALARM_INPUT_MISMATCH) flags |= CHG_LIB_ALARM_HW_FAULT;
  if (raw & MXR_ALARM_DCDC_OV) flags |= CHG_LIB_ALARM_OVER_VOLTAGE_OUT;
- if (raw & MXR_ALARM_PFC_ABNORMAL) flags |= CHG_LIB_ALARM_HW_FAULT;
+ if (raw & MXR_ALARM_PFC_ABNORMAL) flags |= CHG_LIB_ALARM_PFC_FAULT;
  if (raw & MXR_ALARM_AC_OV) flags |= CHG_LIB_ALARM_AC_OVER_VOLT;
  if (raw & MXR_ALARM_AC_UNDERVOLTAGE) flags |= CHG_LIB_ALARM_AC_UNDER_VOLT;
  if (raw & MXR_ALARM_CAN_FAILURE) flags |= CHG_LIB_ALARM_COMM_FAIL;
@@ -478,7 +478,7 @@ static void apply_response(MXR_Internal_t *m, const uint8_t *data, uint32_t now)
  /* Critical alarm -> stop ngay (BUGFIX: previously gated on state==RUNNING,
   * so a critical alarm reported while STARTING/WARNING/STOPPING was silently
   * ignored -- matches Lianming's unconditional pattern, see AUDIT B-04). */
- if (m->view.alarm_flags != CHG_LIB_ALARM_NONE && m->view.state != CHG_LIB_STATE_FAULT) {
+ if (CHG_LIB_ALARM_HAS_PROTECTION(m->view.alarm_flags) && m->view.state != CHG_LIB_STATE_FAULT) {
  set_state(m, CHG_LIB_STATE_FAULT, now);
  send_set_u32(m, CHG_LIB_REG_ON_OFF, MXR_CMD_STOP);
  }

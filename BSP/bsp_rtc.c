@@ -3,6 +3,7 @@
  * @brief   BSP layer for STM32G0 internal RTC (Real-Time Clock).
  */
 #include "bsp_rtc.h"
+#include "debug_log.h"
 #include "stm32g0xx_hal.h"
 #include <stdio.h>
 #include <string.h>
@@ -118,7 +119,12 @@ bool BSP_RTC_Init(void)
         return false;
     }
 
-    /* 4. Enable RTC peripheral clock */
+    /* 4. Enable both the RTC calendar clock and its APB register interface.
+     * RTCEN clocks the backup-domain calendar; RTCAPB is required for CPU
+     * register access. Without RTCAPB, HAL_RTC_Init() may appear successful
+     * when the calendar is already initialized, but SET_RTC cannot enter
+     * initialization mode and times out waiting for INITF. */
+    __HAL_RCC_RTCAPB_CLK_ENABLE();
     __HAL_RCC_RTC_ENABLE();
 
     /* 5. Initialize RTC handle */
@@ -133,16 +139,24 @@ bool BSP_RTC_Init(void)
     s_hrtc.Init.OutPutType = RTC_OUTPUT_TYPE_OPENDRAIN;
     s_hrtc.Init.OutPutPullUp = RTC_OUTPUT_PULLUP_NONE;
 
-    /* Check if already initialized in backup register */
+    /* Re-initialize the HAL handle on every MCU boot. The RTC calendar and
+     * backup domain may survive a reset, but s_hrtc (including its HAL state,
+     * lock and MSP bookkeeping) lives in cleared RAM. Skipping HAL_RTC_Init()
+     * when the backup marker is valid leaves a fresh handle uninitialized and
+     * can make a later SET_RTC fail. HAL_RTC_Init() preserves an already
+     * initialized calendar. */
+    if (HAL_RTC_Init(&s_hrtc) != HAL_OK) {
+        return false;
+    }
+
+    /* Check if the calendar was previously synchronized. */
     uint32_t bkp = HAL_RTCEx_BKUPRead(&s_hrtc, RTC_BKP_DR0);
+    LOG("BSP_RTC: backup marker=0x%08lX (%s)\r\n",
+        (unsigned long)bkp,
+        (bkp == BSP_RTC_MAGIC_VALID) ? "valid" : "invalid");
     if (bkp == BSP_RTC_MAGIC_VALID) {
         s_time_valid = true;
     } else {
-        /* Cold boot / uninitialized: initialize RTC hardware */
-        if (HAL_RTC_Init(&s_hrtc) != HAL_OK) {
-            return false;
-        }
-
         /* Set default date 2026-01-01 00:00:00 */
         BSP_RTC_DateTime_t dt_def = {
             .year = 2026U, .month = 1U, .day = 1U,
@@ -181,7 +195,10 @@ bool BSP_RTC_SetDateTime(const BSP_RTC_DateTime_t *dt)
     sTime.DayLightSaving = RTC_DAYLIGHTSAVING_NONE;
     sTime.StoreOperation = RTC_STOREOPERATION_RESET;
 
-    if (HAL_RTC_SetTime(&s_hrtc, &sTime, RTC_FORMAT_BIN) != HAL_OK) {
+    HAL_StatusTypeDef hal_status = HAL_RTC_SetTime(&s_hrtc, &sTime, RTC_FORMAT_BIN);
+    if (hal_status != HAL_OK) {
+        LOG("RTC: HAL_RTC_SetTime failed (status=%u state=%u)\r\n",
+            (unsigned)hal_status, (unsigned)HAL_RTC_GetState(&s_hrtc));
         return false;
     }
 
@@ -190,7 +207,10 @@ bool BSP_RTC_SetDateTime(const BSP_RTC_DateTime_t *dt)
     sDate.Date = dt->day;
     sDate.Year = (uint8_t)((dt->year >= 2000U) ? (dt->year - 2000U) : 0U);
 
-    if (HAL_RTC_SetDate(&s_hrtc, &sDate, RTC_FORMAT_BIN) != HAL_OK) {
+    hal_status = HAL_RTC_SetDate(&s_hrtc, &sDate, RTC_FORMAT_BIN);
+    if (hal_status != HAL_OK) {
+        LOG("RTC: HAL_RTC_SetDate failed (status=%u state=%u)\r\n",
+            (unsigned)hal_status, (unsigned)HAL_RTC_GetState(&s_hrtc));
         return false;
     }
 

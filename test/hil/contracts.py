@@ -58,6 +58,8 @@ class Snapshot:
     dwin_button: Optional[int] = None
     dwin_code: Optional[str] = None
     dwin_soc: Optional[int] = None
+    dwin_soc_text: Optional[str] = None
+    dwin_soc_color: Optional[int] = None
     extras: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -79,4 +81,3 @@ class ScenarioResult:
     observed: Dict[str, Any] = field(default_factory=dict)
     events: List[str] = field(default_factory=list)
     error: Optional[str] = None
-

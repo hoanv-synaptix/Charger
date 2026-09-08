@@ -6,10 +6,10 @@
  *   - BMS-reported   (mirror of BMS_ALARM_* bits from BMS_View_t)
  *   - module-reported (mirror of CHG_LIB_ALARM_* bits, aggregated over modules)
  *   - controller      (mirror of CHARGE_CTRL_FAULT_* -- report/log only)
- *   - DERIVED         faults nothing else detects: lost BMS link mid-charge,
- *                     pack disconnected, sudden DC load loss (hot unplug /
- *                     external contactor drop-out), DC circuit never closing,
- *                     AC phase loss, AC undervoltage.
+ *   - controller-derived  safety decisions from valid telemetry (E022);
+ *   - station-policy-derived decisions from a module CAN alarm (E026);
+ *   - connection-derived alarms from communication timeout (E021/W010);
+ *   - data-quality status is not represented in this alarm space.
  *
  * Pure policy (AGENTS.md sec 5-6): no BSP/HAL/main.h, the tick is passed in.
  * Runs once per 20 ms control tick from App_Loop, right after
@@ -70,17 +70,19 @@ typedef enum {
     ALARM_CTRL_JACK_OVER_TEMP,
     ALARM_CTRL_EMERGENCY_STOP,
 
-    /* --- derived / station-level (detected here, nowhere else) --- */
-    ALARM_BMS_COMM_LOST,            /* RUNNING + BMS mode + BMS link gone      */
-    ALARM_BMS_NO_PACK_VOLTAGE,      /* BMS online but pack voltage ~ 0         */
+    /* --- controller/station decisions; inputs remain explicit below --- */
+    ALARM_BMS_COMM_LOST,            /* connection-derived: BMS timeout         */
+    ALARM_BMS_NO_PACK_VOLTAGE,      /* BMS telemetry CAN -> controller E022   */
     ALARM_DC_LOAD_LOST,             /* current collapsed while commanded high  */
     ALARM_DC_OUT_NOT_ESTABLISHED,   /* relay closed, no current within window  */
-    ALARM_AC_PHASE_LOSS,            /* one input phase lost                    */
-    ALARM_AC_UNDERVOLT,             /* all input phases low                    */
+    ALARM_AC_PHASE_LOSS,            /* module CAN phase-loss flag               */
+    ALARM_AC_UNDERVOLT,             /* module W011 CAN -> station policy E026  */
 
     /* Appended to preserve existing active_mask bit positions. */
     ALARM_MOD_FAN_FAULT,
     ALARM_MOD_AC_OVER_VOLT,
+    ALARM_MOD_OUTPUT_UNDER_VOLT,
+    ALARM_MOD_OUTPUT_OVER_VOLT_WARN,
 
     ALARM_CODE_COUNT
 } AlarmCode_t;

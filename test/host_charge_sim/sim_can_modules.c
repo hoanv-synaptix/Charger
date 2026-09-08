@@ -359,7 +359,10 @@ static void sim_tonhe_tick(uint32_t now_tick)
     }
 
     uint8_t status = g_sim_module.actually_on ? TONHE_STATUS_ON : TONHE_STATUS_NORMAL_OFF;
-    if (g_sim_module.tonhe_fault_bits != 0 || g_sim_module.tonhe_pfc_bits != 0) {
+    /* TonHe bits 12/13 are warnings and do not turn the module off. */
+    const uint16_t tonhe_protection_bits =
+        (uint16_t)(g_sim_module.tonhe_fault_bits & (uint16_t)~((1U << 12) | (1U << 13)));
+    if (tonhe_protection_bits != 0U || g_sim_module.tonhe_pfc_bits != 0U) {
         status = 0x11U; /* TONHE_STATUS_FAULT_OFF */
     }
 

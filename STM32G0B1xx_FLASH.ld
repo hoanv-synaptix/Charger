@@ -56,7 +56,9 @@ ENTRY(Reset_Handler)
 MEMORY
 {
 RAM (xrw)      : ORIGIN = 0x20000000, LENGTH = 144K
-FLASH (rx)      : ORIGIN = 0x8000000, LENGTH = 128K
+/* Pages 59..63 are reserved for persistent data:
+ * energy journal (59..62) and charge config (63). */
+FLASH (rx)      : ORIGIN = 0x8000000, LENGTH = 118K
 }
 
 /* Highest address of the user mode stack */

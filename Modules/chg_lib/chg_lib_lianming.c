@@ -168,12 +168,11 @@ static CHG_LIB_AlarmFlag_t parse_lianming_alarm(uint16_t raw_alarm)
     if (raw_alarm & (1U << 4)) flags |= CHG_LIB_ALARM_AC_OVER_VOLT;      /* Input overvoltage */
     if (raw_alarm & (1U << 5)) flags |= CHG_LIB_ALARM_AC_UNDER_VOLT;    /* Input under-voltage */
     if (raw_alarm & (1U << 6)) flags |= CHG_LIB_ALARM_OVER_VOLTAGE_OUT; /* Output overvoltage */
-    if (raw_alarm & (1U << 7)) flags |= CHG_LIB_ALARM_HW_FAULT;         /* Output under-voltage */
+    if (raw_alarm & (1U << 7)) flags |= CHG_LIB_ALARM_OUTPUT_UNDER_VOLT; /* Output under-voltage */
     
-    /* Byte 6 bits: PDF specifies bit0 (word bit 8) = Overcurrent, bit1 (word bit 9) = Over-temp.
-     * Support both bits 8/9 and legacy bits 13/14 for compatibility. */
-    if (raw_alarm & ((1U << 8) | (1U << 13))) flags |= CHG_LIB_ALARM_OVER_CURR_OUT;
-    if (raw_alarm & ((1U << 9) | (1U << 14))) flags |= CHG_LIB_ALARM_OVER_TEMP;
+    /* Byte 6 bits: PDF bit0 (word bit 8) = Overcurrent, bit1 (word bit 9) = Over-temp. */
+    if (raw_alarm & (1U << 8)) flags |= CHG_LIB_ALARM_OVER_CURR_OUT;
+    if (raw_alarm & (1U << 9)) flags |= CHG_LIB_ALARM_OVER_TEMP;
     
     return flags;
 }
@@ -437,7 +436,7 @@ static uint8_t find_by_addr(uint8_t addr)
 static void sync_state_from_flags(LM_Module_t *mod, uint32_t now)
 {
     bool reported_running = mod->view.running;
-    bool fault = mod->view.alarm_flags != CHG_LIB_ALARM_NONE;
+    bool fault = CHG_LIB_ALARM_HAS_PROTECTION(mod->view.alarm_flags);
     bool recovering = (mod->view.state == CHG_LIB_STATE_RECOVERING);
     CHG_LIB_State_t new_state = lm_state_from_flags(mod, fault, recovering);
     set_state(mod, new_state, now);
@@ -476,7 +475,7 @@ static void apply_status(uint8_t idx, const uint8_t *data, uint32_t now)
     mod->view.last_rx_tick = now;
     mod->view.stats.rx_count++;
 
-    if (mod->view.alarm_flags != CHG_LIB_ALARM_NONE) {
+    if (CHG_LIB_ALARM_HAS_PROTECTION(mod->view.alarm_flags)) {
         set_state(mod, CHG_LIB_STATE_FAULT, now);
         return;
     }

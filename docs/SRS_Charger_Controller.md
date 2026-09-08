@@ -213,7 +213,7 @@ Quy ước độ ưu tiên: **M** = Must, **S** = Should, **C** = Could.
 | FR-BMS-01 | Parse toàn bộ frame BMS (mục 4.3), cache `BMS_Data_t`, quy đổi raw → vật lý | M |
 | FR-BMS-02 | Frame lạ / sai DLC không được refresh watchdog kết nối | M |
 | FR-BMS-03 | ≥5s không có frame hợp lệ → OFFLINE + xóa cache | M |
-| FR-BMS-04 | ≥2s → cờ STALE_DATA (cảnh báo, không ngắt kết nối) | S |
+| FR-BMS-04 | ≥2s → trạng thái data-quality `BMS_IsDataStale()` (cảnh báo mềm, không phải alarm/DWIN, không ngắt kết nối) | S |
 | FR-BMS-05 | Alarm critical → FAULT; tự hồi phục khi alarm xóa + dữ liệu tươi | M |
 | FR-BMS-06 | Gửi Ctrl_INFO 500ms (mask charge/discharge) | M |
 | FR-BMS-07 | Snapshot `BMS_View_t` (copy struct, đọc mọi lúc) | M |
@@ -415,21 +415,29 @@ Frame RX được feed tới driver đang active qua `CHG_LIB_FeedCanFrame()`.
   | VP | Ý nghĩa | Định dạng |
   |---|---|---|
   | `0x0084` | chuyển trang (`5A01` + page id) | 0=logo 1=dash 2=setting 3=alarm |
-  | `0x1000/1/2` | DC V / I / P (đo thực tế từ module — `sum.voltage`/`sum.total_current`, giống app PC) | u16 0.1V / 0.1A / 1W |
-  | `0x1010/1` | pack V / cell V | u16 0.1V / 0.01V |
-  | `0x1012` | charged Ah | u32 (0x1012–13) 0.1Ah — *Phase 2, hiện gửi 0* |
-  | `0x1020/1/2` | AC L1/L2/L3 | u16 1V |
-  | `0x1030/1/2` | temp: battery (BMS max cell) / charge (module DC-DC max, CAN) / jack (max 4 NTC PA0–3) | i16 signed 0.1°C (270 = 27.0; không đo được → 0) |
-  | `0x1040` | SOC | u16 0–100% |
+  | `0x1000..0x1003` | DC voltage | Text Display, 8 bytes / 4 VP, ví dụ `521.0`; đơn vị do DWIN vẽ; không có module → `---` |
+  | `0x1004..0x1007` | DC current | Text Display, 8 bytes / 4 VP, ví dụ `12.0`; đơn vị do DWIN vẽ; không có module → `---` |
+  | `0x1008..0x100B` | DC power | Text Display, 8 bytes / 4 VP, ví dụ `6.3`; đơn vị do DWIN vẽ; không có module → `---` |
+  | `0x1010..0x1013` | BMS pack V | Text Display, 8 bytes / 4 VP, chỉ gửi value; BMS offline → `---` |
+  | `0x1014..0x1017` | BMS cell V | Text Display, 8 bytes / 4 VP, chỉ gửi value; BMS offline → `---` |
+  | `0x1018..0x101B` | BMS Ah | Text Display, 8 bytes / 4 VP, chỉ gửi value; BMS offline → `---` |
+  | `0x1020..0x1023` | AC L1 | Text Display, 8 bytes / 4 VP, chỉ gửi value; module offline/field invalid → `---` |
+  | `0x1024..0x1027` | AC L2 | Text Display, 8 bytes / 4 VP, chỉ gửi value; module offline/field invalid → `---` |
+  | `0x1028..0x102B` | AC L3 | Text Display, 8 bytes / 4 VP, chỉ gửi value; module offline/field invalid → `---` |
+  | `0x1030..0x1033` | temperature battery | Text Display, 8 bytes / 4 VP, chỉ gửi value; BMS offline/field invalid → `---` |
+  | `0x1034..0x1037` | temperature charge | Text Display, 8 bytes / 4 VP, chỉ gửi value; module offline/field invalid → `---` |
+  | `0x1038..0x103B` | temperature jack | Text Display, 8 bytes / 4 VP, chỉ gửi value; ADC invalid → `---` |
   | `0x1041` | status icon | 0 READY 1 STARTING 2 CHARGING 3 COMPLETE 4 ERROR 5 OFFLINE |
   | `0x1042` | nhãn nút (MCU→panel) | 0 START 1 STOP 2 RESET 3 DISABLED — VAR Icon |
   | `0x1043` | nút chạm (panel→MCU) | Return-Key-Code upload khi nhấn; MCU không ghi VP này |
+  | `0x1048..0x104B` | SOC | Text Display, 8 bytes / 4 VP; BMS online ví dụ `50%`, offline → `--%` |
+  | `0x8003` | SOC Text Color | SP `0x8000` + 3 WORD; RGB565: unavailable `0x8410`, critical `0xF800`, low `0xFD20`, medium `0xFFE0`, normal `0x07E0` |
   | `0x1100/1108/1110` | HW ver / FW ver / Device ID | ASCII 8 VP / 16 ký tự |
   | `0x1118` | uptime | u32 (0x1118–19) giây |
   | `0x009C` | RTC set | *chưa dùng — panel tự giữ giờ* |
   | `0x1200+` | bảng Alarm (20 VP/dòng ×5) | *Phase 2* |
 
-- MCU → DWIN: `A5 5A [len] 82 [VP_hi] [VP_lo] [word...]` — `DWIN_SendWords()` / `DWIN_SendString()` / `DWIN_SetPage()`; scatter 1 nhóm/50ms trong `DWIN_UpdateData()`, chỉ gửi trường nào đổi giá trị + full re-send mỗi 5s (`DWIN_ForceFullRefresh()`, để panel boot muộn / reboot bắt kịp); trường không đo được (NTC rớt, BMS offline) → 0.
+- MCU → DWIN: `A5 5A [len] 82 [VP_hi] [VP_lo] [payload...]` — `DWIN_SendWords()` / `DWIN_SendString()` / `DWIN_SetPage()`; scatter 1 nhóm/50ms trong `DWIN_UpdateData()`, chỉ gửi trường nào đổi giá trị + full re-send mỗi 5s (`DWIN_ForceFullRefresh()`, để panel boot muộn / reboot bắt kịp). Text Display dùng ASCII-compatible GBK; `DWIN_SendString()` ghi đủ độ dài field và padding `0x00`. Mỗi field 8 byte có 4 VP; `LEN = 3 + payload_bytes`. Dữ liệu chưa có hoặc không hợp lệ → `---`, không dùng `0` làm giá trị thay thế.
 - DWIN → MCU: `A5 5A 06 83 10 42 01 [val_hi] [val_lo]` khi nhấn nút → `DWIN_OnActionButton()` (val ≠ 0), sau đó MCU ghi `0x1042 = 0`.
 - RX ring-buffer 128 byte, drain `BSP_RS485_Read()`; `DWIN_ParseRX()` byte-wise có resync + chặn LEN quá cỡ.
 
@@ -521,6 +529,22 @@ FW version, driver id, module counts, charging, controller state/derating/inhibi
 - Record `{u32 magic=0x43434647, u16 ver=1, u16 len=235, u32 crc32, payload[235]}`, align 8
 - Append vào offset trống; đầy → erase → ghi offset 0; read-back verify
 - CRC32 poly 0xEDB88320 reflected, init/final XOR 0xFFFFFFFF
+
+### 6.7.1 Flash layout bộ đếm năng lượng
+
+- Trang 59--62 (`0x0801D800..0x0801F7FF`) dành riêng cho journal tổng điện năng.
+- Mỗi record 32 byte: magic, version, length, sequence, `total_charged_ah_x1000`, `total_energy_kwh_x1000`, CRC32.
+- Ghi checkpoint mỗi 5 phút khi charging và ghi ngay khi phiên sạc kết thúc bình thường.
+- Journal chạy vòng tròn qua 4 page; record CRC lỗi hoặc ghi dở bị bỏ qua.
+- Uptime không được dùng làm dữ liệu tích lũy; DWIN chỉ đọc giá trị đã khôi phục từ counter RAM.
+- PC command `0x1F` reset counter, chỉ được xử lý khi payload rỗng và phải trả ACK/ERROR.
+
+### 6.7.2 RTC và nguồn dự phòng
+
+- RTC dùng calendar phần cứng STM32 với LSI; firmware lưu marker hợp lệ trong backup register.
+- RTC giữ được thời gian qua reset hoặc mất VDD chỉ khi backup domain còn nguồn VBAT.
+- Khi mất cả VDD và VBAT, RTC được đánh dấu invalid và không hiển thị thời gian giả.
+- PC đồng bộ bằng `SET_RTC` với Unix epoch UTC; firmware chuyển sang UTC+7 trước khi ghi RTC.
 
 ### 6.8 Bố cục phần mềm
 

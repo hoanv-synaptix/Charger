@@ -7,6 +7,7 @@
 #include "usbd_cdc_if.h"
 #include "charge_cycle_config.h"
 #include "charge_cycle_storage.h"
+#include "charge_energy_storage.h"
 
 void LOG(const char *fmt, ...)
 {
@@ -18,6 +19,10 @@ void LOG(const char *fmt, ...)
 
 void LOG_Banner(void) {}
 void LOG_TxCpltCallback(void) {}
+
+/* The PC protocol host test exercises command dispatch but not the target
+ * flash journal implementation. Keep its storage boundary deterministic. */
+bool ChargeEnergyStorage_Reset(void) { return true; }
 
 /* Spy on the last-transmitted frame per extended CAN ID, across both
  * buses -- lets a test assert on frame *content* (e.g. Ctrl_INFO's chg_sw

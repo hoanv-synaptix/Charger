@@ -17,9 +17,12 @@ class ClosedLoopBackend(Protocol):
     def preflight(self) -> None: ...
     def reset(self) -> None: ...
     def configure(self, payload: bytes) -> None: ...
+    def pc_start(self) -> None: ...
+    def pc_stop(self) -> None: ...
     def dwin_touch(self, key: int) -> None: ...
     def inject_bms(self, **values) -> None: ...
     def inject_module(self, **values) -> None: ...
+    def set_sources_online(self, bms: bool, module: bool) -> None: ...
     def observe(self) -> Observation: ...
     def close(self) -> None: ...
 
@@ -45,6 +48,8 @@ class DryRunBackend:
     bms_soc: int = 82
     module_voltage: float = 0.0
     module_current: float = 0.0
+    bms_online: bool = True
+    module_online: bool = True
     _usb: List[UsbFrame] = None
     _can: List[CanFrame] = None
     _dwin: List[DwinFrame] = None
@@ -68,12 +73,34 @@ class DryRunBackend:
         self.bms_soc = 82
         self.module_voltage = 0.0
         self.module_current = 0.0
+        self.bms_online = True
+        self.module_online = True
+
+    def set_sources_online(self, bms: bool, module: bool) -> None:
+        self.bms_online = bool(bms)
+        self.module_online = bool(module)
 
     def configure(self, payload: bytes) -> None:
         if len(payload) == 0:
             raise TransportError("empty configuration")
         self.configured = True
         self._usb.append(UsbFrame(_now_ms(), 0x82, b"\x09", "rx"))
+
+    def pc_start(self) -> None:
+        if not self.configured or not self.bms_online or not self.module_online:
+            raise TransportError("dry-run PC START precondition failed")
+        self.running = True
+        self.dwin_status = 2
+        self.dwin_button = 1
+        self._can.append(CanFrame(_now_ms(), 0, 0, b"START", True, "tx"))
+
+    def pc_stop(self) -> None:
+        was_running = self.running
+        self.running = False
+        self.dwin_status = 0
+        self.dwin_button = 0
+        if was_running:
+            self._can.append(CanFrame(_now_ms(), 0, 0, b"STOP", True, "tx"))
 
     def dwin_touch(self, key: int) -> None:
         now = _now_ms()
@@ -106,6 +133,8 @@ class DryRunBackend:
             self.dwin_status = 4
             self.dwin_button = 2
             self._dwin.append(DwinFrame(_now_ms(), 0x82, 0x1044, b"E004", "rx"))
+        if "soc" in values and not 0 <= self.bms_soc <= 100:
+            self.bms_online = True
 
     def inject_module(self, **values) -> None:
         if "voltage" in values:
@@ -120,20 +149,34 @@ class DryRunBackend:
             self._dwin.append(DwinFrame(_now_ms(), 0x82, 0x1044, b"E026", "rx"))
 
     def observe(self) -> Observation:
+        soc_text = "--%"
+        soc_color = 0x8410
+        if self.bms_online and 0 <= self.bms_soc <= 100:
+            soc_text = f"{self.bms_soc}%"
+            if self.bms_soc <= 10:
+                soc_color = 0xF800
+            elif self.bms_soc <= 30:
+                soc_color = 0xFD20
+            elif self.bms_soc <= 60:
+                soc_color = 0xFFE0
+            else:
+                soc_color = 0x07E0
         snap = Snapshot(
             controller_state=("FAULT" if self.fault else
                               ("COMPLETE" if self.dwin_status == 3 else
                                ("RUNNING" if self.running else "READY"))),
             stop_reason="BMS_ALARM" if self.fault else None,
             fault_flags=1 if self.fault else 0,
-            bms_state="ONLINE",
-            bms_soc=self.bms_soc,
-            modules_online=1,
+            bms_state="ONLINE" if self.bms_online else "OFFLINE",
+            bms_soc=self.bms_soc if self.bms_online else None,
+            modules_online=1 if self.module_online else 0,
             module_state="FAULT" if self.fault else ("RUNNING" if self.running else "IDLE"),
-            module_voltage=self.module_voltage,
-            module_current=self.module_current,
+            module_voltage=self.module_voltage if self.module_online else None,
+            module_current=self.module_current if self.module_online else None,
             dwin_status=self.dwin_status,
             dwin_button=self.dwin_button,
+            dwin_soc_text=soc_text,
+            dwin_soc_color=soc_color,
         )
         return Observation(list(self._usb), list(self._can), list(self._dwin), snap)
 

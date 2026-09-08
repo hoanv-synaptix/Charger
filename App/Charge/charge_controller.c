@@ -1281,7 +1281,7 @@ static void run_bms_controlled_mode(uint32_t now_tick) {
         return;
     }
 
-    if (bms.alarm_flags & BMS_ALARM_STALE_DATA) {
+    if (BMS_IsDataStale()) {
         /* Stale data is a soft warning — keep running with last known targets.
          * Only log once to avoid spamming debug output. */
         if (!g_ctrl.bms_stale_warned) {

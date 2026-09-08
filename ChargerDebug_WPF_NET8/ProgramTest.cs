@@ -123,14 +123,21 @@ namespace ChargerDebugApp
                 Running = true,
                 Voltage = 54.3f,
                 Current = 12.5f,
+                RatedPower = 10000.0f,
+                RatedCurrent = 100.0f,
                 TempDcdc = 42.1f,
                 AcPhaseAVoltage = 221.5f,
                 PfcBusPosVoltage = 398.0f
             });
             vm.Modules.Add(mod);
-            vm.SelectedModule = mod;
 
-            if (vm.SelVoltage != "54.30" || vm.SelCurrent != "12.50" || vm.SelDriver != "Maxwell" ||
+            // The window-level ALL_MODULES handler selects the first module
+            // automatically. Keep this ViewModel test focused on telemetry;
+            // selection behavior is covered by the handler contract.
+            vm.SelectedModule = vm.Modules[0];
+
+            if (vm.SelVoltage != "54.30" || vm.SelCurrent != "12.50" || vm.SelRatedPower != "10000" ||
+                vm.SelRatedCurrent != "100.0" || vm.SelDriver != "Maxwell" ||
                 vm.SelAcPhaseA != "221.5" || vm.SelPfcPos != "398.0")
             {
                 throw new Exception($"Selected module telemetry test failed! Got Voltage={vm.SelVoltage}, Driver={vm.SelDriver}");

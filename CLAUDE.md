@@ -143,7 +143,7 @@ them out explicitly because they're easy to violate without noticing:
   ISR/main-loop races. Keep sections surgically short (see the LOG warning
   above).
 - **BMS staleness is informational-only by explicit product decision.**
-  `BMS_ALARM_STALE_DATA` does not gate the charge relay and does not clear
+  `BMS_IsDataStale()` does not gate the charge relay and does not clear
   `BmsView` telemetry fields — the view keeps the last known values, which
   is what lets `charge_controller.c` "coast" on old targets without extra
   freeze logic. Do not change this without asking — it was a deliberate,

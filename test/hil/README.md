@@ -30,3 +30,11 @@ Each run writes a timestamped directory under `test/artifacts/` containing:
 
 Hardware runs must fail preflight if any required USB, ZCAN or DWIN endpoint is
 missing. A missing DWIN sniffer is never treated as a pass.
+
+The ZCAN suite covers boot without CAN, BMS/module telemetry, start/stop,
+completion, BMS/module fault paths, SOC text/color boundaries, BMS offline and
+module offline. It observes the real USB and DWIN endpoints; missing observation
+is reported as blocked or failed, never as a successful assertion.
+
+The existing standalone simulator can still be launched from the repository
+root with `run_zcan_auto_test.bat` or `run_zcan_hil_sim.bat`.
