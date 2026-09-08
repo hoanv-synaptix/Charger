@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Text;
 using System.Text.Json;
@@ -8,11 +8,11 @@ namespace ChargerDebugApp.Protocol
 {
     public class ChargeCycleConfig
     {
-        public const int EXPECTED_BINARY_SIZE = 235;
+        public const int EXPECTED_BINARY_SIZE = 239;
 
         // 1. Version
         [JsonPropertyName("version")]
-        public ushort Version { get; set; } = 4;
+        public ushort Version { get; set; } = 5;
 
         // 2. General Limits (10 floats = 40 bytes)
         [JsonPropertyName("battery_capacity_ah")]
@@ -173,6 +173,9 @@ namespace ChargerDebugApp.Protocol
         [JsonPropertyName("protect_jack_temp_power_limit_pct")]
         public float ProtectJackTempPowerLimitPct { get; set; } = 50.0f;
 
+        [JsonPropertyName("protect_jack_temp_trip_c")]
+        public float ProtectJackTempTripC { get; set; } = 75.0f;
+
         // 8. System & Module Hardware (1 + 1 + 1 + 1 + 4*4 = 20 bytes)
         [JsonPropertyName("charge_source_mode")]
         public byte ChargeSourceMode { get; set; } = 0; // 0=BMS, 1=No BMS
@@ -274,12 +277,13 @@ namespace ChargerDebugApp.Protocol
             writer.Write(ProtectJackChargeDeltaV);
             writer.Write(ProtectJackChargeDelayS);
 
-            // Jack Temp Protect (15)
+            // Jack Temp Protect (19)
             writer.Write((byte)(ProtectJackTempEnabled ? 1 : 0));
             writer.Write(ProtectJackTempDelayS);
             writer.Write(ProtectJackTempThresholdC);
             writer.Write(ProtectJackTempDeltaC);
             writer.Write(ProtectJackTempPowerLimitPct);
+            writer.Write(ProtectJackTempTripC);
 
             // Hardware / Module (20)
             writer.Write(ChargeSourceMode);
@@ -381,6 +385,7 @@ namespace ChargerDebugApp.Protocol
                 ProtectJackTempThresholdC = reader.ReadSingle(),
                 ProtectJackTempDeltaC = reader.ReadSingle(),
                 ProtectJackTempPowerLimitPct = reader.ReadSingle(),
+                ProtectJackTempTripC = reader.ReadSingle(),
 
                 ChargeSourceMode = reader.ReadByte(),
                 CanBatteryId = reader.ReadByte(),

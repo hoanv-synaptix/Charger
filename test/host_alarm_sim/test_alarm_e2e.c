@@ -21,6 +21,7 @@
 #include "charge_cycle_config.h"
 #include "charge_controller.h"
 #include "alarm.h"
+#include "dwin_alarm_text.h"
 
 #include "sim_can_modules.h"
 #include "sim_bms.h"
@@ -169,6 +170,41 @@ static bool test_happy_path_no_alarm(void)
     ASSERT(v.active_count == 0, "no alarm expected on happy path");
     ASSERT(v.highest_action == ALARM_ACT_INFO, "no action expected");
     printf("[PASS] test_happy_path_no_alarm\n");
+    return true;
+}
+
+static bool test_module_specific_alarms_and_dwin_text(void)
+{
+    printf("Running test_module_specific_alarms_and_dwin_text...\n");
+    ASSERT(strcmp(DWIN_Alarm_GetCodeString(ALARM_MOD_FAN_FAULT), "E016") == 0,
+           "fan fault must map to E016");
+    ASSERT(strcmp(DWIN_Alarm_GetCodeString(ALARM_MOD_AC_OVER_VOLT), "E017") == 0,
+           "AC input overvoltage must map to E017");
+
+    uint8_t desc_len = 0U;
+    ASSERT(DWIN_Alarm_GetDescUtf16(ALARM_MOD_FAN_FAULT, &desc_len) != NULL && desc_len > 0U,
+           "fan fault description must be available");
+    ASSERT(DWIN_Alarm_GetDescUtf16(ALARM_MOD_AC_OVER_VOLT, &desc_len) != NULL && desc_len > 0U,
+           "AC input overvoltage description must be available");
+
+    ASSERT(setup(NULL), "setup");
+    healthy_bms(400.0f);
+    ASSERT(start_running(), "controller never RUNNING");
+    g_sim_module.tonhe_fault_bits = (1U << 6);
+    drive_ms(800U);
+    ASSERT(alarm_active(ALARM_MOD_FAN_FAULT), "fan fault unified alarm not active");
+
+    ASSERT(setup(NULL), "setup");
+    healthy_bms(400.0f);
+    ASSERT(start_running(), "controller never RUNNING");
+    g_sim_module.tonhe_fault_bits = (1U << 2);
+    drive_ms(800U);
+    ASSERT(alarm_active(ALARM_MOD_AC_OVER_VOLT), "AC input overvoltage unified alarm not active");
+
+    AlarmView_t view;
+    Alarm_GetView(&view);
+    ASSERT(view.highest_action == ALARM_ACT_STOP, "new module alarms must request STOP");
+    printf("[PASS] test_module_specific_alarms_and_dwin_text\n");
     return true;
 }
 
@@ -334,10 +370,38 @@ static bool test_acknowledge_clears_latched(void)
     return true;
 }
 
+static bool test_start_with_no_module_or_bms_reports_fault_code(void)
+{
+    printf("Running test_start_with_no_module_or_bms_reports_fault_code...\n");
+    ASSERT(setup(NULL), "setup");
+    /* Do NOT send BMS or module frames (offline / none connected) */
+    bool started = ChargeController_Start(CHARGE_CTRL_OWNER_DWIN, false, mock_tick);
+    ASSERT(!started, "start should be refused when no modules/bms");
+
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_FAULT, "controller must transition to FAULT");
+
+    /* Step alarm processing with controller view */
+    drive_step(20U);
+
+    AlarmView_t av;
+    Alarm_GetView(&av);
+    ASSERT(av.active_count > 0, "active alarms must be > 0");
+    ASSERT(av.worst_code == ALARM_CTRL_NO_MODULE || av.worst_code == ALARM_BMS_COMM_LOST,
+           "worst_code must report NO_MODULE or BMS_COMM_LOST");
+    ASSERT(av.worst_code != ALARM_NONE, "worst_code must NOT be ALARM_NONE");
+
+    printf("[PASS] test_start_with_no_module_or_bms_reports_fault_code (worst_code=%u)\n",
+           (unsigned)av.worst_code);
+    return true;
+}
+
 int main(void)
 {
     bool ok = true;
     ok &= test_happy_path_no_alarm();
+    ok &= test_module_specific_alarms_and_dwin_text();
     ok &= test_cv_taper_no_false_load_lost();
     ok &= test_dc_load_lost_hot_unplug();
     ok &= test_dc_out_not_established();
@@ -346,6 +410,7 @@ int main(void)
     ok &= test_bms_critical_alarm_mirrored();
     ok &= test_module_ac_undervolt_mirrored_and_derived();
     ok &= test_acknowledge_clears_latched();
+    ok &= test_start_with_no_module_or_bms_reports_fault_code();
 
     if (ok) { printf("\nALL TESTS PASSED.\n"); return 0; }
     printf("\nSOME TESTS FAILED.\n");

@@ -49,13 +49,6 @@
  * open, or connector not seated). */
 #define ALARM_V_PACK_FLOOR_FRAC       0.5f
 
-/* AC input, per phase. FLOOR distinguishes "phase lost" from merely low;
- * EPS distinguishes "module not reporting AC" (leave alone) from a real 0 V. */
-#define ALARM_AC_PHASE_EPS_V          20.0f
-#define ALARM_AC_PHASE_FLOOR_V       150.0f
-#define ALARM_AC_PHASE_LOSS_FRAC      0.5f
-#define ALARM_AC_UNDERVOLT_V         170.0f
-
 /* Debounce windows */
 #define ALARM_DB_MIRROR_CLEAR_MS      200U   /* source is already debounced   */
 #define ALARM_DB_COMM_SET_MS          200U
@@ -178,8 +171,8 @@ static const AlarmSpec_t k_specs[] = {
     { ALARM_CTRL_NO_MODULE,       ALARM_ACT_INFO, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_ctrl, CHARGE_CTRL_FAULT_NO_MODULE,             "No charger module" },
     { ALARM_CTRL_MODULE_MISMATCH, ALARM_ACT_INFO, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_ctrl, CHARGE_CTRL_FAULT_MODULE_COUNT_MISMATCH, "Module count mismatch" },
     { ALARM_CTRL_INVALID_CONFIG,  ALARM_ACT_INFO, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_ctrl, CHARGE_CTRL_FAULT_INVALID_CONFIG,        "Invalid charge config" },
-    { ALARM_CTRL_JACK_OVER_V,     ALARM_ACT_INFO, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_ctrl, CHARGE_CTRL_FAULT_PROTECT_JACK_V,        "Connector over-voltage protect" },
-    { ALARM_CTRL_JACK_OVER_TEMP,  ALARM_ACT_INFO, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_ctrl, CHARGE_CTRL_FAULT_PROTECT_JACK_TEMP,     "Connector over-temp protect" },
+    { ALARM_CTRL_JACK_OVER_V,     ALARM_ACT_STOP, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_ctrl, CHARGE_CTRL_FAULT_PROTECT_JACK_V,        "Connector over-voltage protect" },
+    { ALARM_CTRL_JACK_OVER_TEMP,  ALARM_ACT_STOP, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_ctrl, CHARGE_CTRL_FAULT_PROTECT_JACK_TEMP,     "Connector over-temp protect" },
     { ALARM_CTRL_EMERGENCY_STOP,  ALARM_ACT_INFO, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_ctrl, CHARGE_CTRL_FAULT_EMERGENCY_STOP,        "Emergency stop" },
 
     /* --- derived / station-level --- */
@@ -189,6 +182,8 @@ static const AlarmSpec_t k_specs[] = {
     { ALARM_DC_OUT_NOT_ESTABLISHED, ALARM_ACT_STOP, true,  0,                       0,                        ev_dc_out_not_established, 0, "DC output not established" },
     { ALARM_AC_PHASE_LOSS,          ALARM_ACT_STOP, true,  ALARM_DB_AC_MS,          ALARM_DB_AC_MS,           ev_ac_phase_loss,          0, "AC input phase loss" },
     { ALARM_AC_UNDERVOLT,           ALARM_ACT_STOP, true,  ALARM_DB_AC_MS,          ALARM_DB_AC_MS,           ev_ac_undervolt,           0, "AC input under-voltage" },
+    { ALARM_MOD_FAN_FAULT,          ALARM_ACT_STOP, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_FAN_FAULT,    "Module fan fault" },
+    { ALARM_MOD_AC_OVER_VOLT,       ALARM_ACT_STOP, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_AC_OVER_VOLT, "Module AC input over-voltage" },
 };
 
 #define ALARM_SPEC_COUNT ((uint8_t)(sizeof(k_specs) / sizeof(k_specs[0])))
@@ -331,28 +326,12 @@ static void gather_inputs(uint32_t now, AlarmInputs_t *in) {
             (in->mod_voltage_min < 0.0f || mv.voltage < in->mod_voltage_min)) {
             in->mod_voltage_min = mv.voltage;
         }
-
-        /* AC phase analysis for this module */
-        float pa = mv.ac_phase_a_voltage, pb = mv.ac_phase_b_voltage, pc = mv.ac_phase_c_voltage;
-        float pmax = pa; if (pb > pmax) pmax = pb; if (pc > pmax) pmax = pc;
-        float pmin = pa; if (pb < pmin) pmin = pb; if (pc < pmin) pmin = pc;
-
-        if (isfinite(pmax) && pmax > ALARM_AC_PHASE_EPS_V) {
-            /* module is actually reporting AC -- worth judging */
-            if (pmin < (ALARM_AC_PHASE_LOSS_FRAC * pmax) &&
-                pmin < ALARM_AC_PHASE_FLOOR_V &&
-                pmax > ALARM_AC_PHASE_FLOOR_V) {
-                in->ac_phase_loss = true;
-            }
-            if (pa > ALARM_AC_PHASE_EPS_V && pa < ALARM_AC_UNDERVOLT_V &&
-                pb > ALARM_AC_PHASE_EPS_V && pb < ALARM_AC_UNDERVOLT_V &&
-                pc > ALARM_AC_PHASE_EPS_V && pc < ALARM_AC_UNDERVOLT_V) {
-                in->ac_undervolt = true;
-            }
-        }
     }
 
-    /* module's own AC-undervoltage bit is a fast path */
+    /* AC alarms: purely driven by module CAN alarm flags (no synthetic voltage inference) */
+    if (in->mod_alarm_or & CHG_LIB_ALARM_AC_PHASE_LOSS) {
+        in->ac_phase_loss = true;
+    }
     if (in->mod_alarm_or & CHG_LIB_ALARM_AC_UNDER_VOLT) {
         in->ac_undervolt = true;
     }
@@ -421,11 +400,33 @@ static void log_tally(uint32_t now, const AlarmEdgeTally_t *t) {
         (t->raised + t->cleared > 1U) ? " (+more)" : "");
 }
 
+static uint8_t alarm_severity(AlarmCode_t code, AlarmAction_t action) {
+    if (action == ALARM_ACT_ESTOP || code == ALARM_CTRL_EMERGENCY_STOP) {
+        return 4U;
+    }
+    if (action == ALARM_ACT_STOP) {
+        return 3U;
+    }
+    switch (code) {
+        case ALARM_CTRL_NO_MODULE:
+        case ALARM_CTRL_MODULE_MISMATCH:
+        case ALARM_CTRL_INVALID_CONFIG:
+        case ALARM_CTRL_JACK_OVER_V:
+        case ALARM_CTRL_JACK_OVER_TEMP:
+        case ALARM_BMS_COMM_LOST:
+            return 2U;
+        default:
+            return 1U;
+    }
+}
+
 static void aggregate_view(void) {
     AlarmView_t v;
     memset(&v, 0, sizeof(v));
     v.highest_action = ALARM_ACT_INFO;
     v.worst_code = ALARM_NONE;
+
+    uint8_t highest_sev = 0U;
 
     for (uint8_t i = 0; i < ALARM_SPEC_COUNT; i++) {
         const AlarmSpec_t *sp = &k_specs[i];
@@ -438,6 +439,11 @@ static void aggregate_view(void) {
 
         if (sp->action > v.highest_action) {
             v.highest_action = sp->action;
+        }
+
+        uint8_t sev = alarm_severity(sp->code, sp->action);
+        if (sev > highest_sev) {
+            highest_sev = sev;
             v.worst_code = sp->code;
         }
     }

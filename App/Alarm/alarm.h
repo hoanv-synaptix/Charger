@@ -78,6 +78,10 @@ typedef enum {
     ALARM_AC_PHASE_LOSS,            /* one input phase lost                    */
     ALARM_AC_UNDERVOLT,             /* all input phases low                    */
 
+    /* Appended to preserve existing active_mask bit positions. */
+    ALARM_MOD_FAN_FAULT,
+    ALARM_MOD_AC_OVER_VOLT,
+
     ALARM_CODE_COUNT
 } AlarmCode_t;
 

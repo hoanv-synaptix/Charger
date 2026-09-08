@@ -167,12 +167,12 @@ static CHG_LIB_AlarmFlag_t tonhe_parse_fault(uint16_t fault_bits, uint8_t pfc_bi
 
     /* Byte 6-7: Fault/Warning bits */
     if (fault_bits & (1U << 0)) flags |= CHG_LIB_ALARM_AC_UNDER_VOLT;      /* Input undervoltage */
-    if (fault_bits & (1U << 1)) flags |= CHG_LIB_ALARM_AC_UNDER_VOLT;      /* Input phase loss */
-    if (fault_bits & (1U << 2)) flags |= CHG_LIB_ALARM_OVER_VOLTAGE_OUT;    /* Input overvoltage */
+    if (fault_bits & (1U << 1)) flags |= CHG_LIB_ALARM_AC_PHASE_LOSS;      /* Input phase loss */
+    if (fault_bits & (1U << 2)) flags |= CHG_LIB_ALARM_AC_OVER_VOLT;       /* Input overvoltage */
     if (fault_bits & (1U << 3)) flags |= CHG_LIB_ALARM_OVER_VOLTAGE_OUT;    /* Output overvoltage */
     if (fault_bits & (1U << 4)) flags |= CHG_LIB_ALARM_OVER_CURR_OUT;      /* Output overcurrent */
     if (fault_bits & (1U << 5)) flags |= CHG_LIB_ALARM_OVER_TEMP;          /* Temperature high */
-    if (fault_bits & (1U << 6)) flags |= CHG_LIB_ALARM_HW_FAULT;           /* Fan fault */
+    if (fault_bits & (1U << 6)) flags |= CHG_LIB_ALARM_FAN_FAULT;          /* Fan fault */
     if (fault_bits & (1U << 7)) flags |= CHG_LIB_ALARM_HW_FAULT;           /* Hardware fault */
     if (fault_bits & (1U << 8)) flags |= CHG_LIB_ALARM_HW_FAULT;           /* Bus exception */
     if (fault_bits & (1U << 9)) flags |= CHG_LIB_ALARM_COMM_FAIL;          /* SCI communication */
@@ -189,8 +189,8 @@ static CHG_LIB_AlarmFlag_t tonhe_parse_fault(uint16_t fault_bits, uint8_t pfc_bi
     if (pfc_bits & (1U << 3)) flags |= CHG_LIB_ALARM_HW_FAULT;            /* DCTz fault */
     if (pfc_bits & (1U << 4)) flags |= CHG_LIB_ALARM_HW_FAULT;            /* Address conflict */
     if (pfc_bits & (1U << 5)) flags |= CHG_LIB_ALARM_PFC_IMBALANCE;       /* Bus bias */
-    if (pfc_bits & (1U << 6)) flags |= CHG_LIB_ALARM_HW_FAULT;           /* Phase exception */
-    if (pfc_bits & (1U << 7)) flags |= CHG_LIB_ALARM_PFC_OVERVOLT;      /* Bus overvoltage */
+    if (pfc_bits & (1U << 6)) flags |= CHG_LIB_ALARM_AC_PHASE_LOSS;       /* Phase exception */
+    if (pfc_bits & (1U << 7)) flags |= CHG_LIB_ALARM_PFC_OVERVOLT;        /* Bus overvoltage */
 
     return flags;
 }

@@ -13,19 +13,21 @@ namespace ChargerDebugApp
             Console.WriteLine("[TEST 1] Testing Default Config Binary Size...");
             var cfg = ChargeCycleConfig.CreateDefault();
             byte[] bytes = cfg.ToBytes();
-            if (bytes.Length != 235)
-                throw new Exception($"Binary size expected 235, got {bytes.Length}");
+            if (bytes.Length != 239)
+                throw new Exception($"Binary size expected 239, got {bytes.Length}");
             Console.WriteLine($"[PASS] Binary size is exactly {bytes.Length} bytes.");
 
             Console.WriteLine("[TEST 2] Testing Binary Round-Trip...");
             cfg.BatteryCapacityAh = 150.5f;
             cfg.VMaxV = 58.4f;
+            cfg.ProtectJackTempTripC = 78.5f;
             cfg.DeviceId = "TEST_DEVICE_01";
             cfg.HwRev = "REV_2.1";
             byte[] packed = cfg.ToBytes();
             var restored = ChargeCycleConfig.FromBytes(packed);
             if (Math.Abs(restored.BatteryCapacityAh - 150.5f) > 0.001f ||
                 Math.Abs(restored.VMaxV - 58.4f) > 0.001f ||
+                Math.Abs(restored.ProtectJackTempTripC - 78.5f) > 0.001f ||
                 restored.DeviceId != "TEST_DEVICE_01" ||
                 restored.HwRev != "REV_2.1")
             {

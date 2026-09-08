@@ -24,6 +24,8 @@
 #define DEBUG_CMD_SET_CHARGE_CFG  0x1A    /**< Write charge-cycle configuration */
 #define DEBUG_CMD_DWIN_XFER       0x1B    /**< (Debug build only) push raw bytes to the DWIN over RS485, then return RS485 RX captured since the previous call. Empty payload = poll-only. */
 #define DEBUG_CMD_GET_ALARMS      0x1C    /**< Read unified alarm state + recent event log */
+#define DEBUG_CMD_SET_RTC         0x1D    /**< Set real-time clock (payload: uint32_t epoch_sec) */
+#define DEBUG_CMD_GET_RTC         0x1E    /**< Get real-time clock */
 
 /* ============== Debug Responses (MCU -> PC) ============== */
 #define DEBUG_RSP_MODULE_DATA     0x90    /**< Single module data */
@@ -36,6 +38,7 @@
 #define DEBUG_RSP_CHARGE_CFG      0x97    /**< Charge-cycle configuration */
 #define DEBUG_RSP_DWIN_XFER       0x9B    /**< DWIN RS485 RX bytes captured since the last DWIN_XFER */
 #define DEBUG_RSP_ALARMS         0x9C    /**< Unified alarm state + event log */
+#define DEBUG_RSP_RTC             0x9D    /**< RTC data response */
 
 /* ============== Constants ============== */
 #define DEBUG_MAX_MODULES         8
@@ -141,6 +144,7 @@ typedef struct __attribute__((packed)) {
     uint32_t can1_rx_count;
     uint32_t can2_tx_count;
     uint32_t can2_rx_count;
+    uint32_t can_reserved_or_err; /* 5th CAN counter (20B total) matching C# app br.ReadBytes(20) */
 
     /* Controller diagnostics (appended to preserve the existing prefix) */
     uint32_t controller_fault_flags;
@@ -148,7 +152,7 @@ typedef struct __attribute__((packed)) {
     uint8_t  bms_stale;
 } DebugSystemInfo_t;
 
-_Static_assert(sizeof(DebugSystemInfo_t) == 68, "DebugSystemInfo_t must be 68 bytes");
+_Static_assert(sizeof(DebugSystemInfo_t) == 72, "DebugSystemInfo_t must be 72 bytes");
 
 /**
  * @brief Unified alarm state header. Followed on the wire by @c log_count
@@ -165,6 +169,23 @@ typedef struct __attribute__((packed)) {
 } DebugAlarmInfo_t;
 
 _Static_assert(sizeof(DebugAlarmInfo_t) == 20, "DebugAlarmInfo_t must be 20 bytes");
+
+/**
+ * @brief RTC timestamp and calendar info response structure.
+ */
+typedef struct __attribute__((packed)) {
+    uint32_t epoch_sec;       /**< Unix epoch timestamp */
+    uint16_t year;            /**< 2000..2099 */
+    uint8_t  month;           /**< 1..12 */
+    uint8_t  day;             /**< 1..31 */
+    uint8_t  hour;            /**< 0..23 */
+    uint8_t  minute;          /**< 0..59 */
+    uint8_t  second;          /**< 0..59 */
+    uint8_t  weekday;         /**< 1..7 */
+    uint8_t  is_valid;        /**< 1 if synchronized, 0 if default/uncalibrated */
+} DebugRtcInfo_t;
+
+_Static_assert(sizeof(DebugRtcInfo_t) == 13, "DebugRtcInfo_t must be 13 bytes");
 
 /* ============== Function Declarations ============== */
 
@@ -196,6 +217,14 @@ bool DebugProtocol_IsActive(void);
  * @return true if command handled
  */
 bool DebugProtocol_HandleCommand(uint8_t cmd, const uint8_t *payload, uint16_t len);
+
+/** Consume deferred RTC requests from the application main loop. */
+bool DebugProtocol_TakeRtcSetRequest(uint32_t *epoch);
+bool DebugProtocol_TakeRtcGetRequest(void);
+
+/** Send RTC results after App/System has performed the BSP operation. */
+void DebugProtocol_SendRtcInfo(const DebugRtcInfo_t *rtc_info);
+void DebugProtocol_SendRtcError(uint8_t error_code);
 
 /**
  * @brief Send all modules data (streaming callback)

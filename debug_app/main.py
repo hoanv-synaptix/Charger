@@ -1554,13 +1554,14 @@ class ChargerDebugApp:
                                   padx=8, pady=8, bg="#F0F0F0")
         self.cfg_jack_temp_group = jack_temp
         jack_temp.grid(row=3, column=0, sticky="ew", pady=(0, 10))
-        for col in range(4):
+        for col in range(6):
             jack_temp.grid_columnconfigure(col, weight=1)
         self._add_cfg_check(jack_temp, 0, 0, "Enabled", "protect_jack_temp_enabled")
         self._add_cfg_entry(jack_temp, 0, 1, "Threshold", "protect_jack_temp_threshold_c", "C")
-        self._add_cfg_entry(jack_temp, 0, 2, "Delta", "protect_jack_temp_delta_c", "C")
-        self._add_cfg_entry(jack_temp, 0, 3, "Delay", "protect_jack_temp_delay_s", "s")
-        self._add_cfg_entry(jack_temp, 0, 4, "Power Limit", "protect_jack_temp_power_limit_pct", "%")
+        self._add_cfg_entry(jack_temp, 0, 2, "Trip Temp", "protect_jack_temp_trip_c", "C")
+        self._add_cfg_entry(jack_temp, 0, 3, "Delta", "protect_jack_temp_delta_c", "C")
+        self._add_cfg_entry(jack_temp, 0, 4, "Delay", "protect_jack_temp_delay_s", "s")
+        self._add_cfg_entry(jack_temp, 0, 5, "Power Limit", "protect_jack_temp_power_limit_pct", "%")
 
         module = tk.LabelFrame(group, text="Charger Module Envelope", font=("Segoe UI", 8, "bold"),
                                padx=8, pady=8, bg="#F0F0F0")
@@ -2273,6 +2274,7 @@ class ChargerDebugApp:
             protect_jack_temp_threshold_c=0.0,
             protect_jack_temp_delta_c=0.0,
             protect_jack_temp_power_limit_pct=80.0,
+            protect_jack_temp_trip_c=75.0,
             charge_source_mode=0,
             can_battery_id=1,
             source_module_count=1,
@@ -2337,6 +2339,7 @@ class ChargerDebugApp:
         self.cfg_vars["protect_jack_temp_threshold_c"].set(f"{cfg.protect_jack_temp_threshold_c:.2f}")
         self.cfg_vars["protect_jack_temp_delta_c"].set(f"{cfg.protect_jack_temp_delta_c:.2f}")
         self.cfg_vars["protect_jack_temp_power_limit_pct"].set(f"{cfg.protect_jack_temp_power_limit_pct:.2f}")
+        self.cfg_vars["protect_jack_temp_trip_c"].set(f"{cfg.protect_jack_temp_trip_c:.2f}")
         source_mode_index = sorted(CHARGE_SOURCE_MODE_NAMES).index(cfg.charge_source_mode) if cfg.charge_source_mode in CHARGE_SOURCE_MODE_NAMES else 0
         self.cfg_charge_source_mode.current(source_mode_index)
         self.cfg_vars["can_battery_id"].set(str(cfg.can_battery_id))
@@ -2413,6 +2416,7 @@ class ChargerDebugApp:
             protect_jack_temp_threshold_c=self._read_cfg_float("protect_jack_temp_threshold_c"),
             protect_jack_temp_delta_c=self._read_cfg_float("protect_jack_temp_delta_c"),
             protect_jack_temp_power_limit_pct=self._read_cfg_float("protect_jack_temp_power_limit_pct"),
+            protect_jack_temp_trip_c=self._read_cfg_float("protect_jack_temp_trip_c"),
             charge_source_mode=charge_source_mode,
             can_battery_id=self._read_cfg_int("can_battery_id"),
             source_module_count=self._read_cfg_int("source_module_count"),
@@ -2495,6 +2499,7 @@ class ChargerDebugApp:
                 "protect_jack_temp_threshold_c": cfg.protect_jack_temp_threshold_c,
                 "protect_jack_temp_delta_c": cfg.protect_jack_temp_delta_c,
                 "protect_jack_temp_power_limit_pct": cfg.protect_jack_temp_power_limit_pct,
+                "protect_jack_temp_trip_c": cfg.protect_jack_temp_trip_c,
                 "charge_source_mode": cfg.charge_source_mode,
                 "can_battery_id": cfg.can_battery_id,
                 "source_module_count": cfg.source_module_count,
@@ -2577,6 +2582,7 @@ class ChargerDebugApp:
                 protect_jack_temp_threshold_c=data.get("protect_jack_temp_threshold_c", 0.0),
                 protect_jack_temp_delta_c=data.get("protect_jack_temp_delta_c", 0.0),
                 protect_jack_temp_power_limit_pct=data.get("protect_jack_temp_power_limit_pct", 80.0),
+                protect_jack_temp_trip_c=data.get("protect_jack_temp_trip_c", 75.0),
                 charge_source_mode=data.get("charge_source_mode", 0),
                 can_battery_id=data.get("can_battery_id", 1),
                 source_module_count=data.get("source_module_count", 1),

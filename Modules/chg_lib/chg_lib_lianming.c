@@ -164,15 +164,16 @@ static CHG_LIB_AlarmFlag_t parse_lianming_alarm(uint16_t raw_alarm)
     
     /* Byte 7 bits (0-7 in raw_alarm) */
     if (raw_alarm & (1U << 1)) flags |= CHG_LIB_ALARM_HW_FAULT;         /* Module fault */
-    if (raw_alarm & (1U << 3)) flags |= CHG_LIB_ALARM_HW_FAULT;         /* Fan fault */
-    if (raw_alarm & (1U << 4)) flags |= CHG_LIB_ALARM_HW_FAULT;         /* Input overvoltage */
+    if (raw_alarm & (1U << 3)) flags |= CHG_LIB_ALARM_FAN_FAULT;         /* Fan fault */
+    if (raw_alarm & (1U << 4)) flags |= CHG_LIB_ALARM_AC_OVER_VOLT;      /* Input overvoltage */
     if (raw_alarm & (1U << 5)) flags |= CHG_LIB_ALARM_AC_UNDER_VOLT;    /* Input under-voltage */
     if (raw_alarm & (1U << 6)) flags |= CHG_LIB_ALARM_OVER_VOLTAGE_OUT; /* Output overvoltage */
     if (raw_alarm & (1U << 7)) flags |= CHG_LIB_ALARM_HW_FAULT;         /* Output under-voltage */
     
-    /* Byte 6 bits (8-15 in raw_alarm): Byte6 bit5/6/7 map to raw bits 13/14/15. */
-    if (raw_alarm & (1U << 13)) flags |= CHG_LIB_ALARM_OVER_CURR_OUT;   /* Overcurrent protection */
-    if (raw_alarm & (1U << 14)) flags |= CHG_LIB_ALARM_OVER_TEMP;       /* Over temperature */
+    /* Byte 6 bits: PDF specifies bit0 (word bit 8) = Overcurrent, bit1 (word bit 9) = Over-temp.
+     * Support both bits 8/9 and legacy bits 13/14 for compatibility. */
+    if (raw_alarm & ((1U << 8) | (1U << 13))) flags |= CHG_LIB_ALARM_OVER_CURR_OUT;
+    if (raw_alarm & ((1U << 9) | (1U << 14))) flags |= CHG_LIB_ALARM_OVER_TEMP;
     
     return flags;
 }

@@ -78,11 +78,13 @@ def test_debug_rsp_ids_in_header():
         assert f"#define {name}" in h, f"{name} missing from header"
 
 def test_cmd_range_in_process_frame():
-    """process_frame must dispatch 0x10-0x1A to DebugProtocol_HandleCommand"""
+    """RX parser queues frames and main-loop processing dispatches debug commands"""
     c = read("App/Protocol/pc_protocol.c")
     assert "DEBUG_CMD_ENTER" in c
     assert "DEBUG_CMD_SET_CHARGE_CFG" in c
     assert "DebugProtocol_HandleCommand" in c
+    assert "void PC_Protocol_ProcessRx" in c
+    assert "enqueue_rx_frame" in c
 
 
 # ═══════════════════════════════════════════════════════
@@ -236,9 +238,9 @@ def test_feedbyte_burst_100_frames():
 # ═══════════════════════════════════════════════════════
 
 def test_charge_cycle_config_size():
-    """ChargeCycleConfig_t must be exactly 207 bytes"""
+    """ChargeCycleConfig_t must be exactly 239 bytes"""
     h = read("App/Charge/charge_cycle_config.h")
-    assert "_Static_assert(sizeof(ChargeCycleConfig_t) == 207" in h
+    assert "_Static_assert(sizeof(ChargeCycleConfig_t) == 239" in h
 
 def test_debug_module_data_size():
     """DebugModuleData_t must be 123 bytes"""
@@ -246,9 +248,9 @@ def test_debug_module_data_size():
     assert "_Static_assert(sizeof(DebugModuleData_t) == 123" in h
 
 def test_debug_system_info_size():
-    """DebugSystemInfo_t must be 68 bytes"""
+    """DebugSystemInfo_t must be 72 bytes"""
     h = read("App/Protocol/pc_debug_protocol.h")
-    assert "_Static_assert(sizeof(DebugSystemInfo_t) == 68" in h
+    assert "_Static_assert(sizeof(DebugSystemInfo_t) == 72" in h
 
 def test_charge_config_has_version_field():
     h = read("App/Charge/charge_cycle_config.h")
@@ -295,7 +297,7 @@ def test_set_charge_cfg_saves_flash():
 # ═══════════════════════════════════════════════════════
 
 def test_no_log_in_debug_handler():
-    """DebugProtocol_HandleCommand must not call LOG (runs in USB ISR)"""
+    """DebugProtocol_HandleCommand must not call LOG during protocol dispatch"""
     c = read("App/Protocol/pc_debug_protocol.c")
     # Find the function body
     start = c.find("bool DebugProtocol_HandleCommand")

@@ -3,7 +3,6 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:oxy="http://oxyplot.org/wpf"
         Title="PKG Battery – Live Monitor &amp; SCADA" Height="950" Width="1500"
-        Icon="app.ico"
         Background="#F4F6F9" WindowStartupLocation="CenterScreen" FontFamily="Segoe UI">
         
     <Window.Resources>

@@ -3,17 +3,40 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include "app_version.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#define CHARGE_CYCLE_CONFIG_VERSION 4U
+#define CHARGE_CYCLE_CONFIG_VERSION 5U
 
 /* Fixed-width identity strings shown on the DWIN "Setting" screen
  * (VP_SET_HW_VER / VP_SET_DEVICE_ID). Always NUL-terminated on load. */
 #define CHARGE_CYCLE_DEVICE_ID_LEN 16U
 #define CHARGE_CYCLE_HW_REV_LEN    12U
+
+/* ===================== Default Configuration Values ===================== */
+#define DEFAULT_HW_REV                        HW_VERSION_STRING
+
+#define DEFAULT_BATTERY_CAPACITY_AH           100.0f
+#define DEFAULT_IMIN_C                        0.1f
+#define DEFAULT_IMAX_C                        1.0f
+#define DEFAULT_IPRE_C                        0.2f
+#define DEFAULT_ILOW_C                        0.5f
+
+#define DEFAULT_VMIN_V                        32.0f
+#define DEFAULT_VMAX_V                        53.0f
+#define DEFAULT_VPRE_V                        48.0f
+#define DEFAULT_VLOW_V                        52.0f
+#define DEFAULT_TEMP_LIMIT_C                  55.0f
+
+#define DEFAULT_MODULE_U_MIN_V                30.0f
+#define DEFAULT_MODULE_U_MAX_V                99.0f
+#define DEFAULT_MODULE_I_MIN_A                5.0f
+#define DEFAULT_MODULE_I_MAX_A                100.0f
+#define DEFAULT_JACK_TEMP_POWER_LIMIT_PCT     80.0f
+#define DEFAULT_JACK_TEMP_TRIP_C              75.0f
 
 typedef enum {
     CHARGE_MODULE_TYPE_UNKNOWN = 0,
@@ -87,6 +110,7 @@ typedef struct __attribute__((packed)) {
     float protect_jack_temp_threshold_c;
     float protect_jack_temp_delta_c;
     float protect_jack_temp_power_limit_pct;
+    float protect_jack_temp_trip_c;
 
     uint8_t charge_source_mode;
     uint8_t can_battery_id;
@@ -109,7 +133,7 @@ typedef struct __attribute__((packed)) {
     char hw_rev[CHARGE_CYCLE_HW_REV_LEN];
 } ChargeCycleConfig_t;
 
-_Static_assert(sizeof(ChargeCycleConfig_t) == 235, "ChargeCycleConfig_t must stay 235 bytes");
+_Static_assert(sizeof(ChargeCycleConfig_t) == 239, "ChargeCycleConfig_t must stay 239 bytes");
 
 void ChargeCycleConfig_Init(void);
 void ChargeCycleConfig_Get(ChargeCycleConfig_t *config);

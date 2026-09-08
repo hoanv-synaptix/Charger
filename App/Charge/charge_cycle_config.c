@@ -35,22 +35,23 @@ void ChargeCycleConfig_GetDefaults(ChargeCycleConfig_t *config)
     config->can_battery_id = 1U;
     config->source_module_count = 1U;
 
-    config->battery_capacity_ah = 100.0f;  /* 100Ah battery */
-    config->imin_c = 0.1f;                /* 0.1C minimum */
-    config->imax_c = 1.0f;                /* 1.0C maximum (100A for 100Ah) */
-    config->ipre_c = 0.2f;                /* 0.2C precharge */
-    config->ilow_c = 0.5f;                /* 0.5C low rate */
+    config->battery_capacity_ah = DEFAULT_BATTERY_CAPACITY_AH;
+    config->imin_c = DEFAULT_IMIN_C;
+    config->imax_c = DEFAULT_IMAX_C;
+    config->ipre_c = DEFAULT_IPRE_C;
+    config->ilow_c = DEFAULT_ILOW_C;
 
-    config->module_u_min_v = 30.0f;
-    config->module_u_max_v = 99.0f;
-    config->module_i_min_a = 5.0f;
-    config->module_i_max_a = 100.0f;
-    config->protect_jack_temp_power_limit_pct = 80.0f;
+    config->module_u_min_v = DEFAULT_MODULE_U_MIN_V;
+    config->module_u_max_v = DEFAULT_MODULE_U_MAX_V;
+    config->module_i_min_a = DEFAULT_MODULE_I_MIN_A;
+    config->module_i_max_a = DEFAULT_MODULE_I_MAX_A;
+    config->protect_jack_temp_power_limit_pct = DEFAULT_JACK_TEMP_POWER_LIMIT_PCT;
+    config->protect_jack_temp_trip_c = DEFAULT_JACK_TEMP_TRIP_C;
 
     /* strncpy into a memset-0 buffer leaves the field NUL-terminated as long
      * as the literal is shorter than the field, which both are. */
-    strncpy(config->device_id, "PKG-0001", sizeof(config->device_id) - 1U);
-    strncpy(config->hw_rev, "HW V1.0", sizeof(config->hw_rev) - 1U);
+    strncpy(config->device_id, DEFAULT_DEVICE_ID, sizeof(config->device_id) - 1U);
+    strncpy(config->hw_rev, DEFAULT_HW_REV, sizeof(config->hw_rev) - 1U);
 }
 
 void ChargeCycleConfig_Init(void)
@@ -74,7 +75,7 @@ bool ChargeCycleConfig_Set(const ChargeCycleConfig_t *config)
     }
 
     if (config->version != CHARGE_CYCLE_CONFIG_VERSION &&
-        config->version != 1U && config->version != 2U && config->version != 3U) {
+        config->version != 1U && config->version != 2U && config->version != 3U && config->version != 4U) {
         return false;
     }
 
@@ -122,10 +123,15 @@ bool ChargeCycleConfig_Set(const ChargeCycleConfig_t *config)
         !validate_range(config->protect_jack_temp_threshold_c, -50.0f, 200.0f) ||
         !validate_non_negative(config->protect_jack_temp_delta_c) ||
         !validate_range(config->protect_jack_temp_power_limit_pct, 0.0f, 100.0f) ||
+        !validate_range(config->protect_jack_temp_trip_c, -50.0f, 200.0f) ||
         !validate_non_negative(config->module_u_min_v) ||
         !validate_non_negative(config->module_u_max_v) ||
         !validate_non_negative(config->module_i_min_a) ||
         !validate_non_negative(config->module_i_max_a)) {
+        return false;
+    }
+
+    if (config->protect_jack_temp_trip_c < config->protect_jack_temp_threshold_c) {
         return false;
     }
 
@@ -164,6 +170,13 @@ bool ChargeCycleConfig_Set(const ChargeCycleConfig_t *config)
      * identity fields to the brim without a terminator. */
     g_charge_cycle_config.device_id[sizeof(g_charge_cycle_config.device_id) - 1U] = '\0';
     g_charge_cycle_config.hw_rev[sizeof(g_charge_cycle_config.hw_rev) - 1U] = '\0';
+
+    if (g_charge_cycle_config.device_id[0] == '\0') {
+        strncpy(g_charge_cycle_config.device_id, DEFAULT_DEVICE_ID, sizeof(g_charge_cycle_config.device_id) - 1U);
+    }
+    if (g_charge_cycle_config.hw_rev[0] == '\0') {
+        strncpy(g_charge_cycle_config.hw_rev, DEFAULT_HW_REV, sizeof(g_charge_cycle_config.hw_rev) - 1U);
+    }
 
     CHG_LIB_DriverId_t drv_id = CHG_LIB_DRV_NONE;
     switch (config->module_type) {
@@ -207,11 +220,17 @@ bool ChargeCycleConfig_Set(const ChargeCycleConfig_t *config)
 
 const char *ChargeCycleConfig_GetDeviceId(void)
 {
+    if (g_charge_cycle_config.device_id[0] == '\0') {
+        return DEFAULT_DEVICE_ID;
+    }
     return g_charge_cycle_config.device_id;
 }
 
 const char *ChargeCycleConfig_GetHwRev(void)
 {
+    if (g_charge_cycle_config.hw_rev[0] == '\0') {
+        return DEFAULT_HW_REV;
+    }
     return g_charge_cycle_config.hw_rev;
 }
 

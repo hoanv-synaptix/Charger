@@ -30,6 +30,7 @@
 #include "bms_core.h"
 #include "charge_cycle_config.h"
 #include "charge_controller.h"
+#include "app_rtc_sync.h"
 
 #include "sim_can_modules.h"
 #include "sim_bms.h"
@@ -89,6 +90,8 @@ static void send_pc_frame(uint8_t cmd, const uint8_t *payload, uint8_t len)
     for (uint16_t k = 0; k < i; k++) {
         PC_Protocol_FeedByte(buf[k]);
     }
+    PC_Protocol_ProcessRx();
+    App_RtcSync_Process();
 }
 
 /* Feeds a frame with a deliberately corrupted trailing CRC byte. */
@@ -109,6 +112,8 @@ static void send_pc_frame_bad_crc(uint8_t cmd, const uint8_t *payload, uint8_t l
     for (uint16_t k = 0; k < i; k++) {
         PC_Protocol_FeedByte(buf[k]);
     }
+    PC_Protocol_ProcessRx();
+    App_RtcSync_Process();
 }
 
 /* Returns the single most-recently-enqueued TX frame's cmd/payload, and
@@ -219,6 +224,30 @@ static bool test_feedbyte_valid_frame_gets_acked(void)
     ASSERT(len == 4, "PONG payload should be the 4-byte version");
 
     printf("[PASS] test_feedbyte_valid_frame_gets_acked\n");
+    return true;
+}
+
+static bool test_feedbyte_defers_dispatch_until_process_rx(void)
+{
+    printf("Running test_feedbyte_defers_dispatch_until_process_rx...\n");
+    ASSERT(setup_scenario(), "setup failed");
+    PC_Protocol_ResetTx();
+
+    uint8_t frame[] = {PC_SOF1, PC_SOF2, PC_CMD_PING, 0U, 0U};
+    frame[4] = ref_crc8(&frame[2], 2U);
+    for (size_t i = 0; i < sizeof(frame); i++) {
+        PC_Protocol_FeedByte(frame[i]);
+    }
+
+    ASSERT(PC_Protocol_GetTxQueueDepth() == 0U,
+           "FeedByte must not dispatch or enqueue a response before ProcessRx");
+    PC_Protocol_ProcessRx();
+
+    uint8_t cmd, payload[255], len;
+    ASSERT(only_tx_frame(&cmd, payload, &len), "expected PONG after ProcessRx");
+    ASSERT(cmd == PC_RSP_PONG, "deferred PING should produce PONG");
+
+    printf("[PASS] test_feedbyte_defers_dispatch_until_process_rx\n");
     return true;
 }
 
@@ -547,7 +576,7 @@ static bool test_debug_get_system_info_matches_wire_struct(void)
     uint8_t cmd, resp[255], len;
     ASSERT(only_tx_frame(&cmd, resp, &len), "expected exactly one GET_SYSTEM response");
     ASSERT(cmd == DEBUG_RSP_SYSTEM_INFO, "GET_SYSTEM should get DEBUG_RSP_SYSTEM_INFO");
-    ASSERT(len == sizeof(DebugSystemInfo_t), "response length must match the static-asserted 68-byte wire struct");
+    ASSERT(len == sizeof(DebugSystemInfo_t), "response length must match the static-asserted 72-byte wire struct");
 
     DebugSystemInfo_t info;
     memcpy(&info, resp, sizeof(info));
@@ -623,6 +652,36 @@ static bool test_build_all_modules_data_does_not_overflow_buffer(void)
     return true;
 }
 
+static bool test_debug_rtc_get_set_roundtrip(void)
+{
+    printf("Running test_debug_rtc_get_set_roundtrip...\n");
+    ASSERT(setup_scenario(), "setup failed");
+
+    /* 1. Send DEBUG_CMD_GET_RTC */
+    send_pc_frame(DEBUG_CMD_GET_RTC, NULL, 0);
+    uint8_t cmd, payload[256], len;
+    ASSERT(only_tx_frame(&cmd, payload, &len), "expected exactly 1 TX frame for GET_RTC");
+    ASSERT(cmd == DEBUG_RSP_RTC, "expected DEBUG_RSP_RTC");
+    ASSERT(len == sizeof(DebugRtcInfo_t), "expected sizeof(DebugRtcInfo_t)");
+
+    /* Reset TX queue before sending next command */
+    PC_Protocol_ResetTx();
+
+    /* 2. Send DEBUG_CMD_SET_RTC with epoch = 1772866800 (2026-03-07 07:00:00) */
+    uint32_t set_epoch = 1772866800U;
+    send_pc_frame(DEBUG_CMD_SET_RTC, (const uint8_t *)&set_epoch, 4);
+    ASSERT(only_tx_frame(&cmd, payload, &len), "expected exactly 1 TX frame for SET_RTC");
+    ASSERT(cmd == DEBUG_RSP_RTC, "expected DEBUG_RSP_RTC on set");
+    ASSERT(len == sizeof(DebugRtcInfo_t), "expected sizeof(DebugRtcInfo_t)");
+    DebugRtcInfo_t *info = (DebugRtcInfo_t *)payload;
+    ASSERT(info->epoch_sec == set_epoch, "epoch should match");
+    ASSERT(info->year == 2026, "year should match");
+    ASSERT(info->is_valid == 1, "is_valid should be 1");
+
+    printf("[PASS] test_debug_rtc_get_set_roundtrip\n");
+    return true;
+}
+
 /* ================================================================== */
 
 int main(void)
@@ -632,6 +691,7 @@ int main(void)
     bool pass = true;
 
     pass &= test_feedbyte_valid_frame_gets_acked();
+    pass &= test_feedbyte_defers_dispatch_until_process_rx();
     pass &= test_feedbyte_bad_crc_nacked();
     pass &= test_feedbyte_sof_resync_on_stray_sof1();
     pass &= test_feedbyte_unknown_cmd_nacked();
@@ -650,6 +710,7 @@ int main(void)
     pass &= test_debug_get_system_info_matches_wire_struct();
     pass &= test_build_module_data_refuses_when_too_small();
     pass &= test_build_all_modules_data_does_not_overflow_buffer();
+    pass &= test_debug_rtc_get_set_roundtrip();
 
     if (pass) {
         printf("ALL TESTS PASSED.\n");

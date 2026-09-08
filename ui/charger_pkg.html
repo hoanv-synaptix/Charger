@@ -78,8 +78,8 @@
             padding: 6px 6px 4px 6px; 
             height: 216px;
         }
-        .col { width: 150px; display: flex; flex-direction: column; justify-content: space-between; }
-        .col-center { width: 156px; }
+        .col { width: 135px; display: flex; flex-direction: column; justify-content: space-between; }
+        .col-center { width: 186px; }
 
         /* Panels */
         .panel {
@@ -90,7 +90,6 @@
             display: flex;
             flex-direction: column;
             overflow: hidden;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.03);
         }
         .panel-header {
             height: 24px;
@@ -125,7 +124,7 @@
             font-weight: bold;
             font-family: Arial, sans-serif;
         }
-        .data-label { color: #222; text-transform: uppercase; }
+        .data-label { color: #334155; text-transform: uppercase; white-space: nowrap; }
         .data-value { 
             display: grid; 
             grid-template-columns: 1fr 18px; 
@@ -616,16 +615,15 @@
             color: #444;
         }
         
-        /* Độ rộng các cột (Đã tăng để chữ không bị dính) */
-        .col-time { width: 80px; }
-        .col-level { width: 65px; font-weight: 900; }
-        .col-code { width: 55px; }
+        /* Độ rộng các cột (Đã bỏ cột Level) */
+        .col-time { width: 85px; color: #444; }
+        .col-code { width: 65px; }
         .col-desc { flex: 1; }
 
         /* Màu sắc báo động */
-        .level-fault { color: #dc2626; } 
-        .level-warn { color: #ea851c; } 
-        .level-info { color: #1a51a1; } 
+        .level-fault { color: #dc2626 !important; } 
+        .level-warn { color: #ea851c !important; } 
+        .level-info { color: #1a51a1 !important; } 
 
         /* Nút cuộn dọc */
         .scroll-container {
@@ -669,7 +667,7 @@
             <span class="logo-battery">BATTERY</span>
         </div>
         <div class="device-id">
-            ID: <span class="dwin-hide">PKG-48V-01</span>
+            CODE: <span class="dwin-hide">0000</span>
         </div>
     </div>
 
@@ -701,8 +699,8 @@
                     <div class="data-row">
                         <span class="data-label">POWER</span>
                         <div class="data-value">
-                            <span class="data-num">0</span>
-                            <span class="data-unit">W</span>
+                            <span class="data-num">0.0</span>
+                            <span class="data-unit">kW</span>
                         </div>
                     </div>
                 </div>
@@ -728,7 +726,7 @@
                         </div>
                     </div>
                     <div class="data-row">
-                        <span class="data-label">CHARGED</span>
+                        <span class="data-label">CAPACITY</span>
                         <div class="data-value">
                             <span class="data-num">0.0</span>
                             <span class="data-unit">Ah</span>
@@ -867,12 +865,12 @@
                 <div class="spec-header">SYSTEM</div>
                 <div class="spec-body">
                     <div class="spec-item">
-                        <span class="spec-label">DATE</span>
-                        <span class="spec-value" id="current-date">2026-08-13</span>
+                        <span class="spec-label">TOTAL CHARGED</span>
+                        <span class="spec-value">12500.5 Ah</span>
                     </div>
                     <div class="spec-item">
-                        <span class="spec-label">TIME</span>
-                        <span class="spec-value" id="current-time">10:30:45</span>
+                        <span class="spec-label">TOTAL ENERGY</span>
+                        <span class="spec-value">685.2 kWh</span>
                     </div>
                     <div class="spec-item">
                         <span class="spec-label">UPTIME</span>
@@ -913,37 +911,32 @@
                 <div class="table-container">
                     <div class="table-row table-header">
                         <div class="col-time">TIME</div>
-                        <div class="col-level">LEVEL</div>
                         <div class="col-code">CODE</div>
                         <div class="col-desc">DESCRIPTION</div>
                     </div>
                     
                     <div class="table-row">
                         <div class="col-time">10:30:21</div>
-                        <div class="col-level level-fault">FAULT</div>
-                        <div class="col-code">E006</div>
-                        <div class="col-desc">CELL 6 OVER VOLTAGE</div>
+                        <div class="col-code level-fault">E006</div>
+                        <div class="col-desc level-fault">CELL 6 OVER VOLTAGE</div>
                     </div>
                     
                     <div class="table-row">
                         <div class="col-time">10:28:45</div>
-                        <div class="col-level level-warn">WARN</div>
-                        <div class="col-code">W002</div>
-                        <div class="col-desc">HIGH TEMPERATURE</div>
+                        <div class="col-code level-warn">W002</div>
+                        <div class="col-desc level-warn">HIGH TEMPERATURE</div>
                     </div>
 
                     <div class="table-row">
                         <div class="col-time">10:25:10</div>
-                        <div class="col-level level-warn">WARN</div>
-                        <div class="col-code">W001</div>
-                        <div class="col-desc">LOW CELL VOLTAGE</div>
+                        <div class="col-code level-warn">W001</div>
+                        <div class="col-desc level-warn">LOW CELL VOLTAGE</div>
                     </div>
 
                     <div class="table-row">
                         <div class="col-time">10:20:05</div>
-                        <div class="col-level level-info">INFO</div>
-                        <div class="col-code">I001</div>
-                        <div class="col-desc">SYSTEM POWER ON</div>
+                        <div class="col-code level-info">I001</div>
+                        <div class="col-desc level-info">SYSTEM POWER ON</div>
                     </div>
                 </div>
 

@@ -19,6 +19,8 @@ class DebugCmd(IntEnum):
     GET_SYSTEM = 0x18   # Read system information
     GET_CHARGE_CFG = 0x19
     SET_CHARGE_CFG = 0x1A
+    SET_RTC = 0x1D      # Set real-time clock
+    GET_RTC = 0x1E      # Get real-time clock
 
 
 # Responses (MCU -> PC)
@@ -31,6 +33,7 @@ class DebugRsp(IntEnum):
     RAW_CAN_TX = 0x95     # Raw CAN TX confirmation
     ERROR = 0x96          # Error response
     CHARGE_CFG = 0x97     # Charge-cycle configuration
+    RTC = 0x9D            # RTC data response
 
 
 # Standard PC Protocol Responses
@@ -525,6 +528,11 @@ class SystemInfo:
     controller_target_current_total: float
     active_limit_current_c: float
     uptime_ticks: int
+    can1_tx_count: int
+    can1_rx_count: int
+    can2_tx_count: int
+    can2_rx_count: int
+    can_reserved_or_err: int
     controller_fault_flags: int
     controller_stop_reason: int
     bms_stale: bool
@@ -641,6 +649,7 @@ class ChargeCycleConfig:
     protect_jack_temp_threshold_c: float
     protect_jack_temp_delta_c: float
     protect_jack_temp_power_limit_pct: float
+    protect_jack_temp_trip_c: float
     charge_source_mode: int
     can_battery_id: int
     source_module_count: int
@@ -649,8 +658,18 @@ class ChargeCycleConfig:
     module_u_max_v: float
     module_i_min_a: float
     module_i_max_a: float
+    # v4 (2026-08-30): fixed-width device identity strings shown on the
+    # DWIN "Setting" screen (App/Charge/charge_cycle_config.h's
+    # CHARGE_CYCLE_DEVICE_ID_LEN=16 / CHARGE_CYCLE_HW_REV_LEN=12). Appended
+    # at the end of the C struct, so appended at the end of FORMAT too.
+    # Not editable from this app's Charge Config tab -- just round-tripped
+    # (see _collect_charge_config_from_ui() in main.py) so a Write MCU
+    # after a Read MCU doesn't blank them out.
+    device_id: str = ""
+    hw_rev: str = ""
 
-    FORMAT = "<H" + ("f" * 10) + "B" + ("f" * 10) + "B" + ("f" * 10) + "B" + ("f" * 10) + "BfH" + "BHfff" + "BBBBffff"
+    FORMAT = ("<H" + ("f" * 10) + "B" + ("f" * 10) + "B" + ("f" * 10) + "B" + ("f" * 10) + "BfH" + "BHffff" +
+              "BBBBffff" + "16s12s")
     SIZE = struct.calcsize(FORMAT)
 
     @classmethod
@@ -712,14 +731,20 @@ class ChargeCycleConfig:
             protect_jack_temp_threshold_c=values[49],
             protect_jack_temp_delta_c=values[50],
             protect_jack_temp_power_limit_pct=values[51],
-            charge_source_mode=values[52],
-            can_battery_id=values[53],
-            source_module_count=values[54],
-            module_type=values[55],
-            module_u_min_v=values[56],
-            module_u_max_v=values[57],
-            module_i_min_a=values[58],
-            module_i_max_a=values[59],
+            protect_jack_temp_trip_c=values[52],
+            charge_source_mode=values[53],
+            can_battery_id=values[54],
+            source_module_count=values[55],
+            module_type=values[56],
+            module_u_min_v=values[57],
+            module_u_max_v=values[58],
+            module_i_min_a=values[59],
+            module_i_max_a=values[60],
+            # Fixed-width char[] fields arrive NUL-padded; strip at the
+            # first NUL and decode leniently (identity strings are
+            # expected ASCII, but never let a garbage byte crash a Read).
+            device_id=values[61].split(b"\x00", 1)[0].decode("ascii", errors="replace"),
+            hw_rev=values[62].split(b"\x00", 1)[0].decode("ascii", errors="replace"),
         )
 
     def to_bytes(self) -> bytes:
@@ -777,6 +802,7 @@ class ChargeCycleConfig:
             self.protect_jack_temp_threshold_c,
             self.protect_jack_temp_delta_c,
             self.protect_jack_temp_power_limit_pct,
+            self.protect_jack_temp_trip_c,
             self.charge_source_mode,
             self.can_battery_id,
             self.source_module_count,
@@ -785,6 +811,12 @@ class ChargeCycleConfig:
             self.module_u_max_v,
             self.module_i_min_a,
             self.module_i_max_a,
+            # Truncate defensively before packing -- struct's 's' format
+            # pads short input with NUL automatically, but raises on input
+            # longer than the field, and a UI-entered/imported string could
+            # in principle exceed 16/12 bytes.
+            self.device_id.encode("ascii", errors="replace")[:16],
+            self.hw_rev.encode("ascii", errors="replace")[:12],
         )
 
     def get_module_type_name(self) -> str:
@@ -904,7 +936,7 @@ class DebugProtocolParser:
         )
 
     def _parse_system_info(self, data: bytes) -> Optional[SystemInfo]:
-        """Parse SYSTEM_INFO response (68 bytes, matches DebugSystemInfo_t)
+        """Parse SYSTEM_INFO response (72 bytes, matches DebugSystemInfo_t)
 
         Layout (packed, little-endian):
           uint8  fw_major, fw_minor, fw_patch, driver_id (4)
@@ -913,16 +945,19 @@ class DebugProtocolParser:
           uint8  active_limit_source, active_stage_band (2)
           float  total_voltage, total_current, total_power_in, max_temp_dcdc (16)
           float  controller_target_voltage, controller_target_current_total, active_limit_current_c (12)
-          uint32 uptime_ticks, can1_tx_count, can1_rx_count, can2_tx_count, can2_rx_count (20)
-        Appended diagnostics: controller fault flags, stop reason, BMS stale.
-        Total: 68 bytes
+          uint32 uptime_ticks, can1_tx_count, can1_rx_count, can2_tx_count,
+                 can2_rx_count, can_reserved_or_err, controller_fault_flags (28)
+          uint8 controller_stop_reason, bms_stale (2)
+        Total: 72 bytes
         """
-        fmt = "<BBBBBBBBBBBBBBfffffffIIIIIIBB"
-        legacy_fmt = "<BBBBBBBBBBBBBBfffffffIIIII"
-        has_diagnostics = len(data) >= struct.calcsize(fmt)
-        if not has_diagnostics:
+        fmt = "<14B7f7I2B"
+        legacy_fmt = "<14B7f6I2B"
+        if len(data) >= struct.calcsize(fmt):
+            has_reserved_counter = True
+        elif len(data) >= struct.calcsize(legacy_fmt):
+            has_reserved_counter = False
             fmt = legacy_fmt
-        if len(data) < struct.calcsize(fmt):
+        else:
             return None
 
         unpacked = struct.unpack_from(fmt, data)
@@ -949,9 +984,14 @@ class DebugProtocolParser:
             controller_target_current_total=unpacked[19],
             active_limit_current_c=unpacked[20],
             uptime_ticks=unpacked[21],
-            controller_fault_flags=unpacked[26] if has_diagnostics else 0,
-            controller_stop_reason=unpacked[27] if has_diagnostics else 0,
-            bms_stale=bool(unpacked[28]) if has_diagnostics else False
+            can1_tx_count=unpacked[22],
+            can1_rx_count=unpacked[23],
+            can2_tx_count=unpacked[24],
+            can2_rx_count=unpacked[25],
+            can_reserved_or_err=unpacked[26] if has_reserved_counter else 0,
+            controller_fault_flags=unpacked[27] if has_reserved_counter else unpacked[26],
+            controller_stop_reason=unpacked[28] if has_reserved_counter else unpacked[27],
+            bms_stale=bool(unpacked[29] if has_reserved_counter else unpacked[28])
         )
 
     def _parse_comm_stats(self, data: bytes) -> Optional[dict]:

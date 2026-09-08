@@ -76,6 +76,9 @@ typedef enum {
     CHG_LIB_ALARM_SHORT_CIRCUIT     = (1U << 4),  /* Ngắn mạch */
     CHG_LIB_ALARM_AC_UNDER_VOLT     = (1U << 5),  /* Áp đầu vào thấp */
     CHG_LIB_ALARM_OVER_CURR_OUT     = (1U << 6),  /* Quá dòng đầu ra */
+    CHG_LIB_ALARM_FAN_FAULT         = (1U << 7),  /* Fan fault */
+    CHG_LIB_ALARM_AC_OVER_VOLT      = (1U << 8),  /* AC input overvoltage */
+    CHG_LIB_ALARM_AC_PHASE_LOSS     = (1U << 9),  /* AC input phase loss */
     /* PFC-related alarms (bits 16-20, leaving room for future expansion) */
     CHG_LIB_ALARM_PFC_OVERVOLT      = (1U << 16), /* Bus overvoltage */
     CHG_LIB_ALARM_PFC_OVERCURR      = (1U << 17), /* Input overcurrent */

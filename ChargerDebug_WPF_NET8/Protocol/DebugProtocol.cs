@@ -17,7 +17,9 @@ namespace ChargerDebugApp.Protocol
         READ_BMS = 0x17,
         GET_SYSTEM = 0x18,
         GET_CHARGE_CFG = 0x19,
-        SET_CHARGE_CFG = 0x1A
+        SET_CHARGE_CFG = 0x1A,
+        SET_RTC = 0x1D,
+        GET_RTC = 0x1E
     }
 
     public enum DebugRsp : byte
@@ -29,7 +31,8 @@ namespace ChargerDebugApp.Protocol
         SYSTEM_INFO = 0x94,
         RAW_CAN_TX = 0x95,
         ERROR = 0x96,
-        CHARGE_CFG = 0x97
+        CHARGE_CFG = 0x97,
+        RTC = 0x9D
     }
 
     public class ModuleData
@@ -195,7 +198,7 @@ namespace ChargerDebugApp.Protocol
 
         public static SystemInfo? FromBytes(byte[] data)
         {
-            if (data.Length < 68) return null; // We only support the new format with diagnostics
+            if (data.Length < 68) return null; // We only support format with diagnostics
             using var ms = new MemoryStream(data);
             using var br = new BinaryReader(ms);
 
@@ -222,7 +225,14 @@ namespace ChargerDebugApp.Protocol
             s.ControllerTargetCurrentTotal = br.ReadSingle();
             s.ActiveLimitCurrentC = br.ReadSingle();
             s.UptimeTicks = br.ReadUInt32();
-            br.ReadBytes(20); // skip 5x uint32 CAN stats
+            if (data.Length >= 72)
+            {
+                br.ReadBytes(20); // skip 5x uint32 CAN stats
+            }
+            else
+            {
+                br.ReadBytes(16); // skip 4x uint32 CAN stats
+            }
             s.ControllerFaultFlags = br.ReadUInt32();
             s.ControllerStopReason = br.ReadByte();
             s.BmsStale = br.ReadByte() != 0;
@@ -244,57 +254,64 @@ namespace ChargerDebugApp.Protocol
             if (!Enum.IsDefined(typeof(DebugRsp), cmdByte)) return;
             DebugRsp cmd = (DebugRsp)cmdByte;
 
-            switch (cmd)
+            try
             {
-                case DebugRsp.ALL_MODULES:
-                    if (payload.Length < 2) return;
-                    byte seq = payload[0];
-                    byte count = payload[1];
-                    var list = new List<ModuleData>();
-                    int offset = 2;
-                    for (int i = 0; i < count; i++)
-                    {
-                        var m = ModuleData.FromBytes(payload, offset);
-                        if (m != null) list.Add(m);
-                        offset += 123;
-                    }
-                    OnAllModulesReceived?.Invoke(list);
-                    break;
-                case DebugRsp.MODULE_DATA:
-                    var singleMod = ModuleData.FromBytes(payload, 0);
-                    if (singleMod != null) OnModuleReceived?.Invoke(singleMod);
-                    break;
-                case DebugRsp.BMS_DATA:
-                    var bms = BMSData.FromBytes(payload);
-                    if (bms != null) OnBmsReceived?.Invoke(bms);
-                    break;
-                case DebugRsp.SYSTEM_INFO:
-                    var sys = SystemInfo.FromBytes(payload);
-                    if (sys != null) OnSystemInfoReceived?.Invoke(sys);
-                    break;
-                case DebugRsp.CHARGE_CFG:
-                    try
-                    {
-                        var cfg = ChargeCycleConfig.FromBytes(payload);
-                        OnChargeConfigReceived?.Invoke(cfg);
-                    }
-                    catch (Exception ex)
-                    {
-                        OnErrorReceived?.Invoke(0xFF, $"Failed to parse ChargeConfig: {ex.Message}");
-                    }
-                    break;
-                case DebugRsp.ERROR:
-                    byte errCode = payload.Length > 0 ? payload[0] : (byte)0;
-                    string errMsg = errCode switch
-                    {
-                        0x01 => "BAD_PARAM (Tham số không hợp lệ)",
-                        0x02 => "MODULE_OFFLINE (Mô-đun không phản hồi)",
-                        0x03 => "NOT_SUPPORTED (Không hỗ trợ)",
-                        0x04 => "FLASH_SAVE_FAIL (Lưu Flash thất bại)",
-                        _ => $"Lỗi mã 0x{errCode:X2}"
-                    };
-                    OnErrorReceived?.Invoke(errCode, errMsg);
-                    break;
+                switch (cmd)
+                {
+                    case DebugRsp.ALL_MODULES:
+                        if (payload.Length < 2) return;
+                        byte seq = payload[0];
+                        byte count = payload[1];
+                        var list = new List<ModuleData>();
+                        int offset = 2;
+                        for (int i = 0; i < count; i++)
+                        {
+                            var m = ModuleData.FromBytes(payload, offset);
+                            if (m != null) list.Add(m);
+                            offset += 123;
+                        }
+                        OnAllModulesReceived?.Invoke(list);
+                        break;
+                    case DebugRsp.MODULE_DATA:
+                        var singleMod = ModuleData.FromBytes(payload, 0);
+                        if (singleMod != null) OnModuleReceived?.Invoke(singleMod);
+                        break;
+                    case DebugRsp.BMS_DATA:
+                        var bms = BMSData.FromBytes(payload);
+                        if (bms != null) OnBmsReceived?.Invoke(bms);
+                        break;
+                    case DebugRsp.SYSTEM_INFO:
+                        var sys = SystemInfo.FromBytes(payload);
+                        if (sys != null) OnSystemInfoReceived?.Invoke(sys);
+                        break;
+                    case DebugRsp.CHARGE_CFG:
+                        try
+                        {
+                            var cfg = ChargeCycleConfig.FromBytes(payload);
+                            OnChargeConfigReceived?.Invoke(cfg);
+                        }
+                        catch (Exception ex)
+                        {
+                            OnErrorReceived?.Invoke(0xFF, $"Failed to parse ChargeConfig: {ex.Message}");
+                        }
+                        break;
+                    case DebugRsp.ERROR:
+                        byte errCode = payload.Length > 0 ? payload[0] : (byte)0;
+                        string errMsg = errCode switch
+                        {
+                            0x01 => "BAD_PARAM (Tham số không hợp lệ)",
+                            0x02 => "MODULE_OFFLINE (Mô-đun không phản hồi)",
+                            0x03 => "NOT_SUPPORTED (Không hỗ trợ)",
+                            0x04 => "FLASH_SAVE_FAIL (Lưu Flash thất bại)",
+                            _ => $"Lỗi mã 0x{errCode:X2}"
+                        };
+                        OnErrorReceived?.Invoke(errCode, errMsg);
+                        break;
+                }
+            }
+            catch (Exception ex)
+            {
+                OnErrorReceived?.Invoke(0xFE, $"Frame parse error: {ex.Message}");
             }
         }
     }

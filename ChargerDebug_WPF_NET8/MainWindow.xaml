@@ -2,7 +2,6 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="PKG Battery – Charger Controller Debug" Height="900" Width="1400"
-        Icon="app.ico"
         Background="#E2E8F0" WindowStartupLocation="CenterScreen" FontFamily="Segoe UI">
     
     <Window.Resources>
@@ -416,6 +415,7 @@
                                             <UniformGrid Columns="2">
                                                 <CheckBox Content="Enabled" IsChecked="{Binding Config.ProtectJackTempEnabled, Mode=TwoWay}" VerticalAlignment="Center" FontWeight="SemiBold" Margin="5,0"/> <TextBlock Text=""/>
                                                 <StackPanel Margin="0,5"><TextBlock Text="Threshold (C):" Style="{StaticResource LabelStyle}"/><TextBox Text="{Binding Config.ProtectJackTempThresholdC, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
+                                                <StackPanel Margin="0,5"><TextBlock Text="Trip Temp (C):" Style="{StaticResource LabelStyle}"/><TextBox Text="{Binding Config.ProtectJackTempTripC, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
                                                 <StackPanel Margin="0,5"><TextBlock Text="Delta (C):" Style="{StaticResource LabelStyle}"/><TextBox Text="{Binding Config.ProtectJackTempDeltaC, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
                                                 <StackPanel Margin="0,5"><TextBlock Text="Delay (s):" Style="{StaticResource LabelStyle}"/><TextBox Text="{Binding Config.ProtectJackTempDelayS, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
                                                 <StackPanel Margin="0,5"><TextBlock Text="Power Limit (%):" Style="{StaticResource LabelStyle}"/><TextBox Text="{Binding Config.ProtectJackTempPowerLimitPct, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>

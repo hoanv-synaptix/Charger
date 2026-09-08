@@ -34,24 +34,8 @@ public partial class App : Application
 
         base.OnStartup(e);
 
-        // Check for updates in background after MainWindow is shown
-        // Fire-and-forget: never blocks UI startup
-        MainWindow.Loaded += async (_, _) => await CheckForUpdateAsync();
-    }
-
-    private async System.Threading.Tasks.Task CheckForUpdateAsync()
-    {
-        var info = await UpdateService.CheckForUpdateAsync();
-        if (info is null) return;
-
-        // Show dialog on UI thread
-        await Dispatcher.InvokeAsync(() =>
-        {
-            var dialog = new UpdateDialog(info)
-            {
-                Owner = MainWindow
-            };
-            dialog.ShowDialog();
-        });
+        var mainWindow = new MainWindow();
+        MainWindow = mainWindow;
+        mainWindow.Show();
     }
 }

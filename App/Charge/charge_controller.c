@@ -107,6 +107,7 @@ static struct {
     /* Protection timers */
     uint32_t protect_jack_v_timer_tick;
     uint32_t protect_jack_temp_timer_tick;
+    uint32_t protect_jack_temp_trip_timer_tick;
     uint32_t module_mismatch_timer_tick;
 
     /* State change tracking for logging */
@@ -539,6 +540,14 @@ static uint32_t check_preconditions_faults(void) {
         faults |= CHARGE_CTRL_FAULT_INVALID_CONFIG;
     }
 
+    /* Check BMS online in BMS-controlled mode */
+    if (cfg.charge_source_mode == CHARGE_SOURCE_BMS_CONTROLLED && !g_ctrl.manual_mode) {
+        if (!BMS_IsOnline()) {
+            LOG("ChargeController_Check: BMS offline\r\n");
+            faults |= CHARGE_CTRL_FAULT_BMS_OFFLINE;
+        }
+    }
+
     return faults;
 }
 
@@ -656,6 +665,7 @@ static void stop_charging(void) {
     g_ctrl.applied_voltage_v = 0.0f;
     g_ctrl.applied_current_per_module_a = 0.0f;
     g_ctrl.standalone_vmax_reached_tick = 0;
+    g_ctrl.protect_jack_temp_trip_timer_tick = 0;
     g_ctrl.ramp_tick = 0;
     g_ctrl.last_running = 0;
 }
@@ -770,6 +780,29 @@ static void update_hard_protection(const ChargeCycleConfig_t *cfg,
         }
     } else {
         g_ctrl.protect_jack_v_timer_tick = 0;  /* Reset timer */
+    }
+
+    /* ----- Jack over-temperature trip protection (Hard Stop) -----
+     * If connector temp reaches or exceeds protect_jack_temp_trip_c (e.g. 75C)
+     * even after soft derating, stop charging and trigger FAULT. */
+    if (cfg->protect_jack_temp_enabled) {
+        if (g_ctrl.jack_temp_input_c >= cfg->protect_jack_temp_trip_c) {
+            if (g_ctrl.protect_jack_temp_trip_timer_tick == 0) {
+                g_ctrl.protect_jack_temp_trip_timer_tick = now_tick;
+                int trip_x10 = (int)(cfg->protect_jack_temp_trip_c * 10.0f);
+                LOG("CC: Jack temp TRIP protect started (trip=%d.%dC)\r\n", trip_x10 / 10, trip_x10 % 10);
+            } else {
+                uint32_t elapsed_s = (now_tick - g_ctrl.protect_jack_temp_trip_timer_tick) / 1000U;
+                if (elapsed_s >= cfg->protect_jack_temp_delay_s) {
+                    LOG("CC: Jack temp TRIP FAULT (%us)\r\n", (unsigned)elapsed_s);
+                    set_fault(CHARGE_CTRL_FAULT_PROTECT_JACK_TEMP, now_tick);
+                }
+            }
+        } else {
+            g_ctrl.protect_jack_temp_trip_timer_tick = 0;
+        }
+    } else {
+        g_ctrl.protect_jack_temp_trip_timer_tick = 0;
     }
 }
 
@@ -1478,6 +1511,7 @@ void ChargeController_Process(uint32_t now_tick) {
                 /* Clear protection timers */
                 g_ctrl.protect_jack_v_timer_tick = 0;
                 g_ctrl.protect_jack_temp_timer_tick = 0;
+                g_ctrl.protect_jack_temp_trip_timer_tick = 0;
             }
             break;
         }
@@ -1487,6 +1521,7 @@ void ChargeController_Process(uint32_t now_tick) {
             /* Clear protection timers */
             g_ctrl.protect_jack_v_timer_tick = 0;
             g_ctrl.protect_jack_temp_timer_tick = 0;
+            g_ctrl.protect_jack_temp_trip_timer_tick = 0;
             transition_to(CHARGE_CTRL_STATE_IDLE, now_tick);
             g_ctrl.owner = CHARGE_CTRL_OWNER_NONE;
             break;
@@ -1496,6 +1531,7 @@ void ChargeController_Process(uint32_t now_tick) {
             /* Clear protection timers */
             g_ctrl.protect_jack_v_timer_tick = 0;
             g_ctrl.protect_jack_temp_timer_tick = 0;
+            g_ctrl.protect_jack_temp_trip_timer_tick = 0;
             /* Stay in fault until explicitly cleared */
             break;
     }
@@ -1518,12 +1554,23 @@ bool ChargeController_Start(ChargeCtrlOwner_t owner, bool manual_mode, uint32_t 
         return true;  /* Already running */
     }
 
+    g_ctrl.owner = owner;
+    g_ctrl.manual_mode = manual_mode;
+
     /* Check preconditions BEFORE transitioning to READY */
     uint32_t faults = check_preconditions_faults();
     if (faults != CHARGE_CTRL_FAULT_NONE) {
         LOG("CC: Preconditions failed fault=0x%08lX\r\n", (unsigned long)faults);
         g_ctrl.fault_flags = faults;
-        g_ctrl.stop_reason = CHARGE_STOP_PRECONDITION;
+        if (faults & CHARGE_CTRL_FAULT_EMERGENCY_STOP) {
+            g_ctrl.stop_reason = CHARGE_STOP_EMERGENCY;
+        } else if (faults & CHARGE_CTRL_FAULT_BMS_OFFLINE) {
+            g_ctrl.stop_reason = CHARGE_STOP_BMS_OFFLINE;
+        } else if (faults & CHARGE_CTRL_FAULT_MODULE_COUNT_MISMATCH) {
+            g_ctrl.stop_reason = CHARGE_STOP_MODULE_MISMATCH;
+        } else {
+            g_ctrl.stop_reason = CHARGE_STOP_PRECONDITION;
+        }
         transition_to(CHARGE_CTRL_STATE_FAULT, now_tick);
         return false;
     }
@@ -1536,8 +1583,6 @@ bool ChargeController_Start(ChargeCtrlOwner_t owner, bool manual_mode, uint32_t 
     LOG("CC: Start src=%u act=%u\r\n",
         (unsigned)g_ctrl.source_module_count, (unsigned)g_ctrl.actual_module_count);
 
-    g_ctrl.owner = owner;
-    g_ctrl.manual_mode = manual_mode;
     g_ctrl.stop_reason = CHARGE_STOP_NONE;
     g_ctrl.standalone_vmax_reached_tick = 0;
     

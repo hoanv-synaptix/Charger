@@ -121,3 +121,36 @@ bool ChargeCycleStorage_Save(const ChargeCycleConfig_t *config)
     g_storage_save_called = true;
     return true;
 }
+
+/* Mock RTC stubs for host test */
+#include "bsp_rtc.h"
+
+static uint32_t s_mock_rtc_epoch = 1772866800U;
+static bool s_mock_rtc_valid = false;
+
+bool BSP_RTC_Init(void) { return true; }
+bool BSP_RTC_IsTimeValid(void) { return s_mock_rtc_valid; }
+bool BSP_RTC_SetEpoch(uint32_t epoch) { s_mock_rtc_epoch = epoch; s_mock_rtc_valid = true; return true; }
+uint32_t BSP_RTC_GetEpoch(void) { return s_mock_rtc_epoch; }
+bool BSP_RTC_GetDateTime(BSP_RTC_DateTime_t *dt) {
+    if (!dt) return false;
+    dt->year = 2026;
+    dt->month = 3;
+    dt->day = 7;
+    dt->hour = 7;
+    dt->minute = 0;
+    dt->second = 0;
+    dt->weekday = 6;
+    return true;
+}
+bool BSP_RTC_SetDateTime(const BSP_RTC_DateTime_t *dt) {
+    (void)dt;
+    s_mock_rtc_valid = true;
+    return true;
+}
+void BSP_RTC_FormatTime(char *buf, size_t buf_size) {
+    if (buf && buf_size > 0) snprintf(buf, buf_size, "07:00:00");
+}
+void BSP_RTC_FormatDateTime(char *buf, size_t buf_size) {
+    if (buf && buf_size > 0) snprintf(buf, buf_size, "2026-03-07 07:00:00");
+}

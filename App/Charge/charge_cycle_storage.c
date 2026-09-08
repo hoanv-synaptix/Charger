@@ -124,9 +124,9 @@ bool ChargeCycleStorage_Load(ChargeCycleConfig_t *config) {
 
 bool ChargeCycleStorage_Save(const ChargeCycleConfig_t *config) {
     ChargeCycleConfigRecord_t record;
-    /* BUG-02 fix: ChargeCycleConfigRecord_t is CONFIG_RECORD_SIZE (247B:
-     * 12B header + 235B payload) packed bytes, but flash writes must be
-     * ALIGNED_RECORD_SIZE (248B, rounded up to the G0 double-word boundary).
+    /* BUG-02 fix: ChargeCycleConfigRecord_t is CONFIG_RECORD_SIZE (251B:
+     * 12B header + 239B payload) packed bytes, but flash writes must be
+     * ALIGNED_RECORD_SIZE (256B, rounded up to the G0 double-word boundary).
      * Writing directly from &record for ALIGNED_RECORD_SIZE bytes reads past
      * the end of the local `record` variable (stack OOB read, UB) and burns
      * whatever

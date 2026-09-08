@@ -51,6 +51,7 @@
   "protect_jack_temp_threshold_c": 60.0,
   "protect_jack_temp_delta_c": 5.0,
   "protect_jack_temp_power_limit_pct": 50.0,
+  "protect_jack_temp_trip_c": 75.0,
   "charge_source_mode": 0,
   "can_battery_id": 1,
   "source_module_count": 1,

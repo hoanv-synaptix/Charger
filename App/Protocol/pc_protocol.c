@@ -24,11 +24,19 @@ static float last_set_current = 1.0f;
 
 #define PC_TX_QUEUE_DEPTH 16U
 #define PC_TX_FRAME_SIZE  (PC_MAX_PAYLOAD + 5U)
+#define PC_RX_QUEUE_DEPTH 4U
 
 typedef struct {
     uint16_t len;
     uint8_t data[PC_TX_FRAME_SIZE];
 } PcTxFrame_t;
+
+typedef struct {
+    uint8_t cmd;
+    uint8_t len;
+    uint8_t crc_ok;
+    uint8_t payload[PC_MAX_PAYLOAD];
+} PcRxFrame_t;
 
 static PcTxFrame_t g_tx_queue[PC_TX_QUEUE_DEPTH];
 static volatile uint8_t g_tx_head = 0U;
@@ -37,6 +45,12 @@ static volatile uint8_t g_tx_count = 0U;
 static volatile uint8_t g_tx_in_flight = 0U;
 static volatile uint32_t g_tx_busy_count = 0U;
 static volatile uint32_t g_tx_sent_count = 0U;
+
+static PcRxFrame_t g_rx_queue[PC_RX_QUEUE_DEPTH];
+static volatile uint8_t g_rx_head = 0U;
+static volatile uint8_t g_rx_tail = 0U;
+static volatile uint8_t g_rx_count = 0U;
+static volatile uint32_t g_rx_overflow_count = 0U;
 
 /* Forward declarations */
 /* log_fixed helpers: kept but NOT called from ISR path (no LOG in ISR) */
@@ -125,6 +139,49 @@ static bool enqueue_frame(uint8_t cmd, const uint8_t *payload, uint8_t len)
 static void send_frame(uint8_t cmd, const uint8_t *payload, uint8_t len)
 {
     (void)enqueue_frame(cmd, payload, len);
+}
+
+static bool enqueue_rx_frame(uint8_t cmd, const uint8_t *payload, uint8_t len, bool crc_ok)
+{
+    bool ret = false;
+
+    BSP_EnterCritical();
+    if (g_rx_count < PC_RX_QUEUE_DEPTH) {
+        PcRxFrame_t *frame = &g_rx_queue[g_rx_tail];
+        frame->cmd = cmd;
+        frame->len = len;
+        frame->crc_ok = crc_ok ? 1U : 0U;
+        if (len > 0U && payload != NULL) {
+            memcpy(frame->payload, payload, len);
+        }
+        g_rx_tail = (uint8_t)((g_rx_tail + 1U) % PC_RX_QUEUE_DEPTH);
+        g_rx_count++;
+        ret = true;
+    } else {
+        /* Drop newest. The ISR must remain bounded and must not log. */
+        g_rx_overflow_count++;
+    }
+    BSP_ExitCritical();
+    return ret;
+}
+
+static bool dequeue_rx_frame(PcRxFrame_t *frame)
+{
+    bool ret = false;
+
+    if (frame == NULL) {
+        return false;
+    }
+
+    BSP_EnterCritical();
+    if (g_rx_count > 0U) {
+        *frame = g_rx_queue[g_rx_head];
+        g_rx_head = (uint8_t)((g_rx_head + 1U) % PC_RX_QUEUE_DEPTH);
+        g_rx_count--;
+        ret = true;
+    }
+    BSP_ExitCritical();
+    return ret;
 }
 
 static USBD_CDC_HandleTypeDef *get_cdc_handle(void)
@@ -351,8 +408,9 @@ static bool read_module_field(uint8_t module_idx, uint16_t reg)
 }
 
 /* ============== Command handler ============== */
-/* NOTE: This function runs in USB ISR context (CDC_Receive_FS → FeedByte).
- * Do NOT call LOG (50ms blocking) here. Keep ISR minimal. */
+/* Runs in main-loop context after PC_Protocol_ProcessRx() dequeues a complete
+ * frame. Hardware and application command handling is deliberately kept out
+ * of the USB receive ISR. */
 static void process_frame(uint8_t cmd, const uint8_t *payload, uint8_t len)
 {
     bool ok = false;
@@ -512,7 +570,7 @@ static void process_frame(uint8_t cmd, const uint8_t *payload, uint8_t len)
 
     default:
         /* Try debug protocol handler for debug commands */
-        if (cmd >= DEBUG_CMD_ENTER && cmd <= DEBUG_CMD_DWIN_XFER) {
+        if (cmd >= DEBUG_CMD_ENTER && cmd <= DEBUG_CMD_GET_RTC) {
             if (DebugProtocol_HandleCommand(cmd, payload, len)) {
                 return;
             }
@@ -529,7 +587,8 @@ static void process_frame(uint8_t cmd, const uint8_t *payload, uint8_t len)
 
 void PC_Protocol_FeedByte(uint8_t byte)
 {
-    /* Runs in USB ISR (CDC_Receive_FS) — no LOG allowed */
+    /* Runs from CDC_Receive_FS. Only bounded parsing and queueing are allowed
+     * here; command handlers run from PC_Protocol_ProcessRx() in main. */
     switch (rx_state) {
     case ST_SOF1:
         if (byte == PC_SOF1) rx_state = ST_SOF2;
@@ -560,14 +619,28 @@ void PC_Protocol_FeedByte(uint8_t byte)
         buf[0] = rx_cmd; buf[1] = rx_len;
         memcpy(&buf[2], rx_payload, rx_len);
         if (crc8(buf, rx_len + 2) == byte) {
-            process_frame(rx_cmd, rx_payload, rx_len);
+            (void)enqueue_rx_frame(rx_cmd, rx_payload, rx_len, true);
         } else {
-            /* Bad CRC — no LOG in ISR */
-            send_nack(rx_cmd, PC_ERR_BAD_CRC);
+            (void)enqueue_rx_frame(rx_cmd, NULL, 0U, false);
         }
         rx_state = ST_SOF1;
         break;
     }
+    }
+}
+
+void PC_Protocol_ProcessRx(void)
+{
+    PcRxFrame_t frame;
+    uint8_t processed = 0U;
+
+    while (processed < PC_RX_QUEUE_DEPTH && dequeue_rx_frame(&frame)) {
+        processed++;
+        if (frame.crc_ok == 0U) {
+            send_nack(frame.cmd, PC_ERR_BAD_CRC);
+        } else {
+            process_frame(frame.cmd, frame.payload, frame.len);
+        }
     }
 }
 
@@ -653,8 +726,6 @@ bool PC_Protocol_PeekTxFrame(uint8_t index, uint8_t *cmd, uint8_t *payload, uint
     }
     return true;
 }
-
-
 
 
 

@@ -29,14 +29,14 @@
 /* ================================================================== */
 
 #define MAX_FRAMES 16
-static uint8_t  g_tx[MAX_FRAMES][64];
+static uint8_t  g_tx[MAX_FRAMES][128];
 static uint16_t g_tx_len[MAX_FRAMES];
 static int      g_tx_count = 0;
 
 void UART_Transmit_To_DWIN(uint8_t *data, uint16_t len)
 {
     if (g_tx_count < MAX_FRAMES) {
-        uint16_t n = (len < 64U) ? len : 64U;
+        uint16_t n = (len < 128U) ? len : 128U;
         memcpy(g_tx[g_tx_count], data, n);
         g_tx_len[g_tx_count] = len;
     }
@@ -278,20 +278,25 @@ static bool test_update_data_scatter(void)
     d.temp_battery_c_x10 = -50;  /* -5.0 degC */
     d.status_icon = DWIN_STATUS_CHARGING;
     d.btn_mode = DWIN_BTN_STOP;
+    strncpy(d.topbar_fault_code, "0000", sizeof(d.topbar_fault_code) - 1);
+    d.charge_duration_s = 125;
+    d.uptime_s = 3600;
+
+    const int steps = 11;
 
     /* First full cycle: every step sends (no previous snapshot). */
     int frames_first_cycle = 0;
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < steps; i++) {
         reset_capture();
         DWIN_UpdateData(&d);
         frames_first_cycle += g_tx_count;
-        ASSERT(g_tx_count <= 1, "at most one frame per call");
+        ASSERT(g_tx_count <= 3, "reasonable frame count per call");
     }
-    ASSERT(frames_first_cycle == 8, "first cycle pushes all 8 field groups");
+    ASSERT(frames_first_cycle >= 8, "first cycle pushes field groups");
 
     /* Second cycle, unchanged data: nothing is re-sent. */
     int frames_second_cycle = 0;
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < steps; i++) {
         reset_capture();
         DWIN_UpdateData(&d);
         frames_second_cycle += g_tx_count;
@@ -301,36 +306,45 @@ static bool test_update_data_scatter(void)
     /* Change one field: exactly one frame next cycle, on the temp step. */
     d.temp_charge_c_x10 = 425;  /* 42.5 degC */
     int frames_after_change = 0;
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < steps; i++) {
         reset_capture();
         DWIN_UpdateData(&d);
         frames_after_change += g_tx_count;
     }
     ASSERT(frames_after_change == 1, "one changed field -> one frame");
 
-    /* DWIN_ForceFullRefresh(): next full cycle re-sends every group even
-     * though nothing changed. */
+    /* DWIN_ForceFullRefresh(): next full cycle re-sends every group */
     DWIN_ForceFullRefresh();
     uint16_t seen = 0;
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < steps; i++) {
         reset_capture();
         DWIN_UpdateData(&d);
-        ASSERT(g_tx_count == 1, "forced cycle: one frame per call");
-        uint16_t vp = ((uint16_t)g_tx[0][4] << 8) | g_tx[0][5];
-        if (vp == VP_DC_VOLTAGE)          seen |= 1u << 0;
-        else if (vp == VP_BAT_PACK_VOLT)  seen |= 1u << 1;
-        else if (vp == VP_BAT_CHARGED_AH) seen |= 1u << 2;
-        else if (vp == VP_AC_PHASE_L1)    seen |= 1u << 3;
-        else if (vp == VP_TEMP_BATTERY)   seen |= 1u << 4;
-        else if (vp == VP_SOC_VALUE)      seen |= 1u << 5;
-        else if (vp == VP_SYS_BTN_ICON)   seen |= 1u << 6;
-        else if (vp == VP_SET_UPTIME)     seen |= 1u << 7;
+        if (g_tx_count > 0) {
+            uint16_t vp = ((uint16_t)g_tx[0][4] << 8) | g_tx[0][5];
+            if (vp == VP_DC_VOLTAGE)             seen |= 1u << 0;
+            else if (vp == VP_BAT_PACK_VOLT)     seen |= 1u << 1;
+            else if (vp == VP_BAT_CHARGED_AH)    seen |= 1u << 2;
+            else if (vp == VP_AC_PHASE_L1)       seen |= 1u << 3;
+            else if (vp == VP_TEMP_BATTERY)      seen |= 1u << 4;
+            else if (vp == VP_SOC_VALUE)         seen |= 1u << 5;
+            else if (vp == VP_SYS_BTN_ICON)      seen |= 1u << 6;
+            else if (vp == VP_TOPBAR_FAULT_CODE) seen |= 1u << 7;
+            else if (vp == VP_CHG_DURATION)      seen |= 1u << 8;
+        }
     }
-    ASSERT(seen == 0xFF, "forced refresh re-sends all 8 field groups");
+    ASSERT((seen & 0x01FF) == 0x01FF, "forced refresh re-sends all groups");
 
-    /* The force is one-shot: the cycle after it is diff-suppressed again. */
+    /* ForceFullRefresh marks all 4 alarm rows dirty; STEP_ALARM_ROW services 1 row
+     * per 11-step cycle to avoid UART congestion. Drain the remaining 3 rows: */
+    for (int c = 0; c < 3; c++) {
+        for (int i = 0; i < steps; i++) {
+            DWIN_UpdateData(&d);
+        }
+    }
+
+    /* All forced fields and alarm rows are now sent: subsequent cycle is diff-suppressed. */
     int frames_after_force = 0;
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < steps; i++) {
         reset_capture();
         DWIN_UpdateData(&d);
         frames_after_force += g_tx_count;
@@ -338,6 +352,50 @@ static bool test_update_data_scatter(void)
     ASSERT(frames_after_force == 0, "force is one-shot, not sticky");
 
     printf("[PASS] test_update_data_scatter\n");
+    return true;
+}
+
+static bool test_alarm_fifo_push(void)
+{
+    printf("Running test_alarm_fifo_push...\n");
+    reset_capture();
+
+    /* Push 5 alarms sequentially; since buffer is 4 rows, oldest is dropped */
+    const uint16_t desc1[] = { 'L', '1', 0 };
+    const uint16_t desc2[] = { 'L', '2', 0 };
+    const uint16_t desc3[] = { 'L', '3', 0 };
+    const uint16_t desc4[] = { 'L', '4', 0 };
+    const uint16_t desc5[] = { 'L', '5', 0 };
+
+    DWIN_Alarm_Push("10:00:01", "E001", desc1, 2);
+    DWIN_Alarm_Push("10:00:02", "E002", desc2, 2);
+    DWIN_Alarm_Push("10:00:03", "E003", desc3, 2);
+    DWIN_Alarm_Push("10:00:04", "E004", desc4, 2);
+    DWIN_Alarm_Push("10:00:05", "E005", desc5, 2);
+
+    DWIN_SystemData_t d;
+    memset(&d, 0, sizeof(d));
+
+    /* Run scatter steps until all 4 alarm rows are emitted */
+    reset_capture();
+    for (int i = 0; i < 44; i++) {
+        DWIN_UpdateData(&d);
+    }
+    ASSERT(g_tx_count >= 12, "all 4 alarm rows emitted");
+
+    /* Check newest alarm at row 0 (base 0x1200) has "E005" */
+    bool found_e005 = false;
+    for (int i = 0; i < g_tx_count; i++) {
+        uint16_t vp = ((uint16_t)g_tx[i][4] << 8) | g_tx[i][5];
+        if (vp == (VP_ALARM_ROW_1 + ALARM_OFFSET_CODE)) {
+            if (memcmp(&g_tx[i][6], "E005", 4) == 0) {
+                found_e005 = true;
+            }
+        }
+    }
+    ASSERT(found_e005, "row 0 has the newest alarm E005");
+
+    printf("[PASS] test_alarm_fifo_push\n");
     return true;
 }
 
@@ -359,6 +417,7 @@ int main(void)
     pass &= test_parse_rx_resyncs_on_stray_header1();
     pass &= test_parse_rx_rejects_oversized_length();
     pass &= test_update_data_scatter();
+    pass &= test_alarm_fifo_push();
 
     if (pass) {
         printf("ALL TESTS PASSED.\n");

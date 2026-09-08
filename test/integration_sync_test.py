@@ -189,8 +189,8 @@ PC_CMD_SET_DRIVER = 0x09
 PC_RSP_ACK = 0x82
 PC_RSP_NACK = 0x83
 
-# DebugSystemInfo_t (packed, 68 bytes) -- App/Protocol/pc_debug_protocol.h
-SYSTEM_INFO_FMT = "<14B7f5I I 2B"
+# DebugSystemInfo_t (packed, 72 bytes) -- App/Protocol/pc_debug_protocol.h
+SYSTEM_INFO_FMT = "<14B7f6I I 2B"
 SYSTEM_INFO_KEYS = [
     "fw_major", "fw_minor", "fw_patch", "driver_id", "modules_total",
     "modules_online", "modules_fault", "charging", "controller_state",
@@ -199,6 +199,7 @@ SYSTEM_INFO_KEYS = [
     "total_voltage", "total_current", "total_power_in", "max_temp_dcdc",
     "controller_target_voltage", "controller_target_current_total", "active_limit_current_c",
     "uptime_ticks", "can1_tx_count", "can1_rx_count", "can2_tx_count", "can2_rx_count",
+    "can_reserved_or_err",
     "controller_fault_flags", "controller_stop_reason", "bms_stale",
 ]
 CHARGE_CTRL_STATE_RUNNING = 2

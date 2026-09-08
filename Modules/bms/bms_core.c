@@ -315,25 +315,11 @@ void BMS_Process(uint32_t now_tick)
 
     /* ---- State Machine ---- */
     if (g_bms_state == BMS_STATE_OFFLINE) {
-        /* Transition to ONLINE as soon as any valid frame has been parsed;
-         * `elapsed` has no bearing on leaving OFFLINE (removed a dead
-         * if/else that branched on it without doing anything -- DES-01). */
-        if (has_any_valid_bms_data()) {
+        /* Transition to ONLINE as soon as any valid frame has been parsed and
+         * elapsed is within timeout. */
+        if (has_any_valid_bms_data() && elapsed < BMS_OFFLINE_TIMEOUT_MS) {
             g_bms_state = BMS_STATE_ONLINE;
             g_bms_view.online = true;
-            /* BUGFIX: BMS_ALARM_BMS_OFFLINE is set when entering OFFLINE
-             * (below) and explicitly preserved by the ISR's
-             * update_alarm_flags() (see BUG-06's preserve_mask) -- nothing
-             * used to clear it on the way back to ONLINE, so once a BMS
-             * dropped out even briefly it stayed permanently flagged
-             * "offline" (State shows FAULT, alarm list shows "BMS
-             * offline") even long after real connectivity recovered and
-             * `online` was already back to true. Same bug class as the
-             * already-fixed BUG-04 STALE_DATA latch, just for this bit --
-             * missed because it isn't touched anywhere else. Same
-             * BSP_EnterCritical()/ExitCritical() guard as the STALE_DATA
-             * clear a few lines down, since alarm_flags is a
-             * read-modify-write the ISR also writes. */
             BSP_EnterCritical();
             g_bms_view.alarm_flags &= (BMS_AlarmFlag_t)~BMS_ALARM_BMS_OFFLINE;
             BSP_ExitCritical();
@@ -343,14 +329,13 @@ void BMS_Process(uint32_t now_tick)
     else if (g_bms_state == BMS_STATE_ONLINE) {
         if (elapsed >= BMS_OFFLINE_TIMEOUT_MS) {
             g_bms_state = BMS_STATE_OFFLINE;
-            /* Clear all parsed data AND the cached view so a stale voltage/
-             * SOC/temperature reading is never mistaken for live telemetry
-             * while OFFLINE (BUGFIX BUG-03: previously only g_bms_data was
-             * cleared -- g_bms_view kept the last-known values). */
-            memset((void *)&g_bms_data, 0, sizeof(g_bms_data));
-            memset((void *)&g_bms_view, 0, sizeof(g_bms_view));
+            /* Retain last-known good telemetry in g_bms_view (SOC, pack voltage,
+             * capacity, temperatures) so HMI and PC app do not reset to 0
+             * while OFFLINE. Only flag offline status and raise alarm. */
             g_bms_view.online = false;
-            g_bms_view.alarm_flags = BMS_ALARM_BMS_OFFLINE;
+            BSP_EnterCritical();
+            g_bms_view.alarm_flags |= BMS_ALARM_BMS_OFFLINE;
+            BSP_ExitCritical();
             LOG("BMS: OFFLINE (timeout after %lu ms from tick %lu, now %lu)\r\n",
                 (unsigned long)elapsed, (unsigned long)last_rx_snapshot, (unsigned long)now_tick);
         } else {
@@ -386,11 +371,10 @@ void BMS_Process(uint32_t now_tick)
             /* A faulted BMS can still lose communication.  Connectivity
              * timeout must always win over the previous alarm state. */
             g_bms_state = BMS_STATE_OFFLINE;
-            /* BUGFIX BUG-03: see the matching comment in the ONLINE branch. */
-            memset((void *)&g_bms_data, 0, sizeof(g_bms_data));
-            memset((void *)&g_bms_view, 0, sizeof(g_bms_view));
             g_bms_view.online = false;
-            g_bms_view.alarm_flags = BMS_ALARM_BMS_OFFLINE;
+            BSP_EnterCritical();
+            g_bms_view.alarm_flags |= BMS_ALARM_BMS_OFFLINE;
+            BSP_ExitCritical();
             LOG("BMS: OFFLINE (timeout while faulted)\r\n");
         } else {
             g_bms_view.online = true;

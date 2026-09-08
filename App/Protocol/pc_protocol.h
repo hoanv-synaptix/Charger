@@ -82,6 +82,9 @@ _Static_assert(sizeof(PC_StatusReport_t) == 51, "PC_StatusReport_t must stay 51 
 /** Nạp 1 byte từ USB CDC RX vào parser */
 void PC_Protocol_FeedByte(uint8_t byte);
 
+/** Process complete frames queued by the USB RX parser in main-loop context. */
+void PC_Protocol_ProcessRx(void);
+
 /** Gửi status report về PC (gọi định kỳ) */
 void PC_Protocol_SendStatus(void);
 
@@ -117,10 +120,8 @@ uint8_t PC_Protocol_GetTxQueueDepth(void);
  *  does not affect PC_Protocol_ProcessTx()'s send order. */
 bool PC_Protocol_PeekTxFrame(uint8_t index, uint8_t *cmd, uint8_t *payload, uint8_t *payload_len);
 
-/** Firmware version */
-#define FW_VERSION_MAJOR    2
-#define FW_VERSION_MINOR    0
-#define FW_VERSION_PATCH    0
+/** Firmware and hardware version */
+#include "app_version.h"
 
 #endif /* PC_PROTOCOL_H */
 

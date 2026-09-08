@@ -9,13 +9,14 @@
  */
 #include "dwin_protocol.h"
 #include <string.h>
+#include <stdio.h>
 
 /* Provided by BSP (bsp_rs485.c): drives DE and blocks on HAL_UART_Transmit. */
 extern void UART_Transmit_To_DWIN(uint8_t *data, uint16_t len);
 
-/* Largest word count we ever send in one 0x82 frame (string fields are the
- * widest at 8 words). Bounds every stack buffer below. */
-#define DWIN_TX_MAX_WORDS  8U
+/* Largest word count we ever send in one 0x82 frame (alarm description is 32 words).
+ * Bounds every stack buffer below. */
+#define DWIN_TX_MAX_WORDS  34U
 
 /* RX reassembly bound -- a touch upload is 9 bytes; anything claiming a
  * payload longer than this is noise. */
@@ -43,7 +44,6 @@ static void dwin_write_frame(uint16_t vp, const uint8_t *payload, uint8_t payloa
     if (payload_len > 0U) {
         memcpy(&buf[6], payload, payload_len);
     }
-
     UART_Transmit_To_DWIN(buf, (uint16_t)(6U + payload_len));
 }
 
@@ -56,7 +56,7 @@ void DWIN_SendWords(uint16_t vp, const uint16_t *words, uint8_t n_words)
     }
 
     for (uint8_t i = 0; i < n_words; i++) {
-        payload[2U * i]      = (uint8_t)(words[i] >> 8);
+        payload[2U * i]        = (uint8_t)(words[i] >> 8);
         payload[(2U * i) + 1U] = (uint8_t)(words[i] & 0xFFU);
     }
     dwin_write_frame(vp, payload, (uint8_t)(2U * n_words));
@@ -105,22 +105,19 @@ void DWIN_SendSettingStrings(const char *hw_ver, const char *fw_ver,
                              const char *device_id)
 {
     if (hw_ver != NULL) {
-        DWIN_SendString(VP_SET_HW_VER, hw_ver, VP_SET_STR_WORDS);
+        DWIN_SendString(VP_SET_HW_VER, hw_ver, VP_SET_ID_WORDS);
     }
     if (fw_ver != NULL) {
-        DWIN_SendString(VP_SET_FW_VER, fw_ver, VP_SET_STR_WORDS);
+        DWIN_SendString(VP_SET_FW_VER, fw_ver, VP_SET_ID_WORDS);
     }
     if (device_id != NULL) {
-        DWIN_SendString(VP_SET_DEVICE_ID, device_id, VP_SET_STR_WORDS);
+        DWIN_SendString(VP_SET_DEVICE_ID, device_id, VP_SET_ID_WORDS);
     }
 }
 
 void DWIN_SetRTC(uint16_t year, uint8_t month, uint8_t day,
                  uint8_t hour, uint8_t minute, uint8_t second)
 {
-    /* guide sec 5.1, 0x009C: write 0x5AA5 to arm, then 009D=YY:MM,
-     * 009E=DD:HH, 009F=MM:SS (packed hi:lo, all HEX). One 4-word write from
-     * 0x009C does all of it. */
     uint16_t w[4];
 
     w[0] = 0x5AA5U;
@@ -130,32 +127,96 @@ void DWIN_SetRTC(uint16_t year, uint8_t month, uint8_t day,
     DWIN_SendWords(VP_SYS_RTC_SET, w, 4);
 }
 
+/* ===================== Alarm FIFO Ring Buffer ===================== */
+
+typedef struct {
+    char     time_str[9];
+    char     code_str[9];
+    uint16_t desc_utf16[33];
+    uint8_t  desc_len;
+    bool     valid;
+} DwinAlarmRowInternal_t;
+
+static DwinAlarmRowInternal_t s_alarm_rows[VP_ALARM_ROW_COUNT];
+static uint8_t s_alarm_dirty = 0U; /* bitmask of rows 0..3 needing update */
+
+void DWIN_Alarm_Push(const char *time_str, const char *code_str,
+                     const uint16_t *desc_utf16, uint8_t desc_len)
+{
+    /* Shift rows 0..2 down to 1..3 */
+    for (int8_t i = (int8_t)VP_ALARM_ROW_COUNT - 1; i > 0; i--) {
+        s_alarm_rows[i] = s_alarm_rows[i - 1];
+    }
+
+    memset(&s_alarm_rows[0], 0, sizeof(s_alarm_rows[0]));
+    if (time_str != NULL) {
+        strncpy(s_alarm_rows[0].time_str, time_str, sizeof(s_alarm_rows[0].time_str) - 1U);
+    }
+    if (code_str != NULL) {
+        strncpy(s_alarm_rows[0].code_str, code_str, sizeof(s_alarm_rows[0].code_str) - 1U);
+    }
+    if (desc_utf16 != NULL && desc_len > 0U) {
+        uint8_t n = (desc_len > 32U) ? 32U : desc_len;
+        memcpy(s_alarm_rows[0].desc_utf16, desc_utf16, n * sizeof(uint16_t));
+        s_alarm_rows[0].desc_len = n;
+    }
+    s_alarm_rows[0].valid = true;
+
+    /* Mark all rows dirty so they emit across subsequent scatter ticks */
+    s_alarm_dirty = (1U << VP_ALARM_ROW_COUNT) - 1U;
+}
+
+void DWIN_Alarm_ClearAll(void)
+{
+    memset(s_alarm_rows, 0, sizeof(s_alarm_rows));
+    s_alarm_dirty = (1U << VP_ALARM_ROW_COUNT) - 1U;
+}
+
+static void dwin_emit_alarm_row(uint8_t row)
+{
+    if (row >= VP_ALARM_ROW_COUNT) {
+        return;
+    }
+    uint16_t base = VP_ALARM_ROW_BASE + ((uint16_t)row * VP_ALARM_ROW_STRIDE);
+
+    DWIN_SendString(base + ALARM_OFFSET_TIME, s_alarm_rows[row].time_str, 4);
+    DWIN_SendString(base + ALARM_OFFSET_CODE, s_alarm_rows[row].code_str, 4);
+
+    uint16_t desc_buf[32];
+    memset(desc_buf, 0, sizeof(desc_buf));
+    uint8_t n = s_alarm_rows[row].desc_len;
+    if (n > 32U) {
+        n = 32U;
+    }
+    for (uint8_t i = 0; i < n; i++) {
+        desc_buf[i] = s_alarm_rows[row].desc_utf16[i];
+    }
+    DWIN_SendWords(base + ALARM_OFFSET_DESC, desc_buf, 32);
+}
+
 /* ===================== TX: dashboard scatter ===================== */
 
-/* One field-group per DWIN_UpdateData() call. Contiguous VPs are grouped
- * into a single multi-word write. The button is split across two VPs:
- * STEP_BTN_MODE writes the label icon to VP_SYS_BTN_ICON (0x1042, MCU->panel
- * only); the panel uploads presses on VP_SYS_BTN_KEY (0x1043), which the MCU
- * never writes -- so no collision, no clear/restore dance. */
 enum {
-    STEP_DC = 0,      /* 0x1000..0x1002 */
-    STEP_BATT_V,      /* 0x1010..0x1011 */
-    STEP_CHARGED_AH,  /* 0x1012..0x1013 (u32) */
-    STEP_AC,          /* 0x1020..0x1022 */
-    STEP_TEMP,        /* 0x1030..0x1032 (i16) */
-    STEP_SOC_STATUS,  /* 0x1040..0x1041 */
-    STEP_BTN_MODE,    /* 0x1043 */
-    STEP_UPTIME,      /* 0x1118..0x1119 (u32) */
+    STEP_DC = 0,         /* 0x1000..0x1002 */
+    STEP_BATT_V,         /* 0x1010..0x1011 */
+    STEP_CHARGED_AH,     /* 0x1012..0x1013 (u32) */
+    STEP_AC,             /* 0x1020..0x1022 */
+    STEP_TEMP,           /* 0x1030..0x1032 (i16) */
+    STEP_SOC_STATUS,     /* 0x1040..0x1041 */
+    STEP_BTN_MODE,       /* 0x1042 */
+    STEP_TOPBAR_FAULT,   /* 0x1044..0x1047 (Text GBK, 4 words) */
+    STEP_CHG_DURATION,   /* 0x1050..0x1057 (Text GBK, 8 words) */
+    STEP_SETTING_STATS,  /* 0x1118..0x112F (Uptime, Total Ah, Total kWh) */
+    STEP_ALARM_ROW,      /* Emit 1 alarm row if dirty */
     STEP_COUNT
 };
 
-/* >0 => the next this-many DWIN_UpdateData() calls send unconditionally
- * (one full scatter cycle). Only touched from the main loop. */
 static uint8_t s_force_steps = 0;
 
 void DWIN_ForceFullRefresh(void)
 {
     s_force_steps = (uint8_t)STEP_COUNT;
+    s_alarm_dirty = (1U << VP_ALARM_ROW_COUNT) - 1U;
 }
 
 void DWIN_UpdateData(const DWIN_SystemData_t *d)
@@ -179,10 +240,10 @@ void DWIN_UpdateData(const DWIN_SystemData_t *d)
     case STEP_DC:
         if (first || prev.dc_voltage_x10 != d->dc_voltage_x10 ||
             prev.dc_current_x10 != d->dc_current_x10 ||
-            prev.dc_power_w != d->dc_power_w) {
+            prev.dc_power_x10_kw != d->dc_power_x10_kw) {
             w[0] = d->dc_voltage_x10;
             w[1] = d->dc_current_x10;
-            w[2] = d->dc_power_w;
+            w[2] = d->dc_power_x10_kw;
             DWIN_SendWords(VP_DC_VOLTAGE, w, 3);
         }
         break;
@@ -194,13 +255,22 @@ void DWIN_UpdateData(const DWIN_SystemData_t *d)
             w[1] = d->bat_cell_volt_x100;
             DWIN_SendWords(VP_BAT_PACK_VOLT, w, 2);
         }
+        if (first || strncmp(prev.bat_pack_volt_text, d->bat_pack_volt_text, sizeof(d->bat_pack_volt_text)) != 0) {
+            DWIN_SendString(VP_BAT_PACK_VOLT_TEXT, d->bat_pack_volt_text, 4);
+        }
+        if (first || strncmp(prev.bat_cell_volt_text, d->bat_cell_volt_text, sizeof(d->bat_cell_volt_text)) != 0) {
+            DWIN_SendString(VP_BAT_CELL_VOLT_TEXT, d->bat_cell_volt_text, 4);
+        }
         break;
 
     case STEP_CHARGED_AH:
         if (first || prev.charged_ah_x10 != d->charged_ah_x10) {
-            w[0] = (uint16_t)(d->charged_ah_x10 >> 16);
-            w[1] = (uint16_t)(d->charged_ah_x10 & 0xFFFFU);
+            w[0] = (uint16_t)(d->charged_ah_x10 & 0xFFFFU);
+            w[1] = 0U;
             DWIN_SendWords(VP_BAT_CHARGED_AH, w, 2);
+        }
+        if (first || strncmp(prev.bat_cap_text, d->bat_cap_text, sizeof(d->bat_cap_text)) != 0) {
+            DWIN_SendString(VP_BAT_CHARGED_AH_TEXT, d->bat_cap_text, 4);
         }
         break;
 
@@ -223,6 +293,9 @@ void DWIN_UpdateData(const DWIN_SystemData_t *d)
             w[2] = (uint16_t)d->temp_jack_c_x10;
             DWIN_SendWords(VP_TEMP_BATTERY, w, 3);
         }
+        if (first || strncmp(prev.temp_battery_text, d->temp_battery_text, sizeof(d->temp_battery_text)) != 0) {
+            DWIN_SendString(VP_TEMP_BATTERY_TEXT, d->temp_battery_text, 4);
+        }
         break;
 
     case STEP_SOC_STATUS:
@@ -231,6 +304,9 @@ void DWIN_UpdateData(const DWIN_SystemData_t *d)
             w[0] = d->soc_pct;
             w[1] = d->status_icon;
             DWIN_SendWords(VP_SOC_VALUE, w, 2);
+        }
+        if (first || strncmp(prev.soc_text, d->soc_text, sizeof(d->soc_text)) != 0) {
+            DWIN_SendString(VP_SOC_TEXT, d->soc_text, 4);
         }
         break;
 
@@ -241,11 +317,66 @@ void DWIN_UpdateData(const DWIN_SystemData_t *d)
         }
         break;
 
-    case STEP_UPTIME:
-        if (first || prev.uptime_s != d->uptime_s) {
-            w[0] = (uint16_t)(d->uptime_s >> 16);
-            w[1] = (uint16_t)(d->uptime_s & 0xFFFFU);
-            DWIN_SendWords(VP_SET_UPTIME, w, 2);
+    case STEP_TOPBAR_FAULT:
+        if (first || strncmp(prev.topbar_fault_code, d->topbar_fault_code, sizeof(d->topbar_fault_code)) != 0) {
+            DWIN_SendString(VP_TOPBAR_FAULT_CODE, d->topbar_fault_code, 4);
+        }
+        break;
+
+    case STEP_CHG_DURATION: {
+        char dur_str[16];
+        if (d->footer_time_str[0] != '\0') {
+            strncpy(dur_str, d->footer_time_str, sizeof(dur_str) - 1U);
+            dur_str[sizeof(dur_str) - 1U] = '\0';
+        } else {
+            uint32_t s = d->charge_duration_s;
+            uint32_t h = s / 3600U;
+            uint32_t m = (s % 3600U) / 60U;
+            uint32_t sec = s % 60U;
+            (void)snprintf(dur_str, sizeof(dur_str), "%02u:%02u:%02u",
+                           (unsigned)h, (unsigned)m, (unsigned)sec);
+        }
+        if (first || prev.charge_duration_s != d->charge_duration_s ||
+            strncmp(prev.footer_time_str, d->footer_time_str, sizeof(d->footer_time_str)) != 0) {
+            DWIN_SendString(VP_CHG_DURATION, dur_str, 8);
+        }
+        break;
+    }
+
+    case STEP_SETTING_STATS:
+        if (first || prev.uptime_s != d->uptime_s ||
+            prev.total_charged_ah_x10 != d->total_charged_ah_x10 ||
+            prev.total_energy_kwh_x10 != d->total_energy_kwh_x10) {
+            char str[16];
+            (void)snprintf(str, sizeof(str), "%lu.%u Ah",
+                           (unsigned long)(d->total_charged_ah_x10 / 10U),
+                           (unsigned)(d->total_charged_ah_x10 % 10U));
+            DWIN_SendString(VP_SET_TOTAL_CHARGED, str, 8);
+
+            (void)snprintf(str, sizeof(str), "%lu.%u kWh",
+                           (unsigned long)(d->total_energy_kwh_x10 / 10U),
+                           (unsigned)(d->total_energy_kwh_x10 % 10U));
+            DWIN_SendString(VP_SET_TOTAL_ENERGY, str, 8);
+
+            uint32_t u = d->uptime_s;
+            uint32_t uh = u / 3600U;
+            uint32_t um = (u % 3600U) / 60U;
+            uint32_t us = u % 60U;
+            (void)snprintf(str, sizeof(str), "%02u:%02u:%02u",
+                           (unsigned)uh, (unsigned)um, (unsigned)us);
+            DWIN_SendString(VP_SET_UPTIME, str, 8);
+        }
+        break;
+
+    case STEP_ALARM_ROW:
+        if (s_alarm_dirty != 0U) {
+            for (uint8_t r = 0; r < VP_ALARM_ROW_COUNT; r++) {
+                if ((s_alarm_dirty & (1U << r)) != 0U) {
+                    dwin_emit_alarm_row(r);
+                    s_alarm_dirty &= ~(1U << r);
+                    break; /* Emit ONE row per scatter cycle */
+                }
+            }
         }
         break;
 
@@ -274,11 +405,9 @@ void DWIN_OnActionButton(uint16_t keyval)
 
 void DWIN_ParseRX(const uint8_t *buf, uint16_t len)
 {
-    /* State persists across calls -- the RS485 RX ISR feeds this one byte
-     * (or one chunk) at a time from the ring buffer. */
     static uint8_t  rx[DWIN_RX_MAX_LEN];
     static uint8_t  idx = 0;
-    static uint8_t  expected = 0;   /* value of the LEN byte */
+    static uint8_t  expected = 0;
 
     if (buf == NULL) {
         return;
@@ -295,7 +424,6 @@ void DWIN_ParseRX(const uint8_t *buf, uint16_t len)
             if (b == DWIN_HEADER_2) {
                 rx[idx++] = b;
             } else {
-                /* resync: a stray HEADER_1 starts a fresh frame */
                 idx = 0;
                 if (b == DWIN_HEADER_1) {
                     rx[idx++] = b;
@@ -304,24 +432,18 @@ void DWIN_ParseRX(const uint8_t *buf, uint16_t len)
         } else if (idx == 2U) {
             expected = b;
             rx[idx++] = b;
-            /* LEN must fit: header(3) + LEN bytes <= buffer, and a touch
-             * upload is LEN=6. Reject anything absurd. */
             if (expected == 0U || (uint16_t)(expected + 3U) > DWIN_RX_MAX_LEN) {
                 idx = 0;
             }
         } else {
             rx[idx++] = b;
             if (idx >= (uint8_t)(expected + 3U)) {
-                /* full frame: rx[3]=cmd, rx[4..5]=vp, rx[6]=n_words, rx[7..]=data */
                 if (rx[3] == DWIN_CMD_READ && expected >= 6U) {
                     uint16_t vp = (uint16_t)(((uint16_t)rx[4] << 8) | rx[5]);
                     uint8_t  nw = rx[6];
                     if (vp == VP_SYS_BTN_KEY && nw >= 1U) {
                         uint16_t keyval =
                             (uint16_t)(((uint16_t)rx[7] << 8) | rx[8]);
-                        /* Any non-zero upload of 0x1043 is a button press
-                         * (fixed keycode). The label icon lives on a
-                         * separate VP (0x1042), so nothing to clear here. */
                         if (keyval != 0U) {
                             DWIN_OnActionButton(keyval);
                         }

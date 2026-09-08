@@ -371,6 +371,64 @@ static bool test_driver_fault_recovery_debounce(uint8_t module_type, const char 
     return true;
 }
 
+static bool test_distinct_module_alarm(uint8_t module_type,
+                                       uint32_t maxwell_raw,
+                                       uint16_t lianming_raw,
+                                       uint16_t tonhe_raw,
+                                       CHG_LIB_AlarmFlag_t expected,
+                                       CHG_LIB_AlarmFlag_t forbidden,
+                                       const char *label)
+{
+    ASSERT(setup_scenario(module_type, NULL), "setup failed");
+    set_healthy_bms(400.0f, 50);
+    ASSERT(warmup_and_start(1500U, 4000U), "module never reached RUNNING");
+
+    g_sim_module.maxwell_alarm_raw = maxwell_raw;
+    g_sim_module.lianming_status_raw = lianming_raw;
+    g_sim_module.tonhe_fault_bits = tonhe_raw;
+    drive_ms(800U);
+
+    CHG_LIB_ModuleView_t mv;
+    ASSERT(CHG_LIB_GetModuleView(0, &mv), "module view unavailable");
+    if ((mv.alarm_flags & expected) == 0U) {
+        printf("[FAIL] %s: expected flag 0x%08lX, got 0x%08lX\n",
+               label, (unsigned long)expected, (unsigned long)mv.alarm_flags);
+        return false;
+    }
+    if ((mv.alarm_flags & forbidden) != 0U) {
+        printf("[FAIL] %s: incorrectly collapsed into 0x%08lX\n",
+               label, (unsigned long)forbidden);
+        return false;
+    }
+    ASSERT(mv.state == CHG_LIB_STATE_FAULT, "specific module alarm should enter FAULT");
+    return true;
+}
+
+static bool test_distinct_module_alarm_matrix(void)
+{
+    printf("Running test_distinct_module_alarm_matrix...\n");
+    ASSERT(test_distinct_module_alarm(CHARGE_MODULE_TYPE_MAXWELL, (1U << 27), 0, 0,
+                                      CHG_LIB_ALARM_FAN_FAULT, CHG_LIB_ALARM_HW_FAULT,
+                                      "Maxwell fan fault"), "Maxwell fan test failed");
+    ASSERT(test_distinct_module_alarm(CHARGE_MODULE_TYPE_MAXWELL, (1U << 9), 0, 0,
+                                      CHG_LIB_ALARM_AC_OVER_VOLT, CHG_LIB_ALARM_OVER_VOLTAGE_OUT,
+                                      "Maxwell AC input overvoltage"), "Maxwell AC OV test failed");
+    ASSERT(test_distinct_module_alarm(CHARGE_MODULE_TYPE_LIANMING, 0, (1U << 3), 0,
+                                      CHG_LIB_ALARM_FAN_FAULT, CHG_LIB_ALARM_HW_FAULT,
+                                      "Lianming fan fault"), "Lianming fan test failed");
+    ASSERT(test_distinct_module_alarm(CHARGE_MODULE_TYPE_LIANMING, 0, (1U << 4), 0,
+                                      CHG_LIB_ALARM_AC_OVER_VOLT, CHG_LIB_ALARM_HW_FAULT,
+                                      "Lianming AC input overvoltage"), "Lianming AC OV test failed");
+    ASSERT(test_distinct_module_alarm(CHARGE_MODULE_TYPE_TONHE, 0, 0, (1U << 6),
+                                      CHG_LIB_ALARM_FAN_FAULT, CHG_LIB_ALARM_HW_FAULT,
+                                      "TonHe fan fault"), "TonHe fan test failed");
+    ASSERT(test_distinct_module_alarm(CHARGE_MODULE_TYPE_TONHE, 0, 0, (1U << 2),
+                                      CHG_LIB_ALARM_AC_OVER_VOLT, CHG_LIB_ALARM_OVER_VOLTAGE_OUT,
+                                      "TonHe AC input overvoltage"), "TonHe AC OV test failed");
+    printf("[PASS] test_distinct_module_alarm_matrix\n");
+    return true;
+}
+
 /* ================================================================== */
 /* Relay decision (ChargeCtrlView_t.relay_should_close) -- see           */
 /* update_relay_decision() in App/Charge/charge_controller.c             */
@@ -1220,6 +1278,50 @@ static bool test_stop_forces_idle_from_recovering(void)
     return true;
 }
 
+static bool test_jack_temp_derating_and_trip(void)
+{
+    printf("Running test_jack_temp_derating_and_trip...\n");
+    ChargeCycleConfig_t cfg;
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_TONHE, &cfg), "setup failed");
+    cfg.protect_jack_temp_enabled = 1;
+    cfg.protect_jack_temp_delay_s = 2;
+    cfg.protect_jack_temp_threshold_c = 60.0f;
+    cfg.protect_jack_temp_trip_c = 75.0f;
+    cfg.protect_jack_temp_power_limit_pct = 50.0f;
+    ASSERT(ChargeCycleConfig_Set(&cfg), "set config failed");
+
+    set_healthy_bms(400.0f, 50);
+    g_sim_bms.max_cell_mv = 3100; /* Stage band 1_2 allows full current */
+    ASSERT(warmup_and_start(1500U, 4000U), "module never reached RUNNING");
+
+    /* Initially jack temp is 25C (normal) */
+    ChargeController_SetJackTempC(25.0f);
+    drive_ms(500U);
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "controller should be RUNNING");
+    ASSERT(cv.derating == 0, "should not be derating at 25C");
+
+    /* Step 1: Temp reaches threshold (60C). After 2s, derating triggers (current reduced to 50%) */
+    ChargeController_SetJackTempC(62.0f);
+    drive_ms(2500U);
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "controller should still be RUNNING in derating");
+    ASSERT(cv.derating == 1, "derating should be active above threshold");
+    ASSERT(fabsf(cv.target_current_total_a - 50.0f) < 2.0f, "current should be derated to 50%");
+
+    /* Step 2: Temp continues rising and hits trip threshold (75C). After 2s, hard protection FAULT triggers */
+    ChargeController_SetJackTempC(76.0f);
+    drive_ms(2500U);
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_FAULT, "controller must transition to FAULT at trip temperature");
+    ASSERT(cv.fault_flags & CHARGE_CTRL_FAULT_PROTECT_JACK_TEMP, "CHARGE_CTRL_FAULT_PROTECT_JACK_TEMP must be set");
+    ASSERT(cv.target_current_total_a == 0.0f, "target current must be 0 in FAULT");
+
+    printf("[PASS] test_jack_temp_derating_and_trip\n");
+    return true;
+}
+
 /* ================================================================== */
 
 int main(void)
@@ -1233,6 +1335,7 @@ int main(void)
     pass &= test_driver_module_fault(CHARGE_MODULE_TYPE_TONHE, "tonhe");
     pass &= test_driver_fault_recovery_debounce(CHARGE_MODULE_TYPE_TONHE, "tonhe");
     pass &= test_tonhe_fault_matrix();
+    pass &= test_distinct_module_alarm_matrix();
 
     pass &= test_driver_happy_path(CHARGE_MODULE_TYPE_LIANMING, "lianming");
     pass &= test_driver_module_fault(CHARGE_MODULE_TYPE_LIANMING, "lianming");
@@ -1262,6 +1365,7 @@ int main(void)
     pass &= test_current_ramp_up();
     pass &= test_voltage_ramp_up();
     pass &= test_ramp_down_immediate();
+    pass &= test_jack_temp_derating_and_trip();
 
     pass &= test_multi_module_timing_budget();
 

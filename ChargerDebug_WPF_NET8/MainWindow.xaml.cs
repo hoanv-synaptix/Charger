@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -32,6 +32,8 @@ public partial class MainWindow : Window
 
         RefreshPorts();
         UpdateConnectionUi();
+
+        Loaded += async (_, _) => await CheckForUpdateAsync();
     }
 
     private void RefreshPorts()
@@ -91,11 +93,50 @@ public partial class MainWindow : Window
                 UpdateConnectionUi();
                 // Send ENTER command to wake up MCU debug stream
                 _serialService.SendFrame((byte)DebugCmd.ENTER);
+
+                // Auto-sync real-time clock from PC to MCU on every connect
+                if (!SyncRtcToMcu())
+                {
+                    System.Diagnostics.Debug.WriteLine("[WARN] RTC sync write failed");
+                }
             }
             else
             {
                 MessageBox.Show($"Failed to open port {port}. Please check if another app is using it.", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
+        }
+    }
+
+    private bool SyncRtcToMcu()
+    {
+        try
+        {
+            uint epochUtc = (uint)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            return _serialService.SendFrame((byte)DebugCmd.SET_RTC, BitConverter.GetBytes(epochUtc));
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[WARN] RTC sync error: {ex.Message}");
+            return false;
+        }
+    }
+
+    private async Task CheckForUpdateAsync()
+    {
+        try
+        {
+            var info = await Services.UpdateService.CheckForUpdateAsync();
+            if (info is null) return;
+
+            var dialog = new UpdateDialog(info)
+            {
+                Owner = this
+            };
+            dialog.ShowDialog();
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[WARN] Update check error: {ex.Message}");
         }
     }
 

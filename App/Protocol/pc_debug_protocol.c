@@ -23,6 +23,9 @@
 static bool g_debug_active = false;
 static uint32_t g_last_stream_tick = 0;
 static uint8_t g_stream_sequence = 0;
+static volatile bool g_rtc_set_pending = false;
+static volatile uint32_t g_rtc_pending_epoch = 0U;
+static volatile bool g_rtc_get_pending = false;
 
 /* ============== Public API ============== */
 
@@ -31,6 +34,9 @@ void DebugProtocol_Init(void)
     g_debug_active = false;
     g_last_stream_tick = 0;
     g_stream_sequence = 0;
+    g_rtc_set_pending = false;
+    g_rtc_pending_epoch = 0U;
+    g_rtc_get_pending = false;
 }
 
 void DebugProtocol_Enter(void)
@@ -38,13 +44,13 @@ void DebugProtocol_Enter(void)
     g_debug_active = true;
     g_stream_sequence = 0;
     g_last_stream_tick = BSP_GetTick();
-    /* No LOG here — runs in USB ISR context */
+    /* No LOG here — keep protocol state transitions lightweight. */
 }
 
 void DebugProtocol_Exit(void)
 {
     g_debug_active = false;
-    /* No LOG here — runs in USB ISR context */
+    /* No LOG here — keep protocol state transitions lightweight. */
 }
 
 bool DebugProtocol_IsActive(void)
@@ -250,6 +256,7 @@ uint16_t DebugProtocol_BuildSystemInfo(uint8_t *data, uint16_t max_len)
     info->can1_rx_count = c1rx;
     info->can2_tx_count = c2tx;
     info->can2_rx_count = c2rx;
+    info->can_reserved_or_err = 0U;
     
     info->controller_fault_flags = ctrl_view.fault_flags;
     info->controller_stop_reason = (uint8_t)ctrl_view.stop_reason;
@@ -490,7 +497,7 @@ bool DebugProtocol_HandleCommand(uint8_t cmd, const uint8_t *payload, uint16_t l
     }
 
     case DEBUG_CMD_GET_ALARMS: {
-        /* No LOG here — runs in USB ISR context */
+        /* No LOG here — keep protocol dispatch lightweight. */
         uint16_t data_len = DebugProtocol_BuildAlarmInfo(reply, sizeof(reply));
         if (data_len > 0) {
             PC_Protocol_SendFrame(DEBUG_RSP_ALARMS, reply, data_len);
@@ -501,8 +508,24 @@ bool DebugProtocol_HandleCommand(uint8_t cmd, const uint8_t *payload, uint16_t l
         return true;
     }
 
+    case DEBUG_CMD_GET_RTC: {
+        g_rtc_get_pending = true;
+        return true;
+    }
+
+    case DEBUG_CMD_SET_RTC: {
+        if (len != 4U) {
+            reply[0] = 0x01; /* BAD_PARAM */
+            PC_Protocol_SendFrame(DEBUG_RSP_ERROR, reply, 1);
+            return true;
+        }
+        memcpy((void *)&g_rtc_pending_epoch, payload, sizeof(g_rtc_pending_epoch));
+        g_rtc_set_pending = true;
+        return true;
+    }
+
     case DEBUG_CMD_GET_CHARGE_CFG: {
-        /* No LOG here — runs in USB ISR context */
+        /* No LOG here — keep protocol dispatch lightweight. */
         uint16_t data_len = DebugProtocol_BuildChargeConfig(reply, sizeof(reply));
         if (data_len > 0) {
             PC_Protocol_SendFrame(DEBUG_RSP_CHARGE_CFG, reply, data_len);
@@ -623,3 +646,37 @@ bool DebugProtocol_HandleCommand(uint8_t cmd, const uint8_t *payload, uint16_t l
     }
 }
 
+bool DebugProtocol_TakeRtcSetRequest(uint32_t *epoch)
+{
+    if (epoch == NULL || !g_rtc_set_pending) {
+        return false;
+    }
+
+    *epoch = g_rtc_pending_epoch;
+    g_rtc_set_pending = false;
+    return true;
+}
+
+bool DebugProtocol_TakeRtcGetRequest(void)
+{
+    if (!g_rtc_get_pending) {
+        return false;
+    }
+
+    g_rtc_get_pending = false;
+    return true;
+}
+
+void DebugProtocol_SendRtcInfo(const DebugRtcInfo_t *rtc_info)
+{
+    if (rtc_info != NULL) {
+        PC_Protocol_SendFrame(DEBUG_RSP_RTC,
+                              (const uint8_t *)rtc_info,
+                              sizeof(*rtc_info));
+    }
+}
+
+void DebugProtocol_SendRtcError(uint8_t error_code)
+{
+    PC_Protocol_SendFrame(DEBUG_RSP_ERROR, &error_code, 1U);
+}

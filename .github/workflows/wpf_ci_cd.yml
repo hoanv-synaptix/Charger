@@ -8,8 +8,8 @@ on:
     branches: [ "main" ]
 
 env:
-  PROJECT_DIR: Charger/ChargerDebug_WPF_NET8
-  PROJECT_FILE: Charger/ChargerDebug_WPF_NET8/ChargerDebugApp.csproj
+  PROJECT_DIR: ChargerDebug_WPF_NET8
+  PROJECT_FILE: ChargerDebug_WPF_NET8/ChargerDebugApp.csproj
   DOTNET_VERSION: "8.0.x"
   RUNTIME: win-x64
 

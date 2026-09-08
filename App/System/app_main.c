@@ -18,6 +18,7 @@
 #include "charge_cycle_storage.h"
 #include "charge_controller.h"
 #include "alarm.h"
+#include "dwin_alarm_text.h"
 #include "chg_lib.h"
 #include "chg_lib_can_backend.h"
 #include "chg_lib_driver_lianming.h"
@@ -26,18 +27,26 @@
 #include "pc_protocol.h"
 #include "pc_debug_protocol.h"
 #include "app_dwin_debug.h"
+#include "app_rtc_sync.h"
 #include "debug_log.h"
 #include "main.h"
 #include "iwdg.h"
 
 #include "bsp_gpio.h"
 #include "bsp_sys.h"
+#include "bsp_rtc.h"
+
+#include "app_version.h"
 
 /* ============== Configuration ============== */
 
-#define APP_PROCESS_INTERVAL_MS 20      /* Control loop period */
-#define APP_LED_INTERVAL_MS     100     /* LED update period */
-#define APP_BTN_DEBOUNCE_MS     50      /* Button debounce */
+#define APP_PROCESS_INTERVAL_MS      20U     /* Control loop period */
+#define APP_LED_INTERVAL_MS          100U    /* LED update period */
+#define APP_BTN_DEBOUNCE_MS          50U     /* Button debounce */
+
+#define DWIN_BOOT_DELAY_MS           3000U   /* Wait for DWIN panel to finish boot */
+#define DWIN_HEARTBEAT_INTERVAL_MS   5000U   /* Periodic force-full-refresh interval */
+#define DWIN_UPDATE_INTERVAL_MS      50U     /* Field scatter cadence (50ms per group) */
 
 #include <string.h>
 #include <math.h>
@@ -81,8 +90,9 @@ static uint8_t read_btn_start(void) { return BSP_BTN_IsPressed(BSP_BTN_START) ? 
  * charge-control logic reads fault_flags/state directly. */
 
 static uint16_t dwin_status_from_state(const ChargeCtrlView_t *cc,
-                                      const CHG_LIB_SystemSummary_t *sum)
+                                       const CHG_LIB_SystemSummary_t *sum)
 {
+    (void)sum;
     /* Fault first: any active fault flag, the FAULT state, or an alarm at
      * STOP/ESTOP level (covers the debounce/ack window before the controller
      * itself transitions to FAULT) -> ERROR. */
@@ -96,6 +106,11 @@ static uint16_t dwin_status_from_state(const ChargeCtrlView_t *cc,
         if (av.highest_action >= ALARM_ACT_STOP) {
             return DWIN_STATUS_ERROR;
         }
+    }
+
+    /* Module check: if no charging modules are online, station is not ready -> ERROR */
+    if (sum != NULL && sum->modules_online == 0) {
+        return DWIN_STATUS_ERROR;
     }
 
     switch (cc->state) {
@@ -112,14 +127,15 @@ static uint16_t dwin_status_from_state(const ChargeCtrlView_t *cc,
             break;
     }
 
-    /* IDLE: distinguish "finished a cycle" from "nothing to do" / "no HW". */
+    /* IDLE: distinguish "finished a cycle" from standby / ready.
+     * Note: DGUS project 28.icl only has 5 status icons (0:READY, 1:STARTING,
+     * 2:CHARGING, 3:COMPLETE, 4:ERROR). 25.icl has 3 button icons (0:START,
+     * 1:STOP, 2:RESET). Values >=5 or >=3 cause controls to disappear.
+     * In standby (with or without BMS/modules), always present READY + START. */
     if (cc->stop_reason == CHARGE_STOP_VOLTAGE_REACHED ||
         cc->stop_reason == CHARGE_STOP_CELL_VOLTAGE_REACHED ||
         cc->stop_reason == CHARGE_STOP_SOC_REACHED) {
         return DWIN_STATUS_COMPLETE;
-    }
-    if (sum->modules_online == 0U) {
-        return DWIN_STATUS_OFFLINE;
     }
     return DWIN_STATUS_READY;
 }
@@ -133,15 +149,13 @@ static uint16_t dwin_btn_mode_from_status(uint16_t status_icon)
         case DWIN_STATUS_COMPLETE:
         case DWIN_STATUS_ERROR:
             return DWIN_BTN_RESET;
-        case DWIN_STATUS_OFFLINE:
-            return DWIN_BTN_DISABLED;
         case DWIN_STATUS_READY:
         default:
             return DWIN_BTN_START;
     }
 }
 
-/* Current DWIN status (0..5) -- the single source of truth for what the
+/* Current DWIN status (0..4) -- the single source of truth for what the
  * button means, since it distinguishes COMPLETE (IDLE + target reached)
  * from a plain IDLE/READY. */
 static uint16_t dwin_current_status(void)
@@ -177,9 +191,7 @@ static void app_action_button(uint16_t dwin_status, uint32_t now)
             LOG("App: button (COMPLETE) -> acknowledge, back to READY\r\n");
             ChargeController_AcknowledgeCompletion();
             break;
-        case DWIN_STATUS_OFFLINE:
         default:
-            /* button is DISABLED / transient -- ignore */
             break;
     }
 }
@@ -197,6 +209,15 @@ void App_Init(void)
 
     led_run_off();
     led_fault_off();
+
+    /* Real-Time Clock (internal LSI / VBAT domain) */
+    if (BSP_RTC_Init()) {
+        char rtc_str[32];
+        BSP_RTC_FormatDateTime(rtc_str, sizeof(rtc_str));
+        LOG("App_Init: RTC ready (%s, synced=%d).\r\n", rtc_str, (int)BSP_RTC_IsTimeValid());
+    } else {
+        LOG("App_Init: WARNING - RTC init failed!\r\n");
+    }
 
     /* RS485 (USART3 + DE pin, che do nhan) + DWIN HMI protocol */
     BSP_RS485_Init();
@@ -274,6 +295,11 @@ void App_Loop(void)
         last_main_log = now;
         LOG("[MAIN_LOOP] running tick=%lu\r\n", now);
     }
+
+    /* Dispatch complete USB CDC frames outside the RX ISR. This is where
+     * protocol commands may safely touch RTC, charger modules, and app state. */
+    PC_Protocol_ProcessRx();
+    App_RtcSync_Process();
 
     /* Drain queued USB CDC TX */
     PC_Protocol_ProcessTx();
@@ -408,7 +434,7 @@ void App_Loop(void)
     /* (4) DWIN HMI refresh -- one field group per 50ms tick (see
      * DWIN_UpdateData scatter). RX is drained above, near the top of the
      * loop. */
-    if ((now - last_dwin_tick) >= 50) {
+    if ((now - last_dwin_tick) >= DWIN_UPDATE_INTERVAL_MS) {
         last_dwin_tick = now;
 
         ChargeCtrlView_t cc_view;
@@ -423,12 +449,14 @@ void App_Loop(void)
         /* One-shot once the panel has booted: identity strings + land on the
          * dashboard page (DWIN_SetPage self-suppresses, so this never fights
          * the operator navigating to Setting/Alarm via the footer). */
-        if (!dwin_boot_sent && now > 3000U) {
-            char fw_str[16];
-            (void)snprintf(fw_str, sizeof(fw_str), "FW V%u.%u.%u",
-                           (unsigned)FW_VERSION_MAJOR, (unsigned)FW_VERSION_MINOR,
-                           (unsigned)FW_VERSION_PATCH);
-            DWIN_SendSettingStrings(ChargeCycleConfig_GetHwRev(), fw_str,
+        if (!dwin_boot_sent && now > DWIN_BOOT_DELAY_MS) {
+            const char *hw_str = ChargeCycleConfig_GetHwRev();
+            if (strncmp(hw_str, "HW ", 3) == 0) {
+                hw_str += 3;
+            } else if (strncmp(hw_str, "HW", 2) == 0) {
+                hw_str += 2;
+            }
+            DWIN_SendSettingStrings(hw_str, FW_VERSION_STRING,
                                     ChargeCycleConfig_GetDeviceId());
             DWIN_SetPage(DWIN_PAGE_DASH);
             /* Panel just got its page + strings -- push every data field to
@@ -441,10 +469,10 @@ void App_Loop(void)
             LOG("DWIN: HMI init sent (HW/FW/ID strings + dashboard page).\r\n");
         }
 
-        /* Heartbeat: re-send every field every 5s so a panel that booted
+        /* Heartbeat: re-send every field periodically so a panel that booted
          * late, or brown-out-rebooted, catches up without needing a value to
          * change. Diff-suppressed in between. */
-        if (dwin_boot_sent && (now - last_dwin_full_tick) >= 5000U) {
+        if (dwin_boot_sent && (now - last_dwin_full_tick) >= DWIN_HEARTBEAT_INTERVAL_MS) {
             last_dwin_full_tick = now;
             DWIN_ForceFullRefresh();
         }
@@ -454,26 +482,47 @@ void App_Loop(void)
 
         /* OUTPUT DC: the modules' actual measured output, same values the PC
          * app shows (sum.voltage / sum.total_current), NOT the controller's
-         * commanded setpoints (cc_view.applied_*). */
+         * commanded setpoints (cc_view.applied_*).
+         * dc_power_x10_kw: 0.1 kW (e.g. 30000W / 100 = 300 -> 30.0 kW) */
         {
             float out_v = (isfinite(sum.voltage) && sum.voltage > 0.0f)
                               ? sum.voltage : 0.0f;
             float out_i = (isfinite(sum.total_current) && sum.total_current > 0.0f)
                               ? sum.total_current : 0.0f;
-            dd.dc_voltage_x10 = (uint16_t)(out_v * 10.0f);
-            dd.dc_current_x10 = (uint16_t)(out_i * 10.0f);
-            dd.dc_power_w     = (uint16_t)(out_v * out_i);
+            dd.dc_voltage_x10   = (uint16_t)(out_v * 10.0f);
+            dd.dc_current_x10   = (uint16_t)(out_i * 10.0f);
+            dd.dc_power_x10_kw  = (uint16_t)((out_v * out_i) / 100.0f);
         }
 
+        /* Battery telemetry:
+         * - When BMS is online: populate real values and formatted text strings.
+         * - When BMS is offline: clear text strings ("" -> DWIN Text Variable renders blank)
+         *   and set numeric to 0 so no stale data is shown. */
         if (bms.online) {
+            (void)snprintf(dd.soc_text, sizeof(dd.soc_text), "%u %%", (unsigned)bms.soc);
+            (void)snprintf(dd.bat_pack_volt_text, sizeof(dd.bat_pack_volt_text), "%.1f V", bms.batt_voltage);
+            (void)snprintf(dd.bat_cell_volt_text, sizeof(dd.bat_cell_volt_text), "%.2f V", (float)bms.max_cell_volt / 1000.0f);
+            (void)snprintf(dd.bat_cap_text, sizeof(dd.bat_cap_text), "%.1f Ah", (float)bms.cap_remain * 0.1f);
+            (void)snprintf(dd.temp_battery_text, sizeof(dd.temp_battery_text), "%.1f C", bms.max_cell_temp);
+
             dd.soc_pct            = bms.soc;
             dd.bat_pack_volt_x10  = (uint16_t)(bms.batt_voltage * 10.0f);
             dd.bat_cell_volt_x100 = (uint16_t)(bms.max_cell_volt / 10U); /* mV -> 0.01V */
-            dd.temp_battery_c_x10 = (int16_t)(bms.max_cell_temp * 10.0f);
+            dd.temp_battery_c_x10 = (int16_t)roundf(bms.max_cell_temp * 10.0f);
+            dd.charged_ah_x10     = bms.cap_remain;
+        } else {
+            dd.soc_text[0]           = '\0';
+            dd.bat_pack_volt_text[0] = '\0';
+            dd.bat_cell_volt_text[0] = '\0';
+            dd.bat_cap_text[0]       = '\0';
+            dd.temp_battery_text[0]  = '\0';
+
+            dd.soc_pct            = 0;
+            dd.bat_pack_volt_x10  = 0;
+            dd.bat_cell_volt_x100 = 0;
+            dd.temp_battery_c_x10 = 0;
+            dd.charged_ah_x10     = 0;
         }
-        /* TODO(Phase 2): session charged-Ah has no accumulator yet -- send 0
-         * rather than a misleading proxy. Goes with the alarm/event-log work. */
-        dd.charged_ah_x10 = 0U;
 
         /* AC phase voltages: per-module view (the summary carries none). */
         CHG_LIB_ModuleView_t mv;
@@ -483,16 +532,10 @@ void App_Loop(void)
             dd.ac_l3_v = (uint16_t)mv.ac_phase_c_voltage;
         }
 
-        /* Dashboard TEMP panel, all x10 (270 = 27.0 degC), unavailable -> 0:
+        /* Dashboard TEMP panel, 0.1 degC (x10) per DWIN DGUS 0.0 format:
          *  BATTERY = BMS max cell temp   (set above when bms.online)
-         *  CHARGE  = hottest DC-DC stage across online modules, from CAN --
-         *            the same max_temp_dcdc the PC app reports (NOT a board
-         *            NTC; there is no dedicated "charger" NTC).
-         *  JACK    = hottest of the 4 connector NTCs (PA0..PA3) -- the same
-         *            channels the charge controller uses for jack over-temp
-         *            (charge_controller feed loop above). Open/short NTC ->
-         *            NAN from BSP_ADC_GetTempC(); display 0 (the controller
-         *            itself falls back to 25 for its derating logic). */
+         *  CHARGE  = hottest DC-DC stage across online modules, from CAN
+         *  JACK    = hottest of the 4 connector NTCs (PA0..PA3) */
         {
             float max_dcdc = 0.0f;
             uint8_t nmod = CHG_LIB_GetModuleCount();
@@ -503,7 +546,7 @@ void App_Loop(void)
                     max_dcdc = tv.temp_dcdc;
                 }
             }
-            dd.temp_charge_c_x10 = (int16_t)(max_dcdc * 10.0f);
+            dd.temp_charge_c_x10 = (int16_t)roundf(max_dcdc * 10.0f);
         }
         {
             float jack_c = -273.15f;
@@ -513,12 +556,110 @@ void App_Loop(void)
                     jack_c = t;
                 }
             }
-            dd.temp_jack_c_x10 = (int16_t)((jack_c < -50.0f) ? 0.0f : jack_c * 10.0f);
+            dd.temp_jack_c_x10 = (int16_t)((jack_c < -50.0f) ? 0.0f : roundf(jack_c * 10.0f));
         }
 
         dd.status_icon = dwin_status_from_state(&cc_view, &sum);
         dd.btn_mode    = dwin_btn_mode_from_status(dd.status_icon);
         dd.uptime_s    = now / 1000U;
+
+        /* Charge duration: tracks elapsed time from charge start to stop.
+         * Retains duration when charge ends so operator can inspect it. */
+        static uint32_t s_charge_start_tick = 0U;
+        static uint32_t s_charge_duration_s = 0U;
+        static bool     s_was_charging = false;
+        bool is_charging = (dd.status_icon == DWIN_STATUS_CHARGING ||
+                            dd.status_icon == DWIN_STATUS_STARTING);
+        if (is_charging) {
+            if (!s_was_charging) {
+                s_charge_start_tick = now;
+                s_charge_duration_s = 0U;
+                s_was_charging = true;
+            } else {
+                s_charge_duration_s = (now - s_charge_start_tick) / 1000U;
+            }
+            dd.charge_duration_s = s_charge_duration_s;
+            dd.footer_time_str[0] = '\0'; /* Format charge duration */
+        } else {
+            s_was_charging = false;
+            dd.charge_duration_s = 0U;
+            if (BSP_RTC_IsTimeValid()) {
+                /* When idle, show Vietnam Real-Time Clock (HH:MM:SS) in footer */
+                BSP_RTC_FormatTime(dd.footer_time_str, sizeof(dd.footer_time_str));
+            } else {
+                (void)snprintf(dd.footer_time_str, sizeof(dd.footer_time_str), "00:00:00");
+            }
+        }
+
+        /* Energy & capacity accumulator */
+        static uint32_t s_last_energy_tick = 0U;
+        static double   s_total_charged_ah = 0.0;
+        static double   s_total_energy_kwh = 0.0;
+        if (s_last_energy_tick == 0U) {
+            s_last_energy_tick = now;
+        }
+        uint32_t dt_ms = now - s_last_energy_tick;
+        s_last_energy_tick = now;
+        if (is_charging && dt_ms > 0U && dt_ms < 500U) {
+            double hours = (double)dt_ms / 3600000.0;
+            float cur_f = (isfinite(sum.total_current) && sum.total_current > 0.0f)
+                              ? sum.total_current : 0.0f;
+            float volt_f = (isfinite(sum.voltage) && sum.voltage > 0.0f)
+                              ? sum.voltage : 0.0f;
+            s_total_charged_ah += (double)cur_f * hours;
+            s_total_energy_kwh += ((double)cur_f * (double)volt_f / 1000.0) * hours;
+        }
+        dd.total_charged_ah_x10 = (uint32_t)(s_total_charged_ah * 10.0);
+        dd.total_energy_kwh_x10 = (uint32_t)(s_total_energy_kwh * 10.0);
+
+        /* Topbar fault code: "0000" if normal, worst code (e.g. "E006") if fault active */
+        AlarmView_t av;
+        Alarm_GetView(&av);
+        if (av.active_count == 0U && av.latched_mask == 0U) {
+            if (sum.modules_online == 0) {
+                strncpy(dd.topbar_fault_code, "E010", sizeof(dd.topbar_fault_code) - 1U);
+            } else {
+                strncpy(dd.topbar_fault_code, "0000", sizeof(dd.topbar_fault_code) - 1U);
+            }
+        } else {
+            const char *c_str = DWIN_Alarm_GetCodeString(av.worst_code);
+            strncpy(dd.topbar_fault_code, c_str, sizeof(dd.topbar_fault_code) - 1U);
+        }
+
+        /* Synchronize alarm event log with DWIN 4-row FIFO ring buffer */
+        static uint8_t s_last_log_count = 0U;
+        AlarmLogEntry_t log_entries[ALARM_LOG_DEPTH];
+        uint8_t log_count = Alarm_GetLog(log_entries, ALARM_LOG_DEPTH);
+        if (log_count != s_last_log_count) {
+            if (log_count > s_last_log_count) {
+                uint8_t new_events = log_count - s_last_log_count;
+                /* Alarm_GetLog returns newest-first: index 0 is newest.
+                 * Push oldest-of-new-batch first so newest ends up at row 0 */
+                for (int8_t i = (int8_t)new_events - 1; i >= 0; i--) {
+                    if (log_entries[i].event == 1U) { /* Raised */
+                        char time_buf[10];
+                        if (BSP_RTC_IsTimeValid()) {
+                            BSP_RTC_FormatTime(time_buf, sizeof(time_buf));
+                        } else {
+                            uint32_t sec = log_entries[i].uptime_ms / 1000U;
+                            uint32_t h = (sec / 3600U) % 24U;
+                            uint32_t m = (sec % 3600U) / 60U;
+                            uint32_t s = sec % 60U;
+                            (void)snprintf(time_buf, sizeof(time_buf), "%02u:%02u:%02u",
+                                           (unsigned)h, (unsigned)m, (unsigned)s);
+                        }
+
+                        AlarmCode_t c = (AlarmCode_t)log_entries[i].code;
+                        const char *c_str = DWIN_Alarm_GetCodeString(c);
+                        uint8_t d_len = 0;
+                        const uint16_t *d_utf16 = DWIN_Alarm_GetDescUtf16(c, &d_len);
+
+                        DWIN_Alarm_Push(time_buf, c_str, d_utf16, d_len);
+                    }
+                }
+            }
+            s_last_log_count = log_count;
+        }
 
         DWIN_UpdateData(&dd);
     }
