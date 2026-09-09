@@ -74,6 +74,12 @@ static double   s_total_charged_ah;
 static double   s_total_energy_kwh;
 static uint32_t s_last_energy_tick;
 
+/* Keep the last charge duration visible briefly after a session ends. This
+ * gives the operator time to read the result before the footer returns to the
+ * live RTC clock, without blocking the main loop or persisting a transient UI
+ * value. */
+#define CHARGE_DURATION_HOLD_MS 60000U
+
 /* ============== LED control ============== */
 
 static void led_run_on(void)   { BSP_LED_On(BSP_LED_RUN); }
@@ -681,16 +687,20 @@ void App_Loop(void)
         dd.uptime_s    = now / 1000U;
 
         /* Charge duration: tracks elapsed time from charge start to stop.
-         * Retains duration when charge ends so operator can inspect it. */
+         * Retains the final duration for 60 seconds after charge ends so the
+         * operator can inspect it, then returns the footer to the live RTC. */
         static uint32_t s_charge_start_tick = 0U;
         static uint32_t s_charge_duration_s = 0U;
+        static uint32_t s_charge_stop_tick = 0U;
         static bool     s_was_charging = false;
+        static bool     s_hold_last_duration = false;
         bool is_charging = (dd.status_icon == DWIN_STATUS_CHARGING ||
                             dd.status_icon == DWIN_STATUS_STARTING);
         if (is_charging) {
             if (!s_was_charging) {
                 s_charge_start_tick = now;
                 s_charge_duration_s = 0U;
+                s_hold_last_duration = false;
                 s_was_charging = true;
             } else {
                 s_charge_duration_s = (now - s_charge_start_tick) / 1000U;
@@ -698,13 +708,28 @@ void App_Loop(void)
             dd.charge_duration_s = s_charge_duration_s;
             dd.footer_time_str[0] = '\0'; /* Format charge duration */
         } else {
-            s_was_charging = false;
-            dd.charge_duration_s = 0U;
-            if (BSP_RTC_IsTimeValid()) {
-                /* When idle, show Vietnam Real-Time Clock (HH:MM:SS) in footer */
-                BSP_RTC_FormatTime(dd.footer_time_str, sizeof(dd.footer_time_str));
+            if (s_was_charging) {
+                /* The STOPPING state is intentionally still charging in the
+                 * HMI mapping; this edge is therefore the first stable
+                 * non-charging state after the session has ended. */
+                s_charge_stop_tick = now;
+                s_hold_last_duration = true;
+                s_was_charging = false;
+            }
+
+            if (s_hold_last_duration &&
+                (uint32_t)(now - s_charge_stop_tick) < CHARGE_DURATION_HOLD_MS) {
+                dd.charge_duration_s = s_charge_duration_s;
+                dd.footer_time_str[0] = '\0';
             } else {
-                (void)snprintf(dd.footer_time_str, sizeof(dd.footer_time_str), "00:00:00");
+                s_hold_last_duration = false;
+                dd.charge_duration_s = 0U;
+                if (BSP_RTC_IsTimeValid()) {
+                    /* After the hold window, show the live real-time clock. */
+                    BSP_RTC_FormatTime(dd.footer_time_str, sizeof(dd.footer_time_str));
+                } else {
+                    (void)snprintf(dd.footer_time_str, sizeof(dd.footer_time_str), "00:00:00");
+                }
             }
         }
 
