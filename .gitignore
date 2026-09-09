@@ -31,3 +31,5 @@ debug_app/*.log
 **/[Bb]in/
 **/[Oo]bj/
 
+# Local test reports and captured HIL data
+/test/artifacts/
