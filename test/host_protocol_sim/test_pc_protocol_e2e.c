@@ -31,6 +31,7 @@
 #include "charge_cycle_config.h"
 #include "charge_controller.h"
 #include "app_rtc_sync.h"
+#include "alarm.h"
 
 #include "sim_can_modules.h"
 #include "sim_bms.h"
@@ -587,6 +588,27 @@ static bool test_debug_get_system_info_matches_wire_struct(void)
     return true;
 }
 
+static bool test_debug_get_alarm_info_wire_contract(void)
+{
+    printf("Running test_debug_get_alarm_info_wire_contract...\n");
+    ASSERT(setup_scenario(), "setup failed");
+    PC_Protocol_ResetTx();
+
+    send_pc_frame(DEBUG_CMD_GET_ALARMS, NULL, 0);
+    uint8_t cmd, resp[255], len;
+    ASSERT(only_tx_frame(&cmd, resp, &len), "expected exactly one GET_ALARMS response");
+    ASSERT(cmd == DEBUG_RSP_ALARMS, "GET_ALARMS should return DEBUG_RSP_ALARMS");
+    ASSERT(len >= sizeof(DebugAlarmInfo_t), "alarm response must include fixed header");
+    DebugAlarmInfo_t info;
+    memcpy(&info, resp, sizeof(info));
+    ASSERT(info.log_count <= ALARM_LOG_DEPTH, "alarm log count exceeds fixed depth");
+    ASSERT(len == sizeof(DebugAlarmInfo_t) + (uint16_t)info.log_count * sizeof(AlarmLogEntry_t),
+           "alarm response length must match header log_count");
+
+    printf("[PASS] test_debug_get_alarm_info_wire_contract\n");
+    return true;
+}
+
 /* Regression test: DebugProtocol_BuildModuleData() must refuse to write
  * when it doesn't fit in max_len, not write unconditionally and let the
  * caller find out too late. This is the actual fix -- see the BUGFIX
@@ -708,6 +730,7 @@ int main(void)
     pass &= test_debug_set_charge_cfg_valid_config_persists();
     pass &= test_debug_set_charge_cfg_wrong_length_rejected();
     pass &= test_debug_get_system_info_matches_wire_struct();
+    pass &= test_debug_get_alarm_info_wire_contract();
     pass &= test_build_module_data_refuses_when_too_small();
     pass &= test_build_all_modules_data_does_not_overflow_buffer();
     pass &= test_debug_rtc_get_set_roundtrip();

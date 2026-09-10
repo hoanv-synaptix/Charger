@@ -209,6 +209,7 @@ static struct {
     AlarmLogEntry_t log[ALARM_LOG_DEPTH];
     uint8_t  log_head;   /* next write index */
     uint8_t  log_count;
+    uint32_t log_sequence; /* total event-log writes since init */
 
     AlarmView_t view;
     uint32_t last_console_log_tick;
@@ -350,6 +351,7 @@ static void log_edge(uint32_t now, AlarmCode_t code, AlarmAction_t action, bool 
     e->event = raised ? 1U : 0U;
     g_alarm.log_head = (uint8_t)((g_alarm.log_head + 1U) % ALARM_LOG_DEPTH);
     if (g_alarm.log_count < ALARM_LOG_DEPTH) g_alarm.log_count++;
+    g_alarm.log_sequence++;
 }
 
 /* ============== Debounce + aggregate ============== */
@@ -551,4 +553,8 @@ uint8_t Alarm_GetLog(AlarmLogEntry_t *out, uint8_t max) {
         out[k] = g_alarm.log[idx];
     }
     return n;
+}
+
+uint32_t Alarm_GetLogSequence(void) {
+    return g_alarm.log_sequence;
 }

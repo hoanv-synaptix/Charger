@@ -768,40 +768,45 @@ void App_Loop(void)
             strncpy(dd.topbar_fault_code, c_str, sizeof(dd.topbar_fault_code) - 1U);
         }
 
-        /* Synchronize alarm event log with DWIN 4-row FIFO ring buffer */
-        static uint8_t s_last_log_count = 0U;
+        /* Synchronize alarm event log with DWIN 4-row FIFO ring buffer.
+         * The RAM log count saturates at ALARM_LOG_DEPTH, so use its
+         * generation counter to detect writes after the ring is full. */
+        static uint32_t s_last_log_sequence = 0U;
         AlarmLogEntry_t log_entries[ALARM_LOG_DEPTH];
         uint8_t log_count = Alarm_GetLog(log_entries, ALARM_LOG_DEPTH);
-        if (log_count != s_last_log_count) {
-            if (log_count > s_last_log_count) {
-                uint8_t new_events = log_count - s_last_log_count;
-                /* Alarm_GetLog returns newest-first: index 0 is newest.
-                 * Push oldest-of-new-batch first so newest ends up at row 0 */
-                for (int8_t i = (int8_t)new_events - 1; i >= 0; i--) {
-                    if (log_entries[i].event == 1U) { /* Raised */
-                        char time_buf[10];
-                        if (BSP_RTC_IsTimeValid()) {
-                            BSP_RTC_FormatTime(time_buf, sizeof(time_buf));
-                        } else {
-                            uint32_t sec = log_entries[i].uptime_ms / 1000U;
-                            uint32_t h = (sec / 3600U) % 24U;
-                            uint32_t m = (sec % 3600U) / 60U;
-                            uint32_t s = sec % 60U;
-                            (void)snprintf(time_buf, sizeof(time_buf), "%02u:%02u:%02u",
-                                           (unsigned)h, (unsigned)m, (unsigned)s);
-                        }
-
-                        AlarmCode_t c = (AlarmCode_t)log_entries[i].code;
-                        const char *c_str = DWIN_Alarm_GetCodeString(c);
-                        uint8_t d_len = 0;
-                        const uint16_t *d_utf16 = DWIN_Alarm_GetDescUtf16(c, &d_len);
-
-                        DWIN_Alarm_Push(time_buf, c_str, d_utf16, d_len);
+        uint32_t log_sequence = Alarm_GetLogSequence();
+        uint32_t new_events = log_sequence - s_last_log_sequence;
+        if (new_events > ALARM_LOG_DEPTH) {
+            new_events = ALARM_LOG_DEPTH;
+        }
+        if (new_events > 0U) {
+            /* Alarm_GetLog returns newest-first: index 0 is newest.
+             * Push oldest-of-new-batch first so newest ends up at row 0. */
+            for (int8_t i = (int8_t)new_events - 1; i >= 0; i--) {
+                if (log_entries[i].event == 1U) { /* Raised */
+                    char time_buf[10];
+                    if (BSP_RTC_IsTimeValid()) {
+                        BSP_RTC_FormatTime(time_buf, sizeof(time_buf));
+                    } else {
+                        uint32_t sec = log_entries[i].uptime_ms / 1000U;
+                        uint32_t h = (sec / 3600U) % 24U;
+                        uint32_t m = (sec % 3600U) / 60U;
+                        uint32_t s = sec % 60U;
+                        (void)snprintf(time_buf, sizeof(time_buf), "%02u:%02u:%02u",
+                                       (unsigned)h, (unsigned)m, (unsigned)s);
                     }
+
+                    AlarmCode_t c = (AlarmCode_t)log_entries[i].code;
+                    const char *c_str = DWIN_Alarm_GetCodeString(c);
+                    uint8_t d_len = 0;
+                    const uint16_t *d_utf16 = DWIN_Alarm_GetDescUtf16(c, &d_len);
+
+                    DWIN_Alarm_Push(time_buf, c_str, d_utf16, d_len);
                 }
             }
-            s_last_log_count = log_count;
         }
+        (void)log_count; /* Snapshot size is used to bound available entries. */
+        s_last_log_sequence = log_sequence;
 
         DWIN_UpdateData(&dd);
     }

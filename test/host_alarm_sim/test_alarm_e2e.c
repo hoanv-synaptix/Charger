@@ -152,6 +152,46 @@ static bool test_bms_alm_info_raw_e005(void)
     return true;
 }
 
+static bool test_alarm_log_sequence_survives_full_ring(void)
+{
+    printf("Running test_alarm_log_sequence_survives_full_ring...\n");
+    ASSERT(setup(NULL), "setup");
+    healthy_bms(400.0f);
+    ASSERT(start_running(), "controller never RUNNING");
+
+    /* Raise all 13 BMS alarm fields, then clear them. This creates 26 edges
+     * through the real alarm path without repeatedly restarting the charge
+     * controller after a critical alarm stops it. */
+    for (uint8_t field = 0U; field < 13U; field++) {
+        set_bms_alarm_severity(field, 2U);
+    }
+    drive_ms(800U);
+    for (uint8_t field = 0U; field < 13U; field++) {
+        set_bms_alarm_severity(field, 0U);
+    }
+    drive_ms(800U);
+
+    AlarmLogEntry_t log[ALARM_LOG_DEPTH];
+    uint8_t count = Alarm_GetLog(log, ALARM_LOG_DEPTH);
+    uint32_t full_sequence = Alarm_GetLogSequence();
+    ASSERT(count == ALARM_LOG_DEPTH, "event ring must be full");
+    ASSERT(full_sequence >= ALARM_LOG_DEPTH, "sequence must advance with log writes");
+
+    uint32_t before_new_raise = full_sequence;
+    set_bms_alarm_severity(4U, 2U);
+    drive_ms(800U);
+
+    count = Alarm_GetLog(log, ALARM_LOG_DEPTH);
+    ASSERT(count == ALARM_LOG_DEPTH, "log count must remain saturated at ring depth");
+    ASSERT(Alarm_GetLogSequence() > before_new_raise,
+           "sequence must detect a write after the ring is full");
+    ASSERT(log[0].event == 1U && log[0].code == (uint16_t)ALARM_BMS_TEMP_HIGH_CHG,
+           "new E005 raise must be newest ring entry after wrap");
+
+    printf("[PASS] test_alarm_log_sequence_survives_full_ring\n");
+    return true;
+}
+
 static bool test_all_bms_alm_info_fields_from_pdf(void)
 {
     printf("Running test_all_bms_alm_info_fields_from_pdf...\n");
@@ -554,6 +594,7 @@ int main(void)
 {
     bool ok = true;
     ok &= test_bms_alm_info_raw_e005();
+    ok &= test_alarm_log_sequence_survives_full_ring();
     ok &= test_all_bms_alm_info_fields_from_pdf();
     ok &= test_happy_path_no_alarm();
     ok &= test_module_specific_alarms_and_dwin_text();

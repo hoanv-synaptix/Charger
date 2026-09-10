@@ -138,6 +138,15 @@ void Alarm_Acknowledge(uint32_t now_tick);
  */
 uint8_t Alarm_GetLog(AlarmLogEntry_t *out, uint8_t max);
 
+/**
+ * @brief Return the number of event-log writes since Alarm_Init().
+ *
+ * This generation advances for both raised and cleared events. It is
+ * independent of the saturated ring-buffer entry count, so consumers can
+ * detect new events after the ring is full.
+ */
+uint32_t Alarm_GetLogSequence(void);
+
 #ifdef __cplusplus
 }
 #endif
