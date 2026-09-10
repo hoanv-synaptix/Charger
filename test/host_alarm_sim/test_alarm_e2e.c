@@ -77,6 +77,9 @@ static bool alarm_logged_raise(AlarmCode_t code)
     return false;
 }
 
+static bool setup(ChargeCycleConfig_t *cfg_out);
+static bool start_running(void);
+
 static void healthy_bms(float pack_v)
 {
     g_sim_bms.pack_voltage_v = pack_v;
@@ -91,6 +94,125 @@ static void healthy_bms(float pack_v)
     g_sim_bms.chg_volt_request_v = 500.0f; g_sim_bms.chg_curr_request_a = 50.0f;
     g_sim_bms.bms_relay_allow = true;
     g_sim_bms.transmitting = true;
+}
+
+/* ALM_INFO field order and two-bit severity encoding are taken from the
+ * vendor BMS PDF: 0x07F4 Standard, little-endian, fields packed from bit 0
+ * in the order below. This helper deliberately writes only the selected
+ * field so each test proves the raw-to-normalized mapping independently. */
+static void set_bms_alarm_severity(uint8_t field, uint8_t severity)
+{
+    switch (field) {
+        case 0:  g_sim_bms.low_pack_volt       = severity; break;
+        case 1:  g_sim_bms.low_cell_volt       = severity; break;
+        case 2:  g_sim_bms.high_pack_volt      = severity; break;
+        case 3:  g_sim_bms.high_cell_volt      = severity; break;
+        case 4:  g_sim_bms.temp_cell_high_chg  = severity; break;
+        case 5:  g_sim_bms.temp_cell_high_dchg = severity; break;
+        case 6:  g_sim_bms.temp_cell_low_chg   = severity; break;
+        case 7:  g_sim_bms.temp_cell_low_dchg  = severity; break;
+        case 8:  g_sim_bms.temp_relay_high     = severity; break;
+        case 9:  g_sim_bms.over_chg_curr       = severity; break;
+        case 10: g_sim_bms.over_dchg_curr      = severity; break;
+        case 11: g_sim_bms.cell_volt_diff      = severity; break;
+        case 12: g_sim_bms.low_soc             = severity; break;
+        default: break;
+    }
+}
+
+static bool test_bms_alm_info_raw_e005(void)
+{
+    printf("Running test_bms_alm_info_raw_e005...\n");
+    uint8_t frame[8] = {0};
+
+    /* PDF raw example for temp_cell_high_chg: bits 8-9, therefore byte 1. */
+    BMS_Init();
+    frame[1] = 0x02U; /* severity=fault */
+    BMS_FeedFrame(0U, BMS_ID_ALM_INFO, frame, 8U);
+
+    BMS_View_t view;
+    BMS_GetView(&view);
+    ASSERT((view.alarm_flags & BMS_ALARM_TEMP_HIGH_CHG) != 0U,
+           "ALM_INFO byte1 severity 2 must set TEMP_HIGH_CHG");
+
+    frame[1] = 0x01U; /* warning only: not an E005 fault */
+    BMS_FeedFrame(0U, BMS_ID_ALM_INFO, frame, 8U);
+    BMS_GetView(&view);
+    ASSERT((view.alarm_flags & BMS_ALARM_TEMP_HIGH_CHG) == 0U,
+           "ALM_INFO warning severity must not set E005 fault flag");
+
+    frame[1] = 0x03U; /* severity=severe */
+    BMS_FeedFrame(0U, BMS_ID_ALM_INFO, frame, 8U);
+    BMS_GetView(&view);
+    ASSERT((view.alarm_flags & BMS_ALARM_TEMP_HIGH_CHG) != 0U,
+           "ALM_INFO byte1 severity 3 must set TEMP_HIGH_CHG");
+    ASSERT(strcmp(DWIN_Alarm_GetCodeString(ALARM_BMS_TEMP_HIGH_CHG), "E005") == 0,
+           "TEMP_HIGH_CHG must map to DWIN E005");
+    printf("[PASS] test_bms_alm_info_raw_e005\n");
+    return true;
+}
+
+static bool test_all_bms_alm_info_fields_from_pdf(void)
+{
+    printf("Running test_all_bms_alm_info_fields_from_pdf...\n");
+    static const struct {
+        uint8_t field;
+        BMS_AlarmFlag_t flag;
+        AlarmCode_t code;
+        const char *dwin_code;
+        AlarmAction_t action;
+    } cases[] = {
+        {0U,  BMS_ALARM_LOW_PACK_VOLT,   ALARM_BMS_LOW_PACK_VOLT,   "E001", ALARM_ACT_INFO},
+        {1U,  BMS_ALARM_LOW_CELL_VOLT,   ALARM_BMS_LOW_CELL_VOLT,   "E002", ALARM_ACT_INFO},
+        {2U,  BMS_ALARM_HIGH_PACK_VOLT,  ALARM_BMS_HIGH_PACK_VOLT,  "E003", ALARM_ACT_STOP},
+        {3U,  BMS_ALARM_HIGH_CELL_VOLT,  ALARM_BMS_HIGH_CELL_VOLT,  "E004", ALARM_ACT_STOP},
+        {4U,  BMS_ALARM_TEMP_HIGH_CHG,   ALARM_BMS_TEMP_HIGH_CHG,   "E005", ALARM_ACT_STOP},
+        {5U,  BMS_ALARM_TEMP_HIGH_DCHG,  ALARM_BMS_TEMP_HIGH_DCHG,  "W001", ALARM_ACT_INFO},
+        {6U,  BMS_ALARM_TEMP_LOW_CHG,    ALARM_BMS_TEMP_LOW_CHG,    "E006", ALARM_ACT_STOP},
+        {7U,  BMS_ALARM_TEMP_LOW_DCHG,   ALARM_BMS_TEMP_LOW_DCHG,   "W002", ALARM_ACT_INFO},
+        {8U,  BMS_ALARM_TEMP_RELAY_HIGH, ALARM_BMS_TEMP_RELAY_HIGH, "W003", ALARM_ACT_INFO},
+        {9U,  BMS_ALARM_OVER_CHG_CURR,   ALARM_BMS_OVER_CHG_CURR,   "E007", ALARM_ACT_STOP},
+        {10U, BMS_ALARM_OVER_DCHG_CURR,  ALARM_BMS_OVER_DCHG_CURR,  "W004", ALARM_ACT_INFO},
+        {11U, BMS_ALARM_CELL_VOLT_DIFF,  ALARM_BMS_CELL_VOLT_DIFF,  "W005", ALARM_ACT_INFO},
+        {12U, BMS_ALARM_LOW_SOC,         ALARM_BMS_LOW_SOC,         "W006", ALARM_ACT_INFO},
+    };
+
+    for (size_t i = 0U; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        ASSERT(setup(NULL), "setup");
+        healthy_bms(400.0f);
+        ASSERT(start_running(), "controller never RUNNING");
+        set_bms_alarm_severity(cases[i].field, 2U);
+        drive_ms(800U);
+
+        BMS_View_t bms_view;
+        BMS_GetView(&bms_view);
+        ASSERT((bms_view.alarm_flags & cases[i].flag) != 0U,
+               "PDF ALM_INFO field did not reach normalized BMS flag");
+        ASSERT(alarm_active(cases[i].code) || alarm_logged_raise(cases[i].code),
+               "normalized BMS flag did not reach unified alarm");
+        ASSERT(strcmp(DWIN_Alarm_GetCodeString(cases[i].code), cases[i].dwin_code) == 0,
+               "BMS alarm DWIN code mismatch");
+
+        AlarmView_t alarm_view;
+        Alarm_GetView(&alarm_view);
+        ASSERT(alarm_view.highest_action == cases[i].action,
+               "BMS alarm action mismatch");
+    }
+
+    /* Severity 1 is a BMS warning and must not be promoted to any E/W alarm
+     * flag by this firmware's documented fault threshold (>=2). */
+    ASSERT(setup(NULL), "setup warning threshold");
+    healthy_bms(400.0f);
+    ASSERT(start_running(), "controller never RUNNING for warning threshold");
+    for (uint8_t field = 0U; field < 13U; field++) set_bms_alarm_severity(field, 1U);
+    drive_ms(800U);
+    BMS_View_t warning_view;
+    BMS_GetView(&warning_view);
+    ASSERT(warning_view.alarm_flags == BMS_ALARM_NONE,
+           "severity 1 ALM_INFO was incorrectly promoted to fault flags");
+
+    printf("[PASS] test_all_bms_alm_info_fields_from_pdf\n");
+    return true;
 }
 
 static bool setup(ChargeCycleConfig_t *cfg_out)
@@ -431,6 +553,8 @@ static bool test_start_with_no_module_or_bms_reports_fault_code(void)
 int main(void)
 {
     bool ok = true;
+    ok &= test_bms_alm_info_raw_e005();
+    ok &= test_all_bms_alm_info_fields_from_pdf();
     ok &= test_happy_path_no_alarm();
     ok &= test_module_specific_alarms_and_dwin_text();
     ok &= test_cv_taper_no_false_load_lost();
