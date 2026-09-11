@@ -199,7 +199,7 @@ def main():
             lk.xfer(dwin_write_text(0x1004, "10.5"))
             lk.xfer(dwin_write_text(0x1008, "3.0"))
             lk.xfer(dwin_write_text(0x1010, "52.1"))
-            lk.xfer(dwin_write_text(0x1014, "3.25"))
+            lk.xfer(dwin_write_text(0x1014, "3315"))
             lk.xfer(dwin_write_text(0x1018, "20.0"))
             lk.xfer(dwin_write_text(0x1020, "231"))
             lk.xfer(dwin_write_text(0x1024, "232"))
@@ -216,7 +216,7 @@ def main():
             show("0x1000", lk.xfer(dwin_read(0x1000, 3)))
             show("0x1041", lk.xfer(dwin_read(0x1041, 1)))
             print("\n>>> screen should now show DC 52.1/10.5/3.0kW, PACK 52.1, "
-                  "CELL 3.25, AC 231/232/230, TEMP 27/33/-5, SOC 66, CHARGING.")
+                  "CELL 3315mV, AC 231/232/230, TEMP 27/33/-5, SOC 66, CHARGING.")
             print(">>> If read-back replies are empty but writes seem ignored on "
                   "screen: CRC is probably ON in the DGUS CFG (firmware sends none).")
     except KeyboardInterrupt:

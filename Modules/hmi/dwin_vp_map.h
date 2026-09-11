@@ -34,7 +34,7 @@
 
 /* --- Dashboard: Battery (0x1010) --- */
 #define VP_BAT_PACK_VOLT_TEXT  0x1010U  /* Text GBK/ASCII, 8 bytes, 0x1010..1013 */
-#define VP_BAT_CELL_VOLT_TEXT  0x1014U  /* Text GBK/ASCII, 8 bytes, 0x1014..1017 */
+#define VP_BAT_CELL_VOLT_TEXT  0x1014U  /* Text GBK/ASCII, 8 bytes: max cell voltage in 4-digit mV (e.g. "3315") */
 #define VP_BAT_CHARGED_AH_TEXT 0x1018U  /* Text GBK/ASCII, 8 bytes, 0x1018..101B */
 
 /* --- Dashboard: Input AC (0x1020) --- */

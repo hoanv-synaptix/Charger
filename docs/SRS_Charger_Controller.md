@@ -419,7 +419,7 @@ Frame RX được feed tới driver đang active qua `CHG_LIB_FeedCanFrame()`.
   | `0x1004..0x1007` | DC current | Text Display, 8 bytes / 4 VP, ví dụ `12.0`; đơn vị do DWIN vẽ; không có module → `---` |
   | `0x1008..0x100B` | DC power | Text Display, 8 bytes / 4 VP, ví dụ `6.3`; đơn vị do DWIN vẽ; không có module → `---` |
   | `0x1010..0x1013` | BMS pack V | Text Display, 8 bytes / 4 VP, chỉ gửi value; BMS offline → `---` |
-  | `0x1014..0x1017` | BMS cell V | Text Display, 8 bytes / 4 VP, chỉ gửi value; BMS offline → `---` |
+  | `0x1014..0x1017` | BMS max cell voltage | Text Display, 8 bytes / 4 VP, ASCII decimal 4 chữ số theo mV (ví dụ `3315` cho 3315 mV); `---` khi BMS offline/giá trị không hợp lệ |
   | `0x1018..0x101B` | BMS Ah | Text Display, 8 bytes / 4 VP, chỉ gửi value; BMS offline → `---` |
   | `0x1020..0x1023` | AC L1 | Text Display, 8 bytes / 4 VP, chỉ gửi value; module offline/field invalid → `---` |
   | `0x1024..0x1027` | AC L2 | Text Display, 8 bytes / 4 VP, chỉ gửi value; module offline/field invalid → `---` |

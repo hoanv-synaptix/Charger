@@ -122,7 +122,7 @@ def main() -> int:
     w_str(0x1004, "10.5", 4)
     w_str(0x1008, "3.0", 4)
     w_str(0x1010, "52.1", 4)
-    w_str(0x1014, "3.25", 4)
+    w_str(0x1014, "3315", 4)
     w_str(0x1018, "20.0", 4)
     w_str(0x1020, "231", 4)
     w_str(0x1024, "232", 4)
@@ -152,7 +152,7 @@ def main() -> int:
         print(f"[<-] read 0x{vp:04X}: {resp.hex(' ') or '(no reply)'}")
 
     print("\n>>> LOOK AT THE SCREEN NOW. Expect: DC 52.1/10.5/3.0kW, PACK 52.1, "
-          "CELL 3.25, AC 231/232/230, TEMP 27/33/-5, SOC 66, CHARGING state, "
+          "CELL 3315mV, AC 231/232/230, TEMP 27/33/-5, SOC 66, CHARGING state, "
           "STOP button, HW/FW/ID strings on the Setting page.")
 
     # ---- 5. action-button poll ----------------------------------

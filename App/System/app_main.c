@@ -609,9 +609,12 @@ void App_Loop(void)
                 !dwin_format_fixed(dd.bat_pack_volt_text, sizeof(dd.bat_pack_volt_text), bms.batt_voltage, 1U, ""))
                 dwin_set_unavailable(dd.bat_pack_volt_text, sizeof(dd.bat_pack_volt_text));
 
+            /* DWIN owns this field as text. Keep the BMS millivolt value
+             * intact instead of converting to volts and rounding to two
+             * decimal places (3315 mV must remain visible as "3315"). */
             if (bms.max_cell_volt == 0U ||
-                !dwin_format_fixed(dd.bat_cell_volt_text, sizeof(dd.bat_cell_volt_text),
-                                   (float)bms.max_cell_volt / 1000.0f, 2U, ""))
+                snprintf(dd.bat_cell_volt_text, sizeof(dd.bat_cell_volt_text),
+                         "%04u", (unsigned)bms.max_cell_volt) < 0)
                 dwin_set_unavailable(dd.bat_cell_volt_text, sizeof(dd.bat_cell_volt_text));
 
             if (!dwin_format_fixed(dd.bat_cap_text, sizeof(dd.bat_cap_text),

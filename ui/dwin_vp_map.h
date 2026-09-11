@@ -17,9 +17,10 @@
 #define VP_DC_POWER            0x1002  // u16, 1 Decimal (VD: 300 = 30.0kW - HTML mới đơn vị kW)
 
 // --- 3. DASHBOARD - BATTERY (0x1010) ---
-#define VP_BAT_PACK_VOLT       0x1010  // u16, 1 Decimal (VD: 521 = 52.1V)
-#define VP_BAT_CELL_VOLT       0x1011  // u16, 2 Decimals (VD: 325 = 3.25V)
-#define VP_BAT_CHARGED_AH      0x1012  // u16 @ 0x1012, 1 Decimal (VD: 820 = 82.0 Ah, Label: CAPACITY)
+// All three battery values are Text Displays, 8 bytes / 4 VP each.
+#define VP_BAT_PACK_VOLT       0x1010  // Text: pack voltage value, e.g. "52.8"
+#define VP_BAT_CELL_VOLT       0x1014  // Text: max cell voltage in mV, e.g. "3315"
+#define VP_BAT_CHARGED_AH      0x1018  // Text: remaining capacity, e.g. "82.0"
 
 // --- 4. DASHBOARD - INPUT AC (0x1020) ---
 #define VP_AC_PHASE_L1         0x1020  // u16, 0 Decimal (VD: 225 = 225V)
