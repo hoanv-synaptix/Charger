@@ -793,12 +793,8 @@ static void lm_emergency_stop(void)
 static void lm_process(uint32_t now)
 {
     /* BUGFIX B-10: service every enabled module every call instead of one
-     * per round-robin index -- see the matching comment in
-     * chg_lib_maxwell.c's mx_process() for the full rationale, including
-     * why the nested BSP_EnterCritical()/ExitCritical() calls this
-     * replaces were also a latent bug (BSP_EnterCritical()/ExitCritical()
-     * doesn't nest, so calling it inside CHG_LIB_Process()'s already-held
-     * critical section re-enabled interrupts partway through). */
+     * per round-robin index. This function runs in main context; CAN RX is
+     * captured separately by the BSP transport queue. */
     for (uint8_t idx = 0; idx < g_module_count; idx++) {
         if (g_modules[idx].view.enabled) {
             process_module(idx, now);

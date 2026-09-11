@@ -56,15 +56,9 @@
  *     Data: 07 00 00 AA 00 00 00 00
  *
  * Logging note:
- *   CHG_LIB_Process()/CHG_LIB_FeedCanFrame() (chg_lib_core.c) hold
- *   BSP_EnterCritical() around the *entire* driver call, so every function
- *   in this file reachable from tonhe_process()/tonhe_feed_frame() (i.e.
- *   process_module(), parse_status(), parse_confirm(), parse_ac_phase(),
- *   parse_extended()) runs with interrupts disabled. LOG() blocks for up
- *   to 50ms (Utils/Log/debug_log.c) -- calling it from any of those would
- *   stall CAN1/CAN2 RX for that long. Do not add LOG() calls in that call
- *   tree; Maxwell/Lianming follow the same rule (zero LOG() calls in
- *   either driver, not an oversight).
+ *   The FDCAN ISR only captures raw frames. Driver processing and parsing run
+ *   from the main loop, where bounded protocol work and rate-limited logging
+ *   are allowed.
  */
 
 #include "chg_lib_driver_tonhe.h"
@@ -865,12 +859,8 @@ static void tonhe_process(uint32_t now)
     }
 
     /* BUGFIX B-10: service every enabled module every call instead of one
-     * per round-robin index -- see the matching comment in
-     * chg_lib_maxwell.c's mx_process() for the full rationale, including
-     * why the nested BSP_EnterCritical()/ExitCritical() calls this
-     * replaces were also a latent bug (BSP_EnterCritical()/ExitCritical()
-     * doesn't nest, so calling it inside CHG_LIB_Process()'s already-held
-     * critical section re-enabled interrupts partway through). */
+     * per round-robin index. This function runs in main context; CAN RX is
+     * captured separately by the BSP transport queue. */
     for (uint8_t idx = 0; idx < g_module_count; idx++) {
         TONHE_Internal_t *mod = &g_modules[idx];
         if (mod->view.enabled) {

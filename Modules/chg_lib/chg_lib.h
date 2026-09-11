@@ -33,7 +33,7 @@
  *   4. Add module(s): CHG_LIB_AddModule(addr, group);
  *   5. Control: CHG_LIB_SetVoltage(), CHG_LIB_Start(), etc.
  *   6. Process: Call CHG_LIB_Process() periodically
- *   7. Feed CAN frames: CHG_LIB_FeedCanFrame() from ISR
+ *   7. Feed CAN frames: CHG_LIB_FeedCanFrame() from the main loop
  *
  * Design Patterns:
  *   - Abstract Factory: Creates driver instances via ops table

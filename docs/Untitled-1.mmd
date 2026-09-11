@@ -95,7 +95,9 @@ flowchart TD
 
     subgraph CANPath["CAN Reception and Driver Dispatch"]
         CANIRQ["FDCAN RX interrupt"] --> CANCallback["HAL_FDCAN_RxFifo0Callback()"]
-        CANCallback --> BusSelect{"FDCAN instance"}
+        CANCallback --> RawQueue["Bounded raw RX queue"]
+        RawQueue --> RxProcess["BSP_CAN_ProcessRx() in main loop"]
+        RxProcess --> BusSelect{"FDCAN instance"}
         BusSelect -->|FDCAN1| ChargerFrame["CHG_LIB_FeedCanFrame()"]
         BusSelect -->|FDCAN2| BMSFrame["BMS_FeedFrame()"]
         ChargerFrame --> DriverCore["Active driver operation table"]

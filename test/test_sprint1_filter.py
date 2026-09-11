@@ -70,11 +70,32 @@ def test_mock_hal_config_filter():
         assert check_filter(0x00000000, 0x00000000, ext_id)
 
 def test_bms_std_ids_pass():
-    """Ensure the 4 standard BMS frames that were previously REJECTed now would pass"""
+    """Ensure standard/extended frames are captured before protocol dispatch"""
     txt = read("BSP/bsp_can.c")
-    # After fix, BMS filters must exist; we already checked Std filter presence
-    # Verify that previously missing handling now present: HAL_FDCAN_RxFifo0Callback handles both IdTypes
-    cb = read("BSP/bsp_can.c")
-    assert "FDCAN_STANDARD_ID" in cb
-    assert "FDCAN_EXTENDED_ID" in cb
-    assert "BMS_FeedFrame" in cb
+    # The ISR must preserve the identifier type in the raw queue. Protocol
+    # consumers are dispatched later from BSP_CAN_ProcessRx().
+    assert "FDCAN_STANDARD_ID" in txt
+    assert "FDCAN_EXTENDED_ID" in txt
+    assert "BSP_CAN_ProcessRx" in txt
+    assert "queue_push_from_isr" in txt
+    assert "g_bms_rx_handler" in txt
+
+def test_can_rx_isr_does_not_dispatch_protocols():
+    """FDCAN callback captures raw frames and never calls module consumers."""
+    txt = read("BSP/bsp_can.c")
+    start = txt.find("void HAL_FDCAN_RxFifo0Callback")
+    end = txt.find("void HAL_FDCAN_ErrorStatusCallback", start)
+    assert start >= 0 and end > start
+    callback = txt[start:end]
+    assert "g_bms_rx_handler(" not in callback
+    assert "g_charger_rx_handler(" not in callback
+    assert "BMS_FeedFrame(" not in callback
+    assert "CHG_LIB_FeedCanFrame(" not in callback
+    assert "queue_push_from_isr" in callback
+    assert "BSP_CAN_RX_ISR_DRAIN_LIMIT" in callback
+
+def test_can_rx_queue_is_bounded():
+    txt = read("BSP/bsp_can.c")
+    assert "BSP_CAN_RX_QUEUE_CAPACITY  32U" in txt
+    assert "BSP_CAN_RX_PROCESS_BUDGET  16U" in txt
+    assert "queue_overflow_count++" in txt

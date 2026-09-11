@@ -96,18 +96,19 @@ def test_no_log_in_isr():
 def test_volatile_and_critical_sections():
     bms = read("Modules/bms/bms_core.c")
     assert "volatile" in bms
-    assert "__disable_irq" in bms
-    assert "__enable_irq" in bms
-    # BMS_GetView must disable irq
+    assert "BSP_EnterCritical" in bms
+    assert "BSP_ExitCritical" in bms
+    # BMS_GetView must use the platform critical-section wrapper.
     gv = bms[bms.find("void BMS_GetView"):bms.find("bool BMS_ShouldClose")]
-    assert "__disable_irq" in gv
+    assert "BSP_EnterCritical" in gv
+    assert "BSP_ExitCritical" in gv
 
     pc = read("App/Protocol/pc_protocol.c")
     assert "volatile uint8_t g_tx_head" in pc or "volatile uint8_t g_tx_tail" in pc
-    assert "__disable_irq" in pc
+    assert "BSP_EnterCritical" in pc
 
     chg = read("Modules/chg_lib/chg_lib_core.c")
-    assert "__disable_irq" in chg
+    assert "BSP_EnterCritical" in chg
 
 def test_fuzz_feedbyte_burst_1000():
     sim = PcProtoSim()
@@ -157,12 +158,29 @@ def test_chg_lib_view_atomic():
     # Check chg_lib drivers protect GetModuleView with irq
     for name in ["chg_lib_maxwell.c", "chg_lib_lianming.c", "chg_lib_tonhe.c"]:
         txt = read(f"Modules/chg_lib/{name}")
-        # GetModuleView must disable irq
-        assert "__disable_irq" in txt
-        assert "__enable_irq" in txt
+        # GetModuleView must use the platform critical-section wrapper.
+        assert "BSP_EnterCritical" in txt
+        assert "BSP_ExitCritical" in txt
         # must copy atomically
         assert "tmp" in txt or "CHG_LIB_ModuleView_t" in txt
 
 def test_bsp_can_volatile():
     txt = read("BSP/bsp_can.c")
     assert "volatile uint32_t g_c1_tx" in txt
+
+def test_can_consumers_run_outside_isr():
+    """Protocol/driver consumers must not be wrapped in long IRQ-off calls."""
+    chg = read("Modules/chg_lib/chg_lib_core.c")
+    for name in ["void CHG_LIB_Process", "void CHG_LIB_FeedCanFrame"]:
+        start = chg.find(name)
+        assert start >= 0, f"{name} not found"
+        end = chg.find("\n}", start)
+        assert end > start
+        body = chg[start:end]
+        assert "BSP_EnterCritical" not in body
+        assert "BSP_ExitCritical" not in body
+
+    app = read("App/System/app_main.c")
+    assert "BSP_CAN_ProcessRx();" in app
+    assert app.find("BSP_CAN_ProcessRx();") < app.find("CHG_LIB_Process(now);")
+    assert app.find("BSP_CAN_ProcessRx();") < app.find("BMS_Process(now);")

@@ -86,6 +86,9 @@ behaviour and have not been checked against a real DC bus / scope"*.
 | `BMS_STALE_THRESHOLD_MS` | 47 | 2000 ms | Data coi là "stale" (cảnh báo, không gate relay — xem DES-02) sau khoảng này | Product decision |
 | `BMS_CTRL_TX_INTERVAL_MS` | 48 | 500 ms | Chu kỳ gửi Ctrl_INFO cho BMS (FR-BMS-06, Mandatory) | Protocol spec |
 
+Ghi chú: runtime hiện dùng timeout riêng theo từng frame định kỳ; `ALM_INFO` là
+frame event-triggered và không được đánh stale chỉ vì không xuất hiện.
+
 ## Modules/chg_lib — driver-internal (KHÔNG tách khỏi file gốc, xem lý do trong phần "Vì sao không gom hết")
 
 ### TonHe — `Modules/chg_lib/chg_lib_driver_tonhe.h`

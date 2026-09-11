@@ -78,6 +78,13 @@ extern "C" {
  */
 typedef bool BMS_ParseResult_t;
 
+typedef enum {
+    BMS_PARSE_OK = 0,
+    BMS_PARSE_REJECT_ARGUMENT,
+    BMS_PARSE_REJECT_UNKNOWN_ID,
+    BMS_PARSE_REJECT_DLC
+} BMS_ParseRejectReason_t;
+
 /* ---- BATT_ST1 (0x02F4) ---- */
 typedef struct {
     BMS_ParseResult_t valid;
@@ -243,6 +250,14 @@ typedef struct {
 bool BMS_ParseFrame(uint32_t ext_id, uint32_t std_id,
                     const uint8_t *data, uint8_t dlc,
                     BMS_Data_t *bms);
+
+/* Extended parser entry point used by diagnostics.  The legacy entry point
+ * above remains the compatibility wrapper for existing host tests/callers. */
+bool BMS_ParseFrameEx(uint32_t ext_id, uint32_t std_id,
+                      const uint8_t *data, uint8_t dlc,
+                      BMS_Data_t *bms,
+                      BMS_ParseRejectReason_t *reason,
+                      BMS_FrameType_t *frame_type);
 
 /* ============== Control Info API ============== */
 

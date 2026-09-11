@@ -60,6 +60,7 @@ static uint32_t last_led_tick       = 0;
 static uint32_t last_dwin_tick      = 0;
 static uint32_t last_dwin_full_tick = 0;
 static uint32_t last_main_log       = 0;
+static uint32_t last_can_diag_log   = 0;
 /* Button debounce -- single toggle button (BUTTON_1/PA15), see App_Loop()
  * "(2) Button handling" for the state-decides-direction logic. BUTTON_2
  * (PD2) is no longer read here -- confirmed with user 2026-08-29, hardware
@@ -67,6 +68,71 @@ static uint32_t last_main_log       = 0;
 static uint32_t btn_start_last    = 0;
 static uint8_t  btn_start_prev    = 0;
 static uint8_t  btn_start_db      = 0;
+
+static void log_can_diagnostics(uint32_t now)
+{
+    if ((uint32_t)(now - last_can_diag_log) < 1000U) return;
+    last_can_diag_log = now;
+
+    BSP_CAN_RxStats_t c1;
+    BSP_CAN_RxStats_t c2;
+    BMS_Diagnostics_t bms_diag;
+    BMS_View_t bms_view;
+    BMS_GetDiagnostics(&bms_diag);
+    BMS_GetView(&bms_view);
+    BSP_CAN_GetRxStats(1U, &c1);
+    BSP_CAN_GetRxStats(2U, &c2);
+
+    uint32_t bms_valid = 0U;
+    for (uint8_t i = 0U; i < BMS_FRAME_MAX; i++) {
+        bms_valid += bms_diag.valid_rx_count[i];
+    }
+
+    if (c1.queue_overflow_count != 0U || c1.stale_queue_drop_count != 0U ||
+        c1.fifo_lost_count != 0U ||
+        c1.fifo_full_count != 0U || c1.bus_off_count != 0U ||
+        c1.error_warning_count != 0U || c1.error_passive_count != 0U ||
+        c1.protocol_error_count != 0U ||
+        c2.queue_overflow_count != 0U || c2.stale_queue_drop_count != 0U ||
+        c2.fifo_lost_count != 0U ||
+        c2.fifo_full_count != 0U || c2.bus_off_count != 0U ||
+        c2.error_warning_count != 0U || c2.error_passive_count != 0U ||
+        c2.protocol_error_count != 0U || bms_diag.unknown_id_count != 0U ||
+        bms_diag.invalid_dlc_count != 0U ||
+        bms_diag.argument_reject_count != 0U) {
+        LOG("[CAN DIAG] C1 raw=%lu q=%lu ovf=%lu old=%lu lost=%lu full=%lu bo=%lu "
+            "ew=%lu ep=%lu pe=%lu | C2 raw=%lu q=%lu ovf=%lu lost=%lu "
+            "old=%lu full=%lu bo=%lu ew=%lu ep=%lu pe=%lu "
+            "| BMS valid=%lu unknown=%lu dlc=%lu arg=%lu last=%lu on=%u stale=%u\r\n",
+            (unsigned long)c1.raw_rx_count,
+            (unsigned long)c1.queued_rx_count,
+            (unsigned long)c1.queue_overflow_count,
+            (unsigned long)c1.stale_queue_drop_count,
+            (unsigned long)c1.fifo_lost_count,
+            (unsigned long)c1.fifo_full_count,
+            (unsigned long)c1.bus_off_count,
+            (unsigned long)c1.error_warning_count,
+            (unsigned long)c1.error_passive_count,
+            (unsigned long)c1.protocol_error_count,
+            (unsigned long)c2.raw_rx_count,
+            (unsigned long)c2.queued_rx_count,
+            (unsigned long)c2.queue_overflow_count,
+            (unsigned long)c2.fifo_lost_count,
+            (unsigned long)c2.stale_queue_drop_count,
+            (unsigned long)c2.fifo_full_count,
+            (unsigned long)c2.bus_off_count,
+            (unsigned long)c2.error_warning_count,
+            (unsigned long)c2.error_passive_count,
+            (unsigned long)c2.protocol_error_count,
+            (unsigned long)bms_valid,
+            (unsigned long)bms_diag.unknown_id_count,
+            (unsigned long)bms_diag.invalid_dlc_count,
+            (unsigned long)bms_diag.argument_reject_count,
+            (unsigned long)bms_view.last_rx_tick,
+            bms_view.online ? 1U : 0U,
+            BMS_IsDataStale() ? 1U : 0U);
+    }
+}
 /* One-shot: identity strings + initial page pushed to the DWIN panel once
  * it has had time to boot (the panel comes up slower than the MCU). */
 static bool     dwin_boot_sent    = false;
@@ -320,15 +386,6 @@ void App_Init(void)
     DWIN_Init();
     LOG("App_Init: RS485/DWIN HMI ready (USART3 115200-8N1 SWAP, DE=PB1).\r\n");
 
-    /* Start CAN1 + CAN2 (filter + interrupt) */
-    LOG("App_Init: Starting CAN bus...\r\n");
-    if (!BSP_CAN_Start()) {
-        LOG("App_Init: ERROR - Could not start CAN bus!\r\n");
-        led_fault_on();
-    } else {
-        LOG("App_Init: CAN bus started successfully.\r\n");
-    }
-
     /* Initialize BMS driver (CAN2, 250Kbps) */
     BMS_Init();
     LOG("App_Init: BMS driver ready.\r\n");
@@ -344,10 +401,19 @@ void App_Init(void)
     /* Wire the FDCAN RX ISR to the business modules. BSP only captures raw
      * frames off the wire and must not #include bms_core.h/chg_lib.h itself
      * (AGENTS.md sec 5-6) -- the composition root does the wiring instead.
-     * Same ISR context and call timing as before; only the include graph
-     * changed. */
+     * BSP_CAN_ProcessRx() invokes these from main context after the ISR has
+     * copied raw frames into its bounded transport queue. */
     BSP_CAN_SetChargerRxHandler(CHG_LIB_FeedCanFrame);
     BSP_CAN_SetBmsRxHandler(BMS_FeedFrame);
+
+    /* Start CAN1 + CAN2 only after consumers are ready. */
+    LOG("App_Init: Starting CAN bus...\r\n");
+    if (!BSP_CAN_Start()) {
+        LOG("App_Init: ERROR - Could not start CAN bus!\r\n");
+        led_fault_on();
+    } else {
+        LOG("App_Init: CAN bus started successfully.\r\n");
+    }
 
     /* Initialize debug protocol */
     DebugProtocol_Init();
@@ -407,6 +473,11 @@ void App_Loop(void)
 
     /* Watchdog bus-off cho CAN1/CAN2 */
     BSP_CAN_Process();
+
+    /* FDCAN ISR only captures raw frames. Deliver a bounded batch to the
+     * protocol consumers from main context before the 20ms control step. */
+    BSP_CAN_ProcessRx();
+    log_can_diagnostics(now);
 
     /* (1) Control loop 20ms: charger FSM, BMS, charge controller */
     if ((now - last_process_tick) >= APP_PROCESS_INTERVAL_MS) {

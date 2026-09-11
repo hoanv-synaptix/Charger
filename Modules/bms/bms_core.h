@@ -22,7 +22,7 @@
  *
  * Usage:
  *   1. BMS_Init()     — called once at startup
- *   2. BMS_FeedFrame()— called from CAN2 RX ISR
+ *   2. BMS_FeedFrame()— called from the main loop after CAN RX dequeue
  *   3. BMS_Process()  — called periodically in main loop
  *
  * Design Patterns:
@@ -128,6 +128,13 @@ typedef struct {
     bool     online;
 } BMS_View_t;
 
+typedef struct {
+    uint32_t valid_rx_count[BMS_FRAME_MAX];
+    uint32_t unknown_id_count;
+    uint32_t invalid_dlc_count;
+    uint32_t argument_reject_count;
+} BMS_Diagnostics_t;
+
 /* ============== Config for charging ============== */
 
 typedef struct {
@@ -143,8 +150,8 @@ typedef struct {
 void BMS_Init(void);
 
 /**
- * @brief  Feed a CAN frame from BMS into the driver.
- *         Call from CAN2 RX ISR or from App_BMS_RxCallback().
+ * @brief  Feed a captured CAN frame from BMS into the driver.
+ *         Call from the main loop, never from an FDCAN ISR.
  * @param  ext_id   Extended ID (0 if standard frame)
  * @param  std_id   Standard ID (0 if extended frame)
  * @param  data     8-byte payload
@@ -189,6 +196,11 @@ bool BMS_HasCriticalAlarm(void);
  * @param  view  Pointer to fill with current BMS data
  */
 void BMS_GetView(BMS_View_t *view);
+
+/**
+ * @brief  Get parser diagnostics accumulated since BMS_Init().
+ */
+void BMS_GetDiagnostics(BMS_Diagnostics_t *diagnostics);
 
 /**
  * @brief  BMS-side half of the relay-close decision: is the BMS itself

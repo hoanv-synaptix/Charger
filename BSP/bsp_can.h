@@ -10,6 +10,29 @@ typedef struct {
     uint8_t  dlc;
 } BSP_CAN_Frame_t;
 
+/* Raw frame captured from one FDCAN RX FIFO.  This type deliberately carries
+ * no protocol meaning: decoding belongs to the consumer in main context. */
+typedef struct {
+    uint32_t id;
+    bool     is_extended;
+    uint8_t  data[8];
+    uint8_t  dlc;
+    uint32_t rx_tick;
+} BSP_CAN_RxFrame_t;
+
+typedef struct {
+    uint32_t raw_rx_count;
+    uint32_t queued_rx_count;
+    uint32_t queue_overflow_count;
+    uint32_t stale_queue_drop_count;
+    uint32_t fifo_lost_count;
+    uint32_t fifo_full_count;
+    uint32_t bus_off_count;
+    uint32_t error_warning_count;
+    uint32_t error_passive_count;
+    uint32_t protocol_error_count;
+} BSP_CAN_RxStats_t;
+
 /* Bus 1 = FDCAN1 (125Kbps, charger modules)
  * Bus 2 = FDCAN2 (250Kbps, BMS) */
 bool BSP_CAN_Start(void);
@@ -23,18 +46,19 @@ void BSP_CAN_GetStats(uint32_t *c1tx, uint32_t *c1rx, uint32_t *c2tx, uint32_t *
  * rationale). Poll this instead of expecting a log line. */
 void BSP_CAN_GetTxFailStats(uint32_t *c1_fail, uint32_t *c2_fail);
 
-/* Rx dispatch callbacks. BSP only captures frames off the wire; it must not
- * know about charger/BMS business modules (AGENTS.md sec 5-6). The
- * composition root (App_Init) registers these once at startup; the FDCAN
- * RX ISR (HAL_FDCAN_RxFifo0Callback, bsp_can.c) invokes whichever is set
- * for the bus the frame arrived on. Handlers run in ISR context exactly as
- * before this refactor -- this only removes the compile-time dependency,
- * it does not change when or where frames are processed. */
+/* Rx dispatch callbacks. BSP only captures raw frames off the wire; these
+ * handlers are invoked by BSP_CAN_ProcessRx() from main context. */
 typedef void (*BSP_CAN_ChargerRxHandler_t)(uint32_t ext_id, const uint8_t *data, uint8_t dlc);
 typedef void (*BSP_CAN_BmsRxHandler_t)(uint32_t ext_id, uint32_t std_id, const uint8_t *data, uint8_t dlc);
 
 void BSP_CAN_SetChargerRxHandler(BSP_CAN_ChargerRxHandler_t handler);
 void BSP_CAN_SetBmsRxHandler(BSP_CAN_BmsRxHandler_t handler);
+
+/* Deliver a bounded number of captured frames to protocol consumers. */
+void BSP_CAN_ProcessRx(void);
+
+/* Read transport diagnostics.  bus is 1 for FDCAN1 or 2 for FDCAN2. */
+void BSP_CAN_GetRxStats(uint8_t bus, BSP_CAN_RxStats_t *stats);
 
 /* Watchdog bus-off: kiem tra PSR moi 1s, restart controller neu bus-off.
  * Goi lien tuc trong App_Loop. */

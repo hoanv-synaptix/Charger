@@ -769,19 +769,8 @@ static void mx_process(uint32_t now)
  /* BUGFIX B-10: used to service one module per CHG_LIB_Process() call via
   * a round-robin index, stretching e.g. a 50ms retry cadence to 400ms
   * with 8 modules. Now services every enabled module every call instead.
-  * Safe to do inside the single critical section CHG_LIB_Process() already
-  * holds around this whole call (see chg_lib_core.c) -- no driver call in
-  * process_module()'s tree blocks (no LOG() per B-19, CHG_LIB_CanBackend_
-  * Transmit() only enqueues to the FDCAN hardware TX FIFO), so N modules'
-  * worth of state-machine work is on the order of tens of microseconds
-  * even at the 8-module max, not milliseconds. The BSP_EnterCritical()/
-  * BSP_ExitCritical() calls this replaces were also a latent bug of their
-  * own: BSP_EnterCritical()/ExitCritical() is a plain __disable_irq()/
-  * __enable_irq() pair with no nesting/depth counter, so calling it again
-  * INSIDE the critical section CHG_LIB_Process() already holds would
-  * re-enable interrupts partway through -- silently undoing the B-13 fix
-  * that made CHG_LIB_Process() hold one critical section around the whole
-  * driver call in the first place. */
+  * Driver processing runs in main context and must not be wrapped in a
+  * coarse IRQ-off section; CAN RX capture remains bounded and responsive. */
  for (uint8_t idx = 0; idx < g_module_count; idx++) {
      MXR_Internal_t *m = &g_modules[idx];
      if (m->view.enabled) {

@@ -196,11 +196,25 @@ static const BMS_FrameHandler_t g_handlers[] = {
     {true,  BMS_ID_CELL_VOLT_FULL(0), BMS_ID_CELL_VOLT_FULL_MASK, 8, BMS_FRAME_CELL_VOLT_FULL, parse_cell_volt_full},
 };
 
-bool BMS_ParseFrame(uint32_t ext_id, uint32_t std_id,
-                    const uint8_t *data, uint8_t dlc,
-                    BMS_Data_t *bms)
+bool BMS_ParseFrameEx(uint32_t ext_id, uint32_t std_id,
+                      const uint8_t *data, uint8_t dlc,
+                      BMS_Data_t *bms,
+                      BMS_ParseRejectReason_t *reason,
+                      BMS_FrameType_t *frame_type)
 {
+    bool id_match = false;
+
+    if (reason != NULL) {
+        *reason = BMS_PARSE_OK;
+    }
+    if (frame_type != NULL) {
+        *frame_type = BMS_FRAME_MAX;
+    }
+
     if (data == NULL || bms == NULL || dlc > 8U) {
+        if (reason != NULL) {
+            *reason = BMS_PARSE_REJECT_ARGUMENT;
+        }
         return false;
     }
 
@@ -208,24 +222,38 @@ bool BMS_ParseFrame(uint32_t ext_id, uint32_t std_id,
         const BMS_FrameHandler_t *h = &g_handlers[i];
         if (h->is_ext) {
             if (std_id == 0 && (ext_id & h->id_mask) == h->id) {
+                id_match = true;
                 if (dlc >= h->min_dlc) {
                     h->func(data, bms, ext_id);
                     bms->last_rx_tick[h->type] = BSP_GetTick();
+                    if (frame_type != NULL) *frame_type = h->type;
                     return true;
                 }
             }
         } else {
             if (std_id != 0 && (std_id & h->id_mask) == h->id) {
+                id_match = true;
                 if (dlc >= h->min_dlc) {
                     h->func(data, bms, std_id);
                     bms->last_rx_tick[h->type] = BSP_GetTick();
+                    if (frame_type != NULL) *frame_type = h->type;
                     return true;
                 }
             }
         }
     }
 
+    if (reason != NULL) {
+        *reason = id_match ? BMS_PARSE_REJECT_DLC : BMS_PARSE_REJECT_UNKNOWN_ID;
+    }
     return false;
+}
+
+bool BMS_ParseFrame(uint32_t ext_id, uint32_t std_id,
+                    const uint8_t *data, uint8_t dlc,
+                    BMS_Data_t *bms)
+{
+    return BMS_ParseFrameEx(ext_id, std_id, data, dlc, bms, NULL, NULL);
 }
 
 /* ============== Public: build Ctrl_INFO ============== */
@@ -238,4 +266,3 @@ void BMS_BuildCtrlInfo(uint8_t out[8], const BMS_CtrlInfo_t *ctrl)
     out[2] = ctrl->dchg_sw;
     /* bytes 3-7 remain 0 (reserved) */
 }
-

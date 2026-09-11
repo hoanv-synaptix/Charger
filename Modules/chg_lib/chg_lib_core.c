@@ -136,28 +136,18 @@ void CHG_LIB_EmergencyStop(void)
 
 void CHG_LIB_Process(uint32_t now_tick)
 {
-    /* BUGFIX B-13: the critical section now covers the driver call itself,
-     * not just the get_active() read. process() and feed_frame() (below)
-     * both read/write a module's CHG_LIB_ModuleView_t, and feed_frame() runs
-     * from the CAN RX ISR -- without this, the ISR could preempt process()
-     * mid-update (e.g. state written but alarm_flags not yet), corrupting a
-     * fault-handling decision. Coarse-grained on purpose: one module's
-     * worth of work per call, no blocking CAN sends, so the IRQ-off window
-     * stays short. */
-    BSP_EnterCritical();
+    /* Both process() and feed_frame() run in the main loop.  CAN RX only
+     * captures raw frames in the ISR, so no long IRQ-off section is needed
+     * around the driver call. */
     const CHG_LIB_DriverOps_t *driver = get_active();
     if (driver != 0 && driver->process != 0) driver->process(now_tick);
-    BSP_ExitCritical();
 }
 
 void CHG_LIB_FeedCanFrame(uint32_t ext_id, const uint8_t *data, uint8_t dlc)
 {
-    /* ISR context — no LOG. See CHG_LIB_Process for why this section covers
-     * the driver call itself (B-13). */
-    BSP_EnterCritical();
+    /* Main-loop context.  The FDCAN ISR only copies frames to a raw queue. */
     const CHG_LIB_DriverOps_t *driver = get_active();
     if (driver != 0 && driver->feed_frame != 0) driver->feed_frame(ext_id, data, dlc);
-    BSP_ExitCritical();
 }
 
 void CHG_LIB_GetSystemSummary(CHG_LIB_SystemSummary_t *summary)

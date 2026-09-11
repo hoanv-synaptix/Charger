@@ -29,7 +29,7 @@ def test_remove_module_compact():
         assert "g_module_count--" in txt, f"{name} RemoveModule must decrement count"
         # Must compact array
         assert "for (uint8_t i = idx" in txt or "memmove" in txt
-        assert "__disable_irq" in txt
+        assert "BSP_EnterCritical" in txt
 
 def test_recovering_requires_5_rx():
     for name, expected in [
@@ -70,8 +70,13 @@ def test_tonhe_timing_1s():
     assert ">= 1000U" in txt, "TonHe timing should be 1s (1000ms) per SRS"
     assert ">= 5000U" not in txt or "send_timing_command" not in txt[txt.find(">= 5000U")-100:txt.find(">= 5000U")+100]  # ensure old 5000 not used for timing
 
-def test_chg_lib_core_irq_protection():
+def test_chg_lib_core_rx_processing_is_main_context():
     core = read("Modules/chg_lib/chg_lib_core.c")
-    assert "__disable_irq" in core
+    assert "BSP_EnterCritical" in core  # short snapshot protection remains
     assert "CHG_LIB_Process" in core
     assert "CHG_LIB_FeedCanFrame" in core
+    for name in ["void CHG_LIB_Process", "void CHG_LIB_FeedCanFrame"]:
+        start = core.find(name)
+        end = core.find("\n}", start)
+        assert start >= 0 and end > start
+        assert "BSP_EnterCritical" not in core[start:end]

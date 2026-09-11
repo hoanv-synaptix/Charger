@@ -213,11 +213,21 @@ Quy ước độ ưu tiên: **M** = Must, **S** = Should, **C** = Could.
 | FR-BMS-01 | Parse toàn bộ frame BMS (mục 4.3), cache `BMS_Data_t`, quy đổi raw → vật lý | M |
 | FR-BMS-02 | Frame lạ / sai DLC không được refresh watchdog kết nối | M |
 | FR-BMS-03 | ≥5s không có frame hợp lệ → OFFLINE + xóa cache | M |
-| FR-BMS-04 | ≥2s → trạng thái data-quality `BMS_IsDataStale()` (cảnh báo mềm, không phải alarm/DWIN, không ngắt kết nối) | S |
+| FR-BMS-04 | Data-quality được tính theo timestamp từng frame định kỳ; `ALM_INFO` là event-triggered và không làm stale khi vắng mặt. `BMS_IsDataStale()` vẫn là cảnh báo mềm, không phải alarm/DWIN và không ngắt kết nối | S |
 | FR-BMS-05 | Alarm critical → FAULT; tự hồi phục khi alarm xóa + dữ liệu tươi | M |
 | FR-BMS-06 | Gửi Ctrl_INFO 500ms (mask charge/discharge) | M |
 | FR-BMS-07 | Snapshot `BMS_View_t` (copy struct, đọc mọi lúc) | M |
 | FR-BMS-08 | Xử lý tick underflow an toàn | S |
+
+#### BMS/CAN RX execution contract
+
+FDCAN RX ISR chỉ đọc frame từ hardware FIFO, copy vào queue cố định và tăng
+counter transport. ISR không được parse BMS, parse charger, chuyển đổi float,
+cập nhật state/alarm hoặc ghi log. `BSP_CAN_ProcessRx()` chuyển tối đa một batch
+giới hạn frame mỗi bus sang BMS/charger từ main loop. Frame unknown hoặc sai DLC
+không refresh communication watchdog. CAN traffic tổng không được coi là BMS
+online; chỉ frame BMS hợp lệ mới refresh watchdog. Queue overflow/FIFO lost phải
+được ghi nhận bằng diagnostic counter.
 
 ### 3.4 Điều phối chu trình sạc (Charge Controller) — FR-CTRL
 

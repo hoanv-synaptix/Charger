@@ -58,6 +58,27 @@ bool test_bms_parser(void) {
     ASSERT(parsed == true, "Failed to parse CELL_VOLT");
     ASSERT(bms.last_rx_tick[BMS_FRAME_CELL_VOLT] == 250, "Tick not updated for CELL_VOLT");
 
+    /* 3. Unknown ID and short known frame must be diagnosable and must not
+     * refresh any BMS watchdog timestamp. */
+    BMS_ParseRejectReason_t reason = BMS_PARSE_OK;
+    BMS_FrameType_t frame_type = BMS_FRAME_MAX;
+    mock_tick = 400;
+    parsed = BMS_ParseFrameEx(0, 0x0123, batt_st1_data, 8, &bms,
+                              &reason, &frame_type);
+    ASSERT(parsed == false, "Unknown BMS ID must be rejected");
+    ASSERT(reason == BMS_PARSE_REJECT_UNKNOWN_ID, "Unknown ID reason mismatch");
+    ASSERT(frame_type == BMS_FRAME_MAX, "Rejected frame type must be empty");
+    ASSERT(bms.last_rx_tick[BMS_FRAME_BATT_ST1] == 100,
+           "Unknown ID must not refresh watchdog");
+
+    mock_tick = 500;
+    parsed = BMS_ParseFrameEx(0, BMS_ID_CELL_VOLT, cell_volt_data, 2, &bms,
+                              &reason, &frame_type);
+    ASSERT(parsed == false, "Short BMS frame must be rejected");
+    ASSERT(reason == BMS_PARSE_REJECT_DLC, "Short frame reason mismatch");
+    ASSERT(bms.last_rx_tick[BMS_FRAME_CELL_VOLT] == 250,
+           "Short frame must not refresh watchdog");
+
     printf("[PASS] test_bms_parser\n");
     return true;
 }

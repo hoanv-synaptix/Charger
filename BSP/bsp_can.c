@@ -6,14 +6,108 @@
  */
 
 #include "bsp_can.h"
+#include "bsp_sys.h"
 #include "fdcan.h"
 #include "debug_log.h"
+#include <string.h>
 
 volatile uint32_t g_c1_tx = 0, g_c1_rx = 0, g_c2_tx = 0, g_c2_rx = 0;
 volatile uint32_t g_c1_tx_fail = 0, g_c2_tx_fail = 0;
 
 static BSP_CAN_ChargerRxHandler_t g_charger_rx_handler = 0;
 static BSP_CAN_BmsRxHandler_t     g_bms_rx_handler = 0;
+
+/*
+ * RX transport contract:
+ *   - the FDCAN callback is the producer and only copies raw frames;
+ *   - the main loop is the consumer and owns protocol processing;
+ *   - one spare slot makes the usable SPSC capacity exactly 32 frames.
+ *
+ * The queue is intentionally private to the BSP.  Protocol modules must not
+ * depend on FDCAN headers or interrupt context.
+ */
+#define BSP_CAN_RX_QUEUE_CAPACITY  32U
+#define BSP_CAN_RX_QUEUE_STORAGE   (BSP_CAN_RX_QUEUE_CAPACITY + 1U)
+#define BSP_CAN_RX_PROCESS_BUDGET  16U
+#define BSP_CAN_RX_ISR_DRAIN_LIMIT 8U
+#define BSP_CAN_RX_MAX_QUEUE_AGE_MS 1000U
+
+#define BSP_CAN_RX_NOTIFICATIONS (FDCAN_IT_RX_FIFO0_NEW_MESSAGE | \
+                                  FDCAN_IT_RX_FIFO0_FULL | \
+                                  FDCAN_IT_RX_FIFO0_MESSAGE_LOST | \
+                                  FDCAN_IT_ERROR_PASSIVE | \
+                                  FDCAN_IT_ERROR_WARNING | \
+                                  FDCAN_IT_BUS_OFF | \
+                                  FDCAN_IT_ARB_PROTOCOL_ERROR | \
+                                  FDCAN_IT_DATA_PROTOCOL_ERROR)
+
+typedef struct {
+    BSP_CAN_RxFrame_t frames[BSP_CAN_RX_QUEUE_STORAGE];
+    volatile uint8_t head;
+    volatile uint8_t tail;
+    volatile BSP_CAN_RxStats_t stats;
+} BSP_CAN_RxQueue_t;
+
+static BSP_CAN_RxQueue_t g_c1_rx_queue;
+static BSP_CAN_RxQueue_t g_c2_rx_queue;
+
+static uint8_t queue_next(uint8_t index)
+{
+    index++;
+    return (index >= BSP_CAN_RX_QUEUE_STORAGE) ? 0U : index;
+}
+
+static void queue_reset(BSP_CAN_RxQueue_t *queue)
+{
+    queue->head = 0U;
+    queue->tail = 0U;
+    memset((void *)&queue->stats, 0, sizeof(queue->stats));
+}
+
+static void queue_push_from_isr(BSP_CAN_RxQueue_t *queue,
+                                const BSP_CAN_RxFrame_t *frame)
+{
+    uint8_t head = queue->head;
+    uint8_t next = queue_next(head);
+
+    if (next == queue->tail) {
+        /* Drop newest to preserve frame ordering for protocol state machines. */
+        queue->stats.queue_overflow_count++;
+        return;
+    }
+
+    queue->frames[head] = *frame;
+    queue->head = next;
+    queue->stats.queued_rx_count++;
+}
+
+static bool queue_pop(BSP_CAN_RxQueue_t *queue, BSP_CAN_RxFrame_t *frame)
+{
+    uint8_t tail = queue->tail;
+
+    if (tail == queue->head) {
+        return false;
+    }
+
+    *frame = queue->frames[tail];
+    queue->tail = queue_next(tail);
+    return true;
+}
+
+static BSP_CAN_RxQueue_t *queue_for_handle(const FDCAN_HandleTypeDef *hfdcan)
+{
+    return (hfdcan->Instance == FDCAN1) ? &g_c1_rx_queue : &g_c2_rx_queue;
+}
+
+static uint8_t bus_for_handle(const FDCAN_HandleTypeDef *hfdcan)
+{
+    return (hfdcan->Instance == FDCAN1) ? 1U : 2U;
+}
+
+static bool activate_notifications(FDCAN_HandleTypeDef *hfdcan)
+{
+    return HAL_FDCAN_ActivateNotification(hfdcan, BSP_CAN_RX_NOTIFICATIONS, 0U) == HAL_OK;
+}
 
 void BSP_CAN_SetChargerRxHandler(BSP_CAN_ChargerRxHandler_t handler) {
     g_charger_rx_handler = handler;
@@ -23,7 +117,7 @@ void BSP_CAN_SetBmsRxHandler(BSP_CAN_BmsRxHandler_t handler) {
     g_bms_rx_handler = handler;
 }
 
-static void config_charger_bus_filters(FDCAN_HandleTypeDef *hfdcan)
+static bool config_charger_bus_filters(FDCAN_HandleTypeDef *hfdcan)
 {
     FDCAN_FilterTypeDef sFilterConfig;
 
@@ -34,14 +128,14 @@ static void config_charger_bus_filters(FDCAN_HandleTypeDef *hfdcan)
     sFilterConfig.FilterID1 = 0x00000000;
     sFilterConfig.FilterID2 = 0x00000000;
 
-    if (HAL_FDCAN_ConfigFilter(hfdcan, &sFilterConfig) != HAL_OK) return;
+    if (HAL_FDCAN_ConfigFilter(hfdcan, &sFilterConfig) != HAL_OK) return false;
     if (HAL_FDCAN_ConfigGlobalFilter(hfdcan, FDCAN_REJECT, FDCAN_REJECT,
-                                     FDCAN_FILTER_REMOTE, FDCAN_FILTER_REMOTE) != HAL_OK) return;
-    if (HAL_FDCAN_Start(hfdcan) != HAL_OK) return;
-    if (HAL_FDCAN_ActivateNotification(hfdcan, FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0) != HAL_OK) return;
+                                     FDCAN_FILTER_REMOTE, FDCAN_FILTER_REMOTE) != HAL_OK) return false;
+    if (HAL_FDCAN_Start(hfdcan) != HAL_OK) return false;
+    return activate_notifications(hfdcan);
 }
 
-static void config_bms_bus_filters(FDCAN_HandleTypeDef *hfdcan)
+static bool config_bms_bus_filters(FDCAN_HandleTypeDef *hfdcan)
 {
     FDCAN_FilterTypeDef sFilterConfig;
 
@@ -52,7 +146,7 @@ static void config_bms_bus_filters(FDCAN_HandleTypeDef *hfdcan)
     sFilterConfig.FilterConfig = FDCAN_FILTER_TO_RXFIFO0;
     sFilterConfig.FilterID1 = 0x000;
     sFilterConfig.FilterID2 = 0x000;
-    if (HAL_FDCAN_ConfigFilter(hfdcan, &sFilterConfig) != HAL_OK) return;
+    if (HAL_FDCAN_ConfigFilter(hfdcan, &sFilterConfig) != HAL_OK) return false;
 
     /* Extended ID filter: accept-all → FIFO0 */
     sFilterConfig.IdType = FDCAN_EXTENDED_ID;
@@ -61,18 +155,21 @@ static void config_bms_bus_filters(FDCAN_HandleTypeDef *hfdcan)
     sFilterConfig.FilterConfig = FDCAN_FILTER_TO_RXFIFO0;
     sFilterConfig.FilterID1 = 0x00000000;
     sFilterConfig.FilterID2 = 0x00000000;
-    if (HAL_FDCAN_ConfigFilter(hfdcan, &sFilterConfig) != HAL_OK) return;
+    if (HAL_FDCAN_ConfigFilter(hfdcan, &sFilterConfig) != HAL_OK) return false;
 
     if (HAL_FDCAN_ConfigGlobalFilter(hfdcan, FDCAN_REJECT, FDCAN_REJECT,
-                                     FDCAN_FILTER_REMOTE, FDCAN_FILTER_REMOTE) != HAL_OK) return;
-    if (HAL_FDCAN_Start(hfdcan) != HAL_OK) return;
-    if (HAL_FDCAN_ActivateNotification(hfdcan, FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0) != HAL_OK) return;
+                                     FDCAN_FILTER_REMOTE, FDCAN_FILTER_REMOTE) != HAL_OK) return false;
+    if (HAL_FDCAN_Start(hfdcan) != HAL_OK) return false;
+    return activate_notifications(hfdcan);
 }
 
 bool BSP_CAN_Start(void)
 {
-    config_charger_bus_filters(&hfdcan1);
-    config_bms_bus_filters(&hfdcan2);
+    queue_reset(&g_c1_rx_queue);
+    queue_reset(&g_c2_rx_queue);
+
+    if (!config_charger_bus_filters(&hfdcan1)) return false;
+    if (!config_bms_bus_filters(&hfdcan2)) return false;
     return true;
 }
 
@@ -104,15 +201,8 @@ bool BSP_CAN_Transmit(uint8_t bus, const BSP_CAN_Frame_t *frame)
 
     if (HAL_FDCAN_AddMessageToTxFifoQ((bus == 1) ? &hfdcan1 : &hfdcan2,
                                       &TxHeader, (uint8_t *)frame->data) != HAL_OK) {
-        /* BUGFIX (bonus finding while implementing B-10): BSP_CAN_Transmit()
-         * is reached from every chg_lib driver's send_frame()-equivalent,
-         * which runs inside CHG_LIB_Process()/CHG_LIB_FeedCanFrame()'s
-         * critical section (see B-13). LOG() blocks on HAL_UART_Transmit()
-         * for up to 50ms (Utils/Log/debug_log.c) -- calling it here would
-         * block CAN RX for up to 50ms at exactly the moment the TX FIFO is
-         * already full, i.e. under the heaviest bus load, worse still with
-         * more modules (B-10). Count instead, same pattern as g_c1_tx/
-         * g_c2_tx -- BSP_CAN_GetTxFailStats() exposes it for polling. */
+        /* Do not log here: a formatted UART log can block the timing-sensitive
+         * CAN path.  Count the failure for diagnostic polling instead. */
         if (bus == 1) g_c1_tx_fail++;
         else if (bus == 2) g_c2_tx_fail++;
         return false;
@@ -126,30 +216,95 @@ bool BSP_CAN_Transmit(uint8_t bus, const BSP_CAN_Frame_t *frame)
 
 void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
 {
-    if ((RxFifo0ITs & FDCAN_IT_RX_FIFO0_NEW_MESSAGE) != 0) {
+    BSP_CAN_RxQueue_t *queue = queue_for_handle(hfdcan);
+    uint8_t bus = bus_for_handle(hfdcan);
+
+    if ((RxFifo0ITs & FDCAN_IT_RX_FIFO0_MESSAGE_LOST) != 0U) {
+        queue->stats.fifo_lost_count++;
+    }
+    if ((RxFifo0ITs & FDCAN_IT_RX_FIFO0_FULL) != 0U) {
+        queue->stats.fifo_full_count++;
+    }
+
+    if ((RxFifo0ITs & (FDCAN_IT_RX_FIFO0_NEW_MESSAGE |
+                       FDCAN_IT_RX_FIFO0_FULL |
+                       FDCAN_IT_RX_FIFO0_MESSAGE_LOST)) != 0U) {
         FDCAN_RxHeaderTypeDef RxHeader;
         uint8_t RxData[8];
-        /* Drain all pending frames — interrupt flag is cleared by software,
-         * so we must read until FIFO is empty to avoid lost messages. */
-        while (HAL_FDCAN_GetRxMessage(hfdcan, FDCAN_RX_FIFO0, &RxHeader, RxData) == HAL_OK) {
+        uint8_t drain_count = 0U;
+
+        /* Capture only.  The finite bound prevents a saturated bus from
+         * keeping the CPU in the interrupt indefinitely. */
+        while (drain_count < BSP_CAN_RX_ISR_DRAIN_LIMIT &&
+               HAL_FDCAN_GetRxMessage(hfdcan, FDCAN_RX_FIFO0, &RxHeader, RxData) == HAL_OK) {
             uint8_t actual_dlc = (uint8_t)(RxHeader.DataLength & 0x0FU);
             if (actual_dlc > 8U) actual_dlc = 8U;
+            BSP_CAN_RxFrame_t frame;
 
-            if (hfdcan->Instance == FDCAN1) {
-                g_c1_rx++;
-                if (RxHeader.IdType == FDCAN_EXTENDED_ID && g_charger_rx_handler != 0) {
-                    g_charger_rx_handler(RxHeader.Identifier, RxData, actual_dlc);
-                }
-            } else if (hfdcan->Instance == FDCAN2) {
-                g_c2_rx++;
-                if (g_bms_rx_handler != 0) {
-                    uint32_t ext_id = (RxHeader.IdType == FDCAN_EXTENDED_ID) ? RxHeader.Identifier : 0;
-                    uint32_t std_id = (RxHeader.IdType == FDCAN_STANDARD_ID) ? RxHeader.Identifier : 0;
-                    g_bms_rx_handler(ext_id, std_id, RxData, actual_dlc);
-                }
-            }
+            frame.id = RxHeader.Identifier;
+            frame.is_extended = (RxHeader.IdType == FDCAN_EXTENDED_ID);
+            frame.dlc = actual_dlc;
+            frame.rx_tick = BSP_GetTick();
+            memcpy(frame.data, RxData, sizeof(frame.data));
+
+            queue->stats.raw_rx_count++;
+            queue_push_from_isr(queue, &frame);
+            drain_count++;
         }
+
+        if (bus == 1U) g_c1_rx += drain_count;
+        else if (bus == 2U) g_c2_rx += drain_count;
     }
+}
+
+void HAL_FDCAN_ErrorStatusCallback(FDCAN_HandleTypeDef *hfdcan, uint32_t ErrorStatusITs)
+{
+    BSP_CAN_RxQueue_t *queue = queue_for_handle(hfdcan);
+
+    if ((ErrorStatusITs & FDCAN_IT_BUS_OFF) != 0U) {
+        queue->stats.bus_off_count++;
+    }
+    if ((ErrorStatusITs & FDCAN_IT_ERROR_WARNING) != 0U) {
+        queue->stats.error_warning_count++;
+    }
+    if ((ErrorStatusITs & FDCAN_IT_ERROR_PASSIVE) != 0U) {
+        queue->stats.error_passive_count++;
+    }
+    if ((ErrorStatusITs & (FDCAN_IT_ARB_PROTOCOL_ERROR |
+                           FDCAN_IT_DATA_PROTOCOL_ERROR)) != 0U) {
+        queue->stats.protocol_error_count++;
+    }
+}
+
+static void process_rx_queue(BSP_CAN_RxQueue_t *queue, uint8_t bus)
+{
+    BSP_CAN_RxFrame_t frame;
+    uint8_t processed = 0U;
+
+    while (processed < BSP_CAN_RX_PROCESS_BUDGET && queue_pop(queue, &frame)) {
+        if ((uint32_t)(BSP_GetTick() - frame.rx_tick) > BSP_CAN_RX_MAX_QUEUE_AGE_MS) {
+            queue->stats.stale_queue_drop_count++;
+            processed++;
+            continue;
+        }
+
+        if (bus == 1U) {
+            if (frame.is_extended && g_charger_rx_handler != 0) {
+                g_charger_rx_handler(frame.id, frame.data, frame.dlc);
+            }
+        } else if (bus == 2U && g_bms_rx_handler != 0) {
+            uint32_t ext_id = frame.is_extended ? frame.id : 0U;
+            uint32_t std_id = frame.is_extended ? 0U : frame.id;
+            g_bms_rx_handler(ext_id, std_id, frame.data, frame.dlc);
+        }
+        processed++;
+    }
+}
+
+void BSP_CAN_ProcessRx(void)
+{
+    process_rx_queue(&g_c1_rx_queue, 1U);
+    process_rx_queue(&g_c2_rx_queue, 2U);
 }
 
 void BSP_CAN_GetStats(uint32_t *c1tx, uint32_t *c1rx, uint32_t *c2tx, uint32_t *c2rx)
@@ -164,6 +319,18 @@ void BSP_CAN_GetTxFailStats(uint32_t *c1_fail, uint32_t *c2_fail)
 {
     if (c1_fail) *c1_fail = g_c1_tx_fail;
     if (c2_fail) *c2_fail = g_c2_tx_fail;
+}
+
+void BSP_CAN_GetRxStats(uint8_t bus, BSP_CAN_RxStats_t *stats)
+{
+    BSP_CAN_RxQueue_t *queue;
+
+    if (stats == 0 || (bus != 1U && bus != 2U)) return;
+    queue = (bus == 1U) ? &g_c1_rx_queue : &g_c2_rx_queue;
+
+    BSP_EnterCritical();
+    *stats = *(const BSP_CAN_RxStats_t *)&queue->stats;
+    BSP_ExitCritical();
 }
 
 /* Watchdog bus-off: neu controller roi vao bus-off (khong ai ACK trong lau),
@@ -181,12 +348,12 @@ void BSP_CAN_Process(void)
         LOG("[CAN1] BUS-OFF! Restart controller...\r\n");
         HAL_FDCAN_Stop(&hfdcan1);
         HAL_FDCAN_Start(&hfdcan1);
-        HAL_FDCAN_ActivateNotification(&hfdcan1, FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0);
+        activate_notifications(&hfdcan1);
     }
     if (HAL_FDCAN_GetProtocolStatus(&hfdcan2, &ps) == HAL_OK && ps.BusOff) {
         LOG("[CAN2] BUS-OFF! Restart controller...\r\n");
         HAL_FDCAN_Stop(&hfdcan2);
         HAL_FDCAN_Start(&hfdcan2);
-        HAL_FDCAN_ActivateNotification(&hfdcan2, FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0);
+        activate_notifications(&hfdcan2);
     }
 }

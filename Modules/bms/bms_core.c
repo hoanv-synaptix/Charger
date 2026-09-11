@@ -30,8 +30,13 @@ static volatile BMS_ChargeCtrl_t g_charge_ctrl;
 static volatile bool            g_initialized;
 static volatile bool            g_bms_data_stale;
 /* ISR → main flag: set in FeedFrame, cleared/logged in Process (no LOG in ISR) */
-static volatile uint32_t        g_isr_rx_count;
-static volatile bool            g_isr_new_data;
+static volatile uint32_t        g_rx_count;
+/* Main-loop flag: set when a valid frame is consumed, cleared after logging. */
+static volatile bool            g_new_data;
+static volatile uint32_t        g_valid_rx_count[BMS_FRAME_MAX];
+static volatile uint32_t        g_unknown_id_count;
+static volatile uint32_t        g_invalid_dlc_count;
+static volatile uint32_t        g_argument_reject_count;
 
 /**
  * @brief  Elapsed time since a tick timestamp, tolerant of both the ISR/main
@@ -90,6 +95,18 @@ static bool has_any_valid_bms_data(void)
         }
     }
     return false;
+}
+
+static uint32_t bms_stale_timeout_ms(BMS_FrameType_t type)
+{
+    switch (type) {
+        case BMS_FRAME_BATT_ST1:     return 200U;
+        case BMS_FRAME_BATT_ST2:     return 1000U;
+        case BMS_FRAME_CELL_VOLT:    return 500U;
+        case BMS_FRAME_CELL_TEMP:    return 2000U;
+        case BMS_FRAME_CHG_REQUEST:  return 2000U;
+        default:                     return 0U;
+    }
 }
 
 /* ============== Private: raw → physical ============== */
@@ -250,6 +267,12 @@ void BMS_Init(void)
     g_last_ctrl_tx_tick  = 0U;
     g_last_data_log_tick = 0U;
     g_bms_data_stale     = false;
+    g_rx_count           = 0U;
+    g_new_data           = false;
+    memset((void *)g_valid_rx_count, 0, sizeof(g_valid_rx_count));
+    g_unknown_id_count   = 0U;
+    g_invalid_dlc_count  = 0U;
+    g_argument_reject_count = 0U;
     g_initialized        = true;
 
     LOG("BMS_Init: driver ready.\r\n");
@@ -262,19 +285,30 @@ void BMS_FeedFrame(uint32_t ext_id, uint32_t std_id,
         return;
     }
 
-    /* Parse into g_bms_data. Unknown or short frames must not refresh the watchdog.
-     * NOTE: No LOG here — this runs in ISR context (HAL_FDCAN_RxFifo0Callback). */
+    /* Parse in main context. Unknown or short frames must not refresh the
+     * watchdog and are counted for field diagnostics. */
     BMS_Data_t *bms_data_mut = (BMS_Data_t *)&g_bms_data;
-    if (!BMS_ParseFrame(ext_id, std_id, data, dlc, bms_data_mut)) {
+    BMS_ParseRejectReason_t reject_reason;
+    BMS_FrameType_t frame_type;
+    if (!BMS_ParseFrameEx(ext_id, std_id, data, dlc, bms_data_mut,
+                          &reject_reason, &frame_type)) {
+        if (reject_reason == BMS_PARSE_REJECT_UNKNOWN_ID) {
+            g_unknown_id_count++;
+        } else if (reject_reason == BMS_PARSE_REJECT_DLC) {
+            g_invalid_dlc_count++;
+        } else {
+            g_argument_reject_count++;
+        }
         return;
     }
 
-    /* Mark as online on first valid frame — ISR-safe, no LOG */
+    /* Mark as online on first valid frame. */
     g_last_valid_rx_tick = BSP_GetTick();
-    g_isr_rx_count++;
-    g_isr_new_data = true;
+    if (frame_type < BMS_FRAME_MAX) g_valid_rx_count[frame_type]++;
+    g_rx_count++;
+    g_new_data = true;
 
-    /* Refresh cached view — ISR context, keep minimal (no LOG) */
+    /* Refresh cached view in main context, where float conversion is allowed. */
     update_view_from_data();
     update_alarm_flags();
 }
@@ -285,7 +319,7 @@ void BMS_Process(uint32_t now_tick)
         return;
     }
 
-    /* Critical section: snapshot last_rx_tick atomically (ISR may update it) */
+    /* Snapshot shared state before evaluating timeout conditions. */
     uint32_t last_rx_snapshot;
     BSP_EnterCritical();
     last_rx_snapshot = g_last_valid_rx_tick;
@@ -305,11 +339,12 @@ void BMS_Process(uint32_t now_tick)
 
     bool is_stale = false;
     for (int i = 0; i < BMS_FRAME_MAX; i++) {
-        if (i == BMS_FRAME_BMS_SW_STA || i == BMS_FRAME_CELL_VOLT_FULL || i == BMS_FRAME_CELL_TEMP_FULL) {
-            continue; /* Ignore optional/slow frames for stale check */
+        uint32_t timeout = bms_stale_timeout_ms((BMS_FrameType_t)i);
+        if (timeout == 0U || last_rx_frames[i] == 0U) {
+            continue; /* Optional/event frames and never-seen frames do not stale. */
         }
-        uint32_t f_elapsed = bms_tick_elapsed(now_tick, last_rx_frames[i]); /* BUGFIX BUG-02 */
-        if (f_elapsed >= BMS_STALE_THRESHOLD_MS) {
+        uint32_t f_elapsed = bms_tick_elapsed(now_tick, last_rx_frames[i]);
+        if (f_elapsed >= timeout) {
             is_stale = true;
             break;
         }
@@ -393,7 +428,7 @@ void BMS_Process(uint32_t now_tick)
     }
 
     /* ---- Throttled snapshot LOG (1s) — moved out of ISR ---- */
-    if (g_isr_new_data) {
+    if (g_new_data) {
         uint32_t last_log;
         BSP_EnterCritical();
         last_log = g_last_data_log_tick;
@@ -401,7 +436,7 @@ void BMS_Process(uint32_t now_tick)
         if ((now_tick - last_log) >= 1000U) {
             BSP_EnterCritical();
             g_last_data_log_tick = now_tick;
-            g_isr_new_data = false;
+            g_new_data = false;
             BSP_ExitCritical();
             /* Snapshot atomically for logging */
             BMS_View_t snap;
@@ -471,6 +506,19 @@ bool BMS_IsDataStale(void)
     return stale;
 }
 
+void BMS_GetDiagnostics(BMS_Diagnostics_t *diagnostics)
+{
+    if (diagnostics == NULL) return;
+
+    BSP_EnterCritical();
+    memcpy(diagnostics->valid_rx_count, (const void *)g_valid_rx_count,
+           sizeof(diagnostics->valid_rx_count));
+    diagnostics->unknown_id_count = g_unknown_id_count;
+    diagnostics->invalid_dlc_count = g_invalid_dlc_count;
+    diagnostics->argument_reject_count = g_argument_reject_count;
+    BSP_ExitCritical();
+}
+
 bool BMS_HasCriticalAlarm(void)
 {
     BMS_AlarmFlag_t crit = bms_critical_alarm_mask();
@@ -515,7 +563,3 @@ bool BMS_ShouldCloseChargeRelay(void)
 
     return true;
 }
-
-
-
-
