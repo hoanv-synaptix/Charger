@@ -37,7 +37,7 @@
 #define VP_SYS_STATUS_ICON     0x1041  // Var Icon (0:READY, 1:STARTING, 2:CHARGING, 3:COMPLETE, 4:ERROR, 5:OFFLINE)
 #define VP_SYS_BTN_ICON        0x1042  // Var Icon nhãn nút (0:START, 1:STOP, 2:RESET)
 #define VP_SYS_ACTION_KEY      0x1043  // Return Key Code (Phím cảm ứng Start/Stop, panel -> MCU)
-#define VP_TOPBAR_FAULT_CODE   0x1044  // Text (GBK, 8 bytes = 4 VP @ 0x1044..0x1047): Mã lỗi Topbar (VD: "0000", "E006")
+#define VP_TOPBAR_FAULT_CODE   0x1044  // Shared fault-code Text (GBK, 8 bytes): shown on Home and Page 07
 #define VP_CHG_DURATION        0x1050  // Text (GBK, 16 bytes = 8 VP @ 0x1050..0x1057): Thời gian sạc HH:MM:SS
 
 // --- 7. SETTING SCREEN (0x1100) ---
@@ -48,8 +48,29 @@
 #define VP_SET_TOTAL_CHARGED   0x1118  // Text (GBK, 16 bytes = 8 VP): "12500.5 Ah"
 #define VP_SET_TOTAL_ENERGY    0x1120  // Text (GBK, 16 bytes = 8 VP): "685.2 kWh"
 #define VP_SET_UPTIME          0x1128  // Text (GBK, 16 bytes = 8 VP): "125:32:18" (HHH:MM:SS)
+#define VP_SET_LOGIN_KEY       0x1130  // Return Key: open admin Login page
 
-// --- 8. ALARM TABLE (0x1200) - BẢNG 4 LỖI XOAY VÒNG, ĐÃ BỎ CỘT LEVEL ---
+// --- 8. LOGIN + PRE-CHARGE (Page 06 / Page 07) ---
+#define VP_LOGIN_PIN_TEXT          0x1500  // Text, 8 bytes / 4 VP: masked ******
+#define VP_LOGIN_KEY               0x1504  // Return Key: digits, DEL, OK, Back
+#define VP_PRECHARGE_VOLTAGE_TEXT  0x1510  // Text, 8 bytes / 4 VP: system output voltage
+#define VP_PRECHARGE_CURRENT_TEXT  0x1514  // Text, 8 bytes / 4 VP: system total current
+#define VP_PRECHARGE_STATUS_ICON   0x1518  // Variable Icon: 27.icl (0:Ready, 1:Pre, 2:Error)
+#define VP_PRECHARGE_BTN_ICON      0x1519  // Variable Icon: 26.icl (0:Start, 1:Stop, 2:Reset)
+#define VP_PRECHARGE_ACTION_KEY    0x151A  // Return Key: 0x0001 (Action), 0x0002 (Back)
+
+#define DWIN_LOGIN_KEY_DIGIT_0     0x0030  // ASCII '0'
+#define DWIN_LOGIN_KEY_DIGIT_9     0x0039  // ASCII '9'
+#define DWIN_LOGIN_KEY_DELETE      0x00F0  // DWIN DEL
+#define DWIN_LOGIN_KEY_OK          0x00F1  // DWIN OK
+#define DWIN_LOGIN_KEY_BACK        0x00F2  // DWIN BACK
+#define DWIN_PRECHARGE_KEY_ACTION  0x0001
+#define DWIN_PRECHARGE_KEY_BACK    0x0002
+#define DWIN_PRECHARGE_KEY_START   0x0001
+#define DWIN_PRECHARGE_KEY_STOP    0x0001
+#define DWIN_SETTING_KEY_LOGIN     0x0301
+
+// --- 8. ALARM TABLE (0x1200) - BẢNG 12 LỖI XOAY VÒNG (3 Trang x 4 Dòng) ---
 /* Cấu trúc 1 dòng (48 VP = 0x30 stride):
  *  - Time: +0x00 (Text GBK,     Text_Length = 8  bytes -> 4 VP)
  *  - Code: +0x04 (Text GBK,     Text_Length = 8  bytes -> 4 VP)
@@ -57,12 +78,20 @@
  */
 #define VP_ALARM_ROW_BASE      0x1200U
 #define VP_ALARM_ROW_STRIDE    0x0030U  // 48 VP mỗi dòng
-#define VP_ALARM_ROW_COUNT     4U       // 4 dòng xoay vòng (FIFO)
+#define VP_ALARM_ROW_COUNT     12U      // 12 dòng xoay vòng (FIFO)
 
 #define VP_ALARM_ROW_1         0x1200
 #define VP_ALARM_ROW_2         0x1230
 #define VP_ALARM_ROW_3         0x1260
 #define VP_ALARM_ROW_4         0x1290
+#define VP_ALARM_ROW_5         0x12C0
+#define VP_ALARM_ROW_6         0x12F0
+#define VP_ALARM_ROW_7         0x1320
+#define VP_ALARM_ROW_8         0x1350
+#define VP_ALARM_ROW_9         0x1380
+#define VP_ALARM_ROW_10        0x13B0
+#define VP_ALARM_ROW_11        0x13E0
+#define VP_ALARM_ROW_12        0x1410
 
 // Offset trong từng dòng cảnh báo:
 #define ALARM_OFFSET_TIME      0x0000   // 4 VP (GBK, 8 bytes)

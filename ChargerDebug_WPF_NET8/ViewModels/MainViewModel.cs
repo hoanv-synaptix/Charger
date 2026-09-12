@@ -139,8 +139,8 @@ namespace ChargerDebugApp.ViewModels
         // 2. CHARGE PROCESS & CONTROLLER (Default "---")
         // ==========================================
         public string SysControllerState => _sys != null ? (_sys.ControllerState switch {
-            0 => "Idle", 1 => "Ready", 2 => "Running", 3 => "Derating",
-            4 => "Stopping", 5 => "Fault", _ => $"State {_sys.ControllerState}"
+            0 => "Idle", 1 => "Ready", 2 => "Running", 3 => "Stopping",
+            4 => "Fault", 5 => "Pre-charge", _ => $"State {_sys.ControllerState}"
         }) : "---";
 
         public string SysControlMode => _sys != null ? (_sys.ChargeSourceMode == 1 ? "Standalone (No BMS)" : "BMS Controlled") : "---";

@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 6,
   "battery_capacity_ah": 100.0,
   "imin_c": 0.10,
   "imax_c": 1.00,
@@ -65,5 +65,6 @@
   "module_u_min_v": 30.00,
   "module_u_max_v": 60.00,
   "module_i_min_a": 5.00,
-  "module_i_max_a": 100.00
+  "module_i_max_a": 100.00,
+  "admin_pin": 123456
 }

@@ -67,7 +67,7 @@ def _golden_config_frame() -> bytes:
     # rejects older versions at its active-config check, even though the
     # config setter accepts them for migration. Use the current wire version
     # for closed-loop start/stop scenarios.
-    values["version"] = 5
+    values["version"] = 6
     return _pc_frame(0x1A, module.ChargeCycleConfig(**values).to_bytes())
 
 

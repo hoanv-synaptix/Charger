@@ -51,6 +51,12 @@ typedef struct {
     uint32_t charge_duration_s;   /* elapsed time since charge start in seconds */
     char     footer_time_str[16]; /* optional clock/time string "HH:MM:SS" (e.g. from RTC) */
 
+    /* --- pre-charge page --- */
+    char     precharge_voltage_text[8];
+    char     precharge_current_text[8];
+    uint16_t precharge_status_mode;/* DwinPrechargeStatusMode_e */
+    uint16_t precharge_btn_mode;   /* DwinPrechargeBtnMode_e */
+
     /* Text fields use ASCII-compatible GBK for values and "---" for
      * unavailable data. Dashboard units are drawn by the DWIN project;
      * SOC is the only field whose text includes "%" (for example "50%"). */
@@ -115,6 +121,9 @@ void DWIN_ParseRX(const uint8_t *buf, uint16_t len);
  * @brief Weak callback: the action button on the screen was pressed.
  */
 void DWIN_OnActionButton(uint16_t keyval);
+
+/** Weak callback for non-dashboard Return Key controls. */
+void DWIN_OnKeyEvent(uint16_t vp, uint16_t keyval);
 
 /**
  * @brief Push a wall-clock time to the panel's RTC (VP_SYS_RTC_SET).

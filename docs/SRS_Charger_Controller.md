@@ -233,7 +233,8 @@ online; chỉ frame BMS hợp lệ mới refresh watchdog. Queue overflow/FIFO l
 
 | ID | Yêu cầu | ƯP |
 |---|---|---|
-| FR-CTRL-01 | FSM: IDLE → READY → RUNNING → STOPPING → IDLE; FAULT từ mọi state đang chạy; DERATING là cờ trong RUNNING | M |
+| FR-CTRL-01 | FSM normal: IDLE → READY → RUNNING → STOPPING → IDLE; thêm PRECHARGE cho battery-recovery; FAULT từ mọi state đang cấp sạc; DERATING là cờ trong RUNNING | M |
+| FR-CTRL-20 | PRECHARGE dùng `vlow_v` + `ilow_c × battery_capacity_ah`, chia đều module active. Cho phép BMS offline lúc Start; relay chỉ latch khi mọi module active/online có V nằm trong `Vlow ±1.0V`. Khi `BATT_ST1` và `CELL_VOLT` đều fresh cùng module condition trong 60 s thì controlled stop; chỉ sau khi current-settle/relay-open hoàn tất mới về IDLE và Home. Mất một điều kiện reset hold; không có BMS-wake timeout. Low-voltage BMS alarm là INFO; critical BMS alarm sau recovery, lỗi module, jack protection và E-stop vẫn stop/fault theo đường chung. | M |
 | FR-CTRL-02 | START qua tiền tố: driver đã chọn, module active > 0 và == `source_module_count`, config version hợp lệ | M |
 | FR-CTRL-03 | Ghi nhận owner (PC/DWIN) mỗi chu kỳ | S |
 | FR-CTRL-04 | **Manual**: target V/I từ PC, clamp `module_u_max_v`/`module_i_max_a` | M |
@@ -257,7 +258,7 @@ online; chỉ frame BMS hợp lệ mới refresh watchdog. Queue overflow/FIFO l
 
 | ID | Yêu cầu | ƯP |
 |---|---|---|
-| FR-CFG-01 | `ChargeCycleConfig_t` 235 byte, version 4, static-assert kích thước. v4 thêm `device_id[16]`/`hw_rev[12]` (cho màn Setting); struct lớn hơn ⇒ record v≤3 trong flash bị loại khi boot v4 ⇒ config reset về default 1 lần (chấp nhận với người dùng 2026-08-30) | M |
+| FR-CFG-01 | `ChargeCycleConfig_t` 243 byte, version 6, packed/static-assert. v6 append `uint32_t admin_pin` (6 chữ số, 100000..999999, default 123456) sau prefix v5 239 byte; Flash migration v5→v6 giữ mọi field cũ, gán PIN default và ghi lại record v6 khi có thể. | M |
 | FR-CFG-02 | Validate: float không NaN/âm, ngưỡng tăng dần, imax≥imin, module 1–8, enum trong phạm vi | M |
 | FR-CFG-03 | Flash record {magic, version, length, CRC32, payload} align 8; append; trang đầy mới erase | M |
 | FR-CFG-04 | Boot: nạp record hợp lệ mới nhất; không có → default | M |
@@ -267,13 +268,29 @@ online; chỉ frame BMS hợp lệ mới refresh watchdog. Queue overflow/FIFO l
 
 | ID | Yêu cầu | ƯP |
 |---|---|---|
-| FR-HMI-01 | Giao thức DGUS-II (không CRC), header `A5 5A` (⚠ chuẩn DGUS là `5A A5` — dự án đổi theo yêu cầu 2026-08-30, xem `DWIN_HEADER_1/2`): `DWIN_SendWords()` ghi N word big-endian tới VP liên tiếp; `DWIN_SendString()` ghi field cố định pad 0x00; parse frame 0x83 upload VP `0x1043` (nút chạm, bất kỳ giá trị ≠ 0) → `DWIN_OnActionButton()` | S |
+| FR-HMI-01 | Giao thức DGUS-II (không CRC), header `A5 5A` (⚠ chuẩn DGUS là `5A A5` — dự án đổi theo yêu cầu 2026-08-30, xem `DWIN_HEADER_1/2`): `DWIN_SendWords()` ghi N word big-endian tới VP liên tiếp; `DWIN_SendString()` ghi field cố định pad 0x00; Page Home giữ callback `DWIN_OnActionButton()`, còn Return Key Login/Pre-Charge dispatch qua `DWIN_OnKeyEvent(vp,key)`. | S |
+| FR-HMI-08 | Pre-Charge flow do firmware điều hướng page: Setting `0x1130` → Login page 6 → Pre-Charge page 7. PIN mask tối đa 6 digit, sai PIN xóa buffer/ở Login và không log PIN; session hết hạn khi Back, Stop hoặc complete. Khi Start fail hoặc runtime fault, giữ Page 07 để hiển thị ERROR và mã lỗi hiện có; fault session chỉ kết thúc khi người dùng Reset/Back. | M |
+| FR-HMI-09 | Contract Page 06/07: `VP_LOGIN_PIN_TEXT=0x1500` Text 8B; `VP_LOGIN_KEY=0x1504`; `VP_PRECHARGE_VOLTAGE_TEXT=0x1510` Text 8B; `VP_PRECHARGE_CURRENT_TEXT=0x1514` Text 8B; `VP_PRECHARGE_STATUS_ICON=0x1518`; `VP_PRECHARGE_BTN_ICON=0x1519`; `VP_PRECHARGE_ACTION_KEY=0x151A`. Digit key `0x0030..0x0039`, DEL/OK/Back `0x00F0/0x00F1/0x00F2`, Action/Back `0x0001/0x0002`. Page 07 uses `CHG_LIB_SystemSummary.voltage/total_current`; invalid/offline is `---`; mã lỗi dùng lại `VP_TOPBAR_FAULT_CODE=0x1044`, không thêm VP mới. | M |
 | FR-HMI-02 | RX ring-buffer ISR, drain `BSP_RS485_Read()`; re-arm sau lỗi UART; `DWIN_ParseRX()` state-machine byte-wise có resync | M |
 | FR-HMI-03 | Update dữ liệu HMI trong main loop 50ms: scatter 8 nhóm field (DC/battery/AC/temp/SOC+status/btn/uptime), diff-suppressed; chuỗi định danh + trang DASH gửi 1 lần sau khi panel boot | M |
 | FR-HMI-04 | Nút DWIN: nhấn upload keycode cố định ở `0x1043` (panel→MCU); nhãn nút (VAR Icon) ở `0x1042` (MCU→panel). `app_action_button(dwin_status)` (dùng chung với nút PA15): READY→Start, STARTING/CHARGING→Stop, ERROR→Stop (xoá fault), **COMPLETE→`ChargeController_AcknowledgeCompletion()`** (về READY, không sạc lại), OFFLINE→bỏ qua. Sau khi xử lý, MCU ghi ngay nhãn mới vào `0x1042` | S |
 | FR-HMI-05 | `VP_SYS_STATUS_ICON 0x1041` (0..5) + nhãn nút `VP_SYS_BTN_ICON 0x1042` (0..3) do `dwin_status_from_state()` / `dwin_btn_mode_from_status()` dẫn xuất. Nút chạm upload ở `VP_SYS_BTN_KEY 0x1043` (MCU không ghi VP này) | S |
 | FR-HMI-06 | Bảng Alarm (VP `0x1200+`) — Phase 2, cần module event-log | C (chưa làm) |
 | FR-HMI-07 | RTC (`VP_SYS_RTC_SET 0x009C`): panel tự giữ giờ; `DWIN_SetRTC()` có sẵn nhưng chưa gọi (chờ `BSP_RTC`) | C (chưa làm) |
+
+### 3.6.1 Pre-Charge HMI fault handling
+
+The existing alarm-code contract is reused; no new alarm code, fault flag or
+DWIN VP is introduced. If a Pre-Charge start request fails, the controller
+remains safe and Page 07 remains visible with status `ERROR`, the existing
+`VP_TOPBAR_FAULT_CODE` value, and the existing `RESET` action. A runtime
+STOP/ESTOP/protection fault stops the output and opens the relay through the
+normal controller path, then remains visible on Page 07 until the operator
+chooses `RESET` or `BACK`. `RESET` clears the presentation only when the root
+condition and output-safety checks have passed; `BACK` returns to Home only
+after the output is safe. Normal pre-charge completion still returns to Home.
+Alarm-level `INFO` conditions, including expected low-voltage BMS alarms,
+must not force the Page 07 `ERROR` state.
 
 ### 3.7 Vận hành & an toàn — FR-OPS
 
@@ -337,7 +354,7 @@ Mã lỗi NACK: 0x01 bad CRC, 0x02 unknown cmd, 0x03 bad length, 0x04 CAN TX fai
 PING ──► PONG(version)
 SET_DRIVER(id) ──► ACK
 SET_MODULE_ADDR(addr,group) ──► ACK      (mỗi module)
-SET_CHARGE_CFG(235B) ──► CHARGE_CFG      (tùy chọn)
+SET_CHARGE_CFG(243B, v6) ──► CHARGE_CFG  (tùy chọn)
 READ_ALL / GET_SYSTEM                    (giám sát)
 START(manual) ──► ACK
 ```
@@ -370,7 +387,7 @@ START(manual) ──► ACK
 | 0x16 | SEND_RAW_CAN | 0x95 |
 | 0x17 | READ_BMS | 0x93 |
 | 0x18 | GET_SYSTEM (68 B, mục 6.5) | 0x94 |
-| 0x19/0x1A | GET/SET_CHARGE_CFG (235 B) | 0x97 |
+| 0x19/0x1A | GET/SET_CHARGE_CFG (243 B, v6) | 0x97 |
 
 ### 4.2 CAN1 — Module sạc (125 kbps, classic, ext-frame)
 
@@ -448,7 +465,7 @@ Frame RX được feed tới driver đang active qua `CHG_LIB_FeedCanFrame()`.
   | `0x1200+` | bảng Alarm (20 VP/dòng ×5) | *Phase 2* |
 
 - MCU → DWIN: `A5 5A [len] 82 [VP_hi] [VP_lo] [payload...]` — `DWIN_SendWords()` / `DWIN_SendString()` / `DWIN_SetPage()`; scatter 1 nhóm/50ms trong `DWIN_UpdateData()`, chỉ gửi trường nào đổi giá trị + full re-send mỗi 5s (`DWIN_ForceFullRefresh()`, để panel boot muộn / reboot bắt kịp). Text Display dùng ASCII-compatible GBK; `DWIN_SendString()` ghi đủ độ dài field và padding `0x00`. Mỗi field 8 byte có 4 VP; `LEN = 3 + payload_bytes`. Dữ liệu chưa có hoặc không hợp lệ → `---`, không dùng `0` làm giá trị thay thế.
-- DWIN → MCU: `A5 5A 06 83 10 42 01 [val_hi] [val_lo]` khi nhấn nút → `DWIN_OnActionButton()` (val ≠ 0), sau đó MCU ghi `0x1042 = 0`.
+- DWIN → MCU: Home action dùng `A5 5A 06 83 10 43 01 [val_hi] [val_lo]` → `DWIN_OnActionButton()`; Login/Pre-Charge Return Key dùng cùng frame format tại VP contract `0x1130`, `0x1304`, `0x1318` → `DWIN_OnKeyEvent(vp,key)`. Firmware là owner chuyển page.
 - RX ring-buffer 128 byte, drain `BSP_RS485_Read()`; `DWIN_ParseRX()` byte-wise có resync + chặn LEN quá cỡ.
 
 ### 4.5 Debug log (USART1)
@@ -521,7 +538,7 @@ addr, group, enabled, online, running, state; voltage/current/current_limit; tem
 
 FW version, driver id, module counts, charging, controller state/derating/inhibit, source mode, limit source/band; total V/I/P, max temp, target V/I, active limit C; uptime, CAN1/2 TX/RX (offset 46–61); controller fault flags, stop_reason, bms_stale.
 
-### 6.6 `ChargeCycleConfig_t` — 235 byte, v4 (packed)
+### 6.6 `ChargeCycleConfig_t` — 243 byte, v6 (packed)
 
 | Nhóm | Trường |
 |------|--------|
@@ -532,11 +549,12 @@ FW version, driver id, module counts, charging, controller state/derating/inhibi
 | Bảo vệ | jack_charge {en, delta_v, delay_s}; jack_temp {en, delay_s, threshold, delta, limit_pct} |
 | Hệ thống | source_mode (0=BMS/1=Standalone), can_battery_id, source_module_count, module_type, module_u_min/max_v, module_i_min/max_a |
 | Định danh (v4) | device_id[16], hw_rev[12] — chuỗi ASCII cho màn Setting |
+| Admin (v6) | admin_pin u32, 6 digit (100000..999999), default 123456; owner chung của Flash/PC/DWIN Login |
 
 ### 6.7 Flash layout cấu hình
 
 - Trang 63 `0x0801F800`, 2 KB, page-erase
-- Record `{u32 magic=0x43434647, u16 ver=1, u16 len=235, u32 crc32, payload[235]}`, align 8
+- Record `{u32 magic=0x43434647, u16 ver=1, u16 len=243, u32 crc32, payload[243]}`, align 8; loader cũng nhận record v5 `len=239` để migrate append-only sang v6.
 - Append vào offset trống; đầy → erase → ghi offset 0; read-back verify
 - CRC32 poly 0xEDB88320 reflected, init/final XOR 0xFFFFFFFF
 

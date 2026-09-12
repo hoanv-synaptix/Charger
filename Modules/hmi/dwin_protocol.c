@@ -138,7 +138,7 @@ typedef struct {
 } DwinAlarmRowInternal_t;
 
 static DwinAlarmRowInternal_t s_alarm_rows[VP_ALARM_ROW_COUNT];
-static uint8_t s_alarm_dirty = 0U; /* bitmask of rows 0..3 needing update */
+static uint16_t s_alarm_dirty = 0U; /* bitmask of rows 0..11 needing update */
 
 void DWIN_Alarm_Push(const char *time_str, const char *code_str,
                      const uint16_t *desc_utf16, uint8_t desc_len)
@@ -206,6 +206,7 @@ enum {
     STEP_TOPBAR_FAULT,   /* 0x1044..0x1047 (Text GBK, 4 words) */
     STEP_CHG_DURATION,   /* 0x1050..0x1057 (Text GBK, 8 words) */
     STEP_SETTING_STATS,  /* 0x1118..0x112F (Uptime, Total Ah, Total kWh) */
+    STEP_PRECHARGE,      /* 0x1310..0x1319 */
     STEP_ALARM_ROW,      /* Emit 1 alarm row if dirty */
     STEP_COUNT
 };
@@ -374,6 +375,27 @@ void DWIN_UpdateData(const DWIN_SystemData_t *d)
         }
         break;
 
+    case STEP_PRECHARGE:
+        if (first || strncmp(prev.precharge_voltage_text, d->precharge_voltage_text,
+                             sizeof(d->precharge_voltage_text)) != 0) {
+            DWIN_SendString(VP_PRECHARGE_VOLTAGE_TEXT, d->precharge_voltage_text,
+                            DWIN_TEXT_8_BYTES_WORDS);
+        }
+        if (first || strncmp(prev.precharge_current_text, d->precharge_current_text,
+                             sizeof(d->precharge_current_text)) != 0) {
+            DWIN_SendString(VP_PRECHARGE_CURRENT_TEXT, d->precharge_current_text,
+                            DWIN_TEXT_8_BYTES_WORDS);
+        }
+        if (first || prev.precharge_status_mode != d->precharge_status_mode) {
+            uint16_t status = d->precharge_status_mode;
+            DWIN_SendWords(VP_PRECHARGE_STATUS_ICON, &status, 1U);
+        }
+        if (first || prev.precharge_btn_mode != d->precharge_btn_mode) {
+            uint16_t button = d->precharge_btn_mode;
+            DWIN_SendWords(VP_PRECHARGE_BTN_ICON, &button, 1U);
+        }
+        break;
+
     case STEP_ALARM_ROW:
         if (s_alarm_dirty != 0U) {
             for (uint8_t r = 0; r < VP_ALARM_ROW_COUNT; r++) {
@@ -406,6 +428,15 @@ __attribute__((weak))
 #endif
 void DWIN_OnActionButton(uint16_t keyval)
 {
+    (void)keyval;
+}
+
+#if defined(__GNUC__)
+__attribute__((weak))
+#endif
+void DWIN_OnKeyEvent(uint16_t vp, uint16_t keyval)
+{
+    (void)vp;
     (void)keyval;
 }
 
@@ -447,11 +478,14 @@ void DWIN_ParseRX(const uint8_t *buf, uint16_t len)
                 if (rx[3] == DWIN_CMD_READ && expected >= 6U) {
                     uint16_t vp = (uint16_t)(((uint16_t)rx[4] << 8) | rx[5]);
                     uint8_t  nw = rx[6];
-                    if (vp == VP_SYS_BTN_KEY && nw >= 1U) {
+                    if (nw >= 1U) {
                         uint16_t keyval =
                             (uint16_t)(((uint16_t)rx[7] << 8) | rx[8]);
-                        if (keyval != 0U) {
+                        if (vp == VP_SYS_BTN_KEY && keyval != 0U) {
                             DWIN_OnActionButton(keyval);
+                        } else if ((vp == VP_SET_LOGIN_KEY || vp == VP_LOGIN_KEY ||
+                                    vp == VP_PRECHARGE_ACTION_KEY) && keyval != 0U) {
+                            DWIN_OnKeyEvent(vp, keyval);
                         }
                     }
                 }

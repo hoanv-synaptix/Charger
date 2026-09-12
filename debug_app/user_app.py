@@ -570,14 +570,16 @@ class ChargerUserApp:
     def _build_stage_panel(self, parent, title: str, enabled_key: str, delta_key: str,
                            threshold_keys: list[str], current_keys: list[str],
                            threshold_unit: str, current_unit: str,
-                           threshold_label_prefix: str, current_label_prefix: str = "Current"):
+                           threshold_label_prefix: str, current_label_prefix: str = "Current",
+                           delta_label: str = "Delta", delta_unit: str = None):
         panel = tk.LabelFrame(parent, text=title, font=("Segoe UI", 8, "bold"), padx=10, pady=8, bg="#F0F0F0")
         panel.pack(fill=tk.X, pady=(0, 10))
         top = tk.Frame(panel, bg="#F0F0F0")
         top.pack(fill=tk.X, pady=(0, 8))
         top.grid_columnconfigure(2, weight=1)
         self._add_cfg_check(top, 0, 0, "Enabled", enabled_key)
-        self._add_cfg_entry(top, 0, 1, "Delta", delta_key, threshold_unit, width=8)
+        d_unit = delta_unit if delta_unit is not None else threshold_unit
+        self._add_cfg_entry(top, 0, 1, delta_label, delta_key, d_unit, width=8)
 
         grid = tk.Frame(panel, bg="#F0F0F0")
         grid.pack(fill=tk.X)
@@ -634,19 +636,22 @@ class ChargerUserApp:
             group, "Cell Voltage Stages", "cell_volt_enabled", "cell_volt_delta_v",
             ["cell_volt_1_v", "cell_volt_2_v", "cell_volt_3_v", "cell_volt_4_v", "cell_volt_5_v"],
             ["cell_curr_1_c", "cell_curr_2_c", "cell_curr_3_c", "cell_curr_4_c"],
-            "V", "C", "Cell Voltage", "Current"
+            "V", "C", "Cell Voltage", "Current",
+            delta_label="Delta t", delta_unit="s"
         )
         self._build_stage_panel(
             group, "Temperature Stages", "temp_enabled", "temp_delta_c",
             ["temp_1_c", "temp_2_c", "temp_3_c", "temp_4_c", "temp_5_c"],
             ["temp_curr_1_c", "temp_curr_2_c", "temp_curr_3_c", "temp_curr_4_c"],
-            "C", "C", "Temperature", "Current"
+            "C", "C", "Temperature", "Current",
+            delta_label="Delta", delta_unit="C"
         )
         self._build_stage_panel(
             group, "SOC Stages", "soc_enabled", "soc_delta_pct",
             ["soc_1_pct", "soc_2_pct", "soc_3_pct", "soc_4_pct", "soc_5_pct"],
             ["soc_curr_1_c", "soc_curr_2_c", "soc_curr_3_c", "soc_curr_4_c"],
-            "%", "C", "SOC", "Current"
+            "%", "C", "SOC", "Current",
+            delta_label="Delta t", delta_unit="s"
         )
 
     def _build_charge_protection_group(self, parent):

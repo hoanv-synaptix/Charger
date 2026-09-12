@@ -9,7 +9,7 @@
 extern "C" {
 #endif
 
-#define CHARGE_CYCLE_CONFIG_VERSION 5U
+#define CHARGE_CYCLE_CONFIG_VERSION 6U
 
 /* Fixed-width identity strings shown on the DWIN "Setting" screen
  * (VP_SET_HW_VER / VP_SET_DEVICE_ID). Always NUL-terminated on load. */
@@ -37,6 +37,7 @@ extern "C" {
 #define DEFAULT_MODULE_I_MAX_A                100.0f
 #define DEFAULT_JACK_TEMP_POWER_LIMIT_PCT     80.0f
 #define DEFAULT_JACK_TEMP_TRIP_C              75.0f
+#define DEFAULT_ADMIN_PIN                     123456U
 
 typedef enum {
     CHARGE_MODULE_TYPE_UNKNOWN = 0,
@@ -66,7 +67,7 @@ typedef struct __attribute__((packed)) {
     float temp_limit_c;
 
     uint8_t cell_volt_enabled;
-    float cell_volt_delta_v;
+    float cell_volt_delta_t_s;
     float cell_volt_1_v;
     float cell_volt_2_v;
     float cell_volt_3_v;
@@ -90,7 +91,7 @@ typedef struct __attribute__((packed)) {
     float temp_curr_4_c;
 
     uint8_t soc_enabled;
-    float soc_delta_pct;
+    float soc_delta_t_s;
     float soc_1_pct;
     float soc_2_pct;
     float soc_3_pct;
@@ -131,9 +132,10 @@ typedef struct __attribute__((packed)) {
      * 2026-08-30. Re-save from the PC app after upgrading. */
     char device_id[CHARGE_CYCLE_DEVICE_ID_LEN];
     char hw_rev[CHARGE_CYCLE_HW_REV_LEN];
+    uint32_t admin_pin;
 } ChargeCycleConfig_t;
 
-_Static_assert(sizeof(ChargeCycleConfig_t) == 239, "ChargeCycleConfig_t must stay 239 bytes");
+_Static_assert(sizeof(ChargeCycleConfig_t) == 243, "ChargeCycleConfig_t must stay 243 bytes");
 
 void ChargeCycleConfig_Init(void);
 void ChargeCycleConfig_Get(ChargeCycleConfig_t *config);

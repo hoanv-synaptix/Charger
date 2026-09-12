@@ -51,7 +51,7 @@
 #define VP_SYS_STATUS_ICON   0x1041U  /* MCU->panel: u16 DwinStatusIcon_e -- status-box Variable Icon */
 #define VP_SYS_BTN_ICON      0x1042U  /* MCU->panel: u16 DwinBtnMode_e (0..3) -- button-label Variable Icon */
 #define VP_SYS_BTN_KEY       0x1043U  /* panel->MCU: Return-Key-Code upload on every press */
-#define VP_TOPBAR_FAULT_CODE 0x1044U  /* MCU->panel: Text GBK, 8 bytes = 4 VP @ 0x1044..0x1047 (VD: "0000", "E006") */
+#define VP_TOPBAR_FAULT_CODE 0x1044U  /* MCU->panel: shared fault-code Text, 8 bytes; shown on Home and Page 07 */
 #define DWIN_SOC_TEXT_VP     0x1048U  /* MCU->panel: Text GBK, 8 bytes = 4 VP @ 0x1048..0x104B */
 #define VP_CHG_DURATION      0x1050U  /* MCU->panel: Text GBK, 16 bytes = 8 VP @ 0x1050..0x1057 (VD: "01:25:34") */
 
@@ -82,36 +82,92 @@ typedef enum {
 #define VP_SET_TOTAL_CHARGED 0x1118U  /* ASCII/GBK, 8 VP / 16 chars: "12500.5 Ah" */
 #define VP_SET_TOTAL_ENERGY  0x1120U  /* ASCII/GBK, 8 VP / 16 chars: "685.2 kWh" */
 #define VP_SET_UPTIME        0x1128U  /* ASCII/GBK, 8 VP / 16 chars: "125:32:18" (HHH:MM:SS) */
+#define VP_SET_LOGIN_KEY     0x1130U  /* panel->MCU: Return Key -> admin Login page */
 
 #define VP_SET_ID_WORDS      4U       /* 4 VP = 8 bytes max for HW, FW, Device ID */
 #define VP_SET_STR_WORDS     8U       /* default field width */
 
-/* --- Alarm table (0x1200) - 4 ROWS FIFO, LEVEL column removed --- *
+/* --- Login + Pre-Charge (Page 06 / Page 07) --- */
+#define VP_LOGIN_PIN_TEXT          0x1500U /* MCU->panel: Text, 8 bytes / 4 VP */
+#define VP_LOGIN_KEY               0x1504U /* panel->MCU: Return Key */
+#define VP_PRECHARGE_VOLTAGE_TEXT  0x1510U /* MCU->panel: Text, 8 bytes / 4 VP */
+#define VP_PRECHARGE_CURRENT_TEXT  0x1514U /* MCU->panel: Text, 8 bytes / 4 VP */
+#define VP_PRECHARGE_STATUS_ICON   0x1518U /* MCU->panel: Variable Icon 27.icl (0:Ready, 1:Pre, 2:Error) */
+#define VP_PRECHARGE_BTN_ICON      0x1519U /* MCU->panel: Variable Icon 26.icl (0:Start, 1:Stop, 2:Reset) */
+#define VP_PRECHARGE_ACTION_KEY    0x151AU /* panel->MCU: Return Key (0x0001: Action, 0x0002: Back) */
+
+/* Key codes for Page 06 Login keypad */
+#define DWIN_LOGIN_KEY_DIGIT_0     0x0030U /* ASCII '0' */
+#define DWIN_LOGIN_KEY_DIGIT_1     0x0031U /* ASCII '1' */
+#define DWIN_LOGIN_KEY_DIGIT_2     0x0032U /* ASCII '2' */
+#define DWIN_LOGIN_KEY_DIGIT_3     0x0033U /* ASCII '3' */
+#define DWIN_LOGIN_KEY_DIGIT_4     0x0034U /* ASCII '4' */
+#define DWIN_LOGIN_KEY_DIGIT_5     0x0035U /* ASCII '5' */
+#define DWIN_LOGIN_KEY_DIGIT_6     0x0036U /* ASCII '6' */
+#define DWIN_LOGIN_KEY_DIGIT_7     0x0037U /* ASCII '7' */
+#define DWIN_LOGIN_KEY_DIGIT_8     0x0038U /* ASCII '8' */
+#define DWIN_LOGIN_KEY_DIGIT_9     0x0039U /* ASCII '9' */
+#define DWIN_LOGIN_KEY_DELETE      0x00F0U /* DWIN DEL */
+#define DWIN_LOGIN_KEY_OK          0x00F1U /* DWIN OK */
+#define DWIN_LOGIN_KEY_BACK        0x00F2U /* DWIN BACK */
+
+/* Key codes for Page 07 Pre-charge controls */
+#define DWIN_PRECHARGE_KEY_ACTION  0x0001U /* Start / Stop / Reset */
+#define DWIN_PRECHARGE_KEY_BACK    0x0002U /* Back to Home */
+#define DWIN_PRECHARGE_KEY_START   0x0001U /* Legacy alias */
+#define DWIN_PRECHARGE_KEY_STOP    0x0001U /* Legacy alias */
+#define DWIN_SETTING_KEY_LOGIN     0x0301U
+
+/* Status icon values for 27.icl (Precharge status) */
+typedef enum {
+    DWIN_PRECHARGE_STATUS_READY  = 0,
+    DWIN_PRECHARGE_STATUS_ACTIVE = 1,
+    DWIN_PRECHARGE_STATUS_ERROR  = 2,
+} DwinPrechargeStatusMode_e;
+
+/* Button icon values for 26.icl (Precharge button) */
+typedef enum {
+    DWIN_PRECHARGE_BTN_START = 0,
+    DWIN_PRECHARGE_BTN_STOP  = 1,
+    DWIN_PRECHARGE_BTN_RESET = 2,
+} DwinPrechargeBtnMode_e;
+
+/* --- Alarm table (0x1200) - 12 ROWS FIFO (3 Pages x 4 Rows), LEVEL column removed --- *
  * Row layout (48 VP / row):
  *   Time: +0x00 (Text GBK,     Text_Length = 8  bytes -> 4 VP)
  *   Code: +0x04 (Text GBK,     Text_Length = 8  bytes -> 4 VP)
  *   Desc: +0x08 (Text UNICODE, Text_Length = 64 bytes -> 32 VP, Vietnamese UTF-16BE)
- * 4 rows -> 0x1200..0x12BF */
+ * 12 rows -> 0x1200..0x143F */
 #define VP_ALARM_ROW_BASE    0x1200U
 #define VP_ALARM_ROW_STRIDE  0x0030U  /* 48 VP stride */
-#define VP_ALARM_ROW_COUNT   4U       /* 4 rows circular buffer */
+#define VP_ALARM_ROW_COUNT   12U      /* 12 rows circular buffer across 3 alarm pages */
 
 #define VP_ALARM_ROW_1       0x1200U
 #define VP_ALARM_ROW_2       0x1230U
 #define VP_ALARM_ROW_3       0x1260U
 #define VP_ALARM_ROW_4       0x1290U
+#define VP_ALARM_ROW_5       0x12C0U
+#define VP_ALARM_ROW_6       0x12F0U
+#define VP_ALARM_ROW_7       0x1320U
+#define VP_ALARM_ROW_8       0x1350U
+#define VP_ALARM_ROW_9       0x1380U
+#define VP_ALARM_ROW_10      0x13B0U
+#define VP_ALARM_ROW_11      0x13E0U
+#define VP_ALARM_ROW_12      0x1410U
 
 #define ALARM_OFFSET_TIME    0x0000U  /* 4 VP (GBK) */
 #define ALARM_OFFSET_CODE    0x0004U  /* 4 VP (GBK) */
 #define ALARM_OFFSET_DESC    0x0008U  /* 32 VP (UNICODE Vietnamese) */
 
 /* Page ids -- must match the DGUS project's picture order:
- * 00 logo, 01 dashboard, 02 setting, 03 alarm. */
+ * 00 logo, 01 dashboard, 02 setting, 03..05 alarm, 06 login, 07 pre-charge. */
 typedef enum {
     DWIN_PAGE_LOGO    = 0,
     DWIN_PAGE_DASH    = 1,
     DWIN_PAGE_SETTING = 2,
     DWIN_PAGE_ALARM   = 3,
+    DWIN_PAGE_LOGIN   = 6,
+    DWIN_PAGE_PRECHARGE = 7,
 } DwinPageId_e;
 
 /* VP_SYS_STATUS_ICON values (status-box Variable Icon on the dashboard).

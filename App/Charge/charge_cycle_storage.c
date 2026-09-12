@@ -7,10 +7,16 @@
 #include "debug_log.h"
 #include "bsp_flash.h"
 #include <string.h>
+#include <stddef.h>
 
 #define CONFIG_MAGIC          0x43434647U
 #define CONFIG_RECORD_VERSION 1U
 #define FLASH_BLANK_BYTE      0xFFU
+#define CONFIG_V5_PAYLOAD_SIZE 239U
+
+#ifdef CHARGE_CYCLE_STORAGE_HOST_TEST
+extern uint8_t g_charge_config_test_flash[];
+#endif
 
 typedef struct __attribute__((packed)) {
     uint32_t magic;
@@ -22,6 +28,18 @@ typedef struct __attribute__((packed)) {
 
 #define CONFIG_RECORD_SIZE     (sizeof(ChargeCycleConfigRecord_t))
 #define ALIGNED_RECORD_SIZE    ((CONFIG_RECORD_SIZE + 7) & ~7) // Align to 8 bytes for G0 double-word
+
+_Static_assert(offsetof(ChargeCycleConfig_t, admin_pin) == CONFIG_V5_PAYLOAD_SIZE,
+               "v6 must append admin_pin after the v5 payload");
+
+static const uint8_t *config_flash_at(uint32_t address)
+{
+#ifdef CHARGE_CYCLE_STORAGE_HOST_TEST
+    return &g_charge_config_test_flash[address - BSP_CONFIG_FLASH_PAGE_ADDR];
+#else
+    return (const uint8_t *)(uintptr_t)address;
+#endif
+}
 
 static uint32_t calc_crc32(const uint8_t *data, uint32_t len) {
     uint32_t crc = 0xFFFFFFFFU;
@@ -35,13 +53,21 @@ static uint32_t calc_crc32(const uint8_t *data, uint32_t len) {
     return ~crc;
 }
 
-static bool validate_record(const ChargeCycleConfigRecord_t *rec) {
+static bool validate_record_length(const ChargeCycleConfigRecord_t *rec, uint16_t length) {
     if (rec->magic != CONFIG_MAGIC) return false;
     if (rec->version != CONFIG_RECORD_VERSION) return false;
-    if (rec->length != sizeof(ChargeCycleConfig_t)) return false;
-    
-    uint32_t calc_crc = calc_crc32((const uint8_t *)&rec->payload, sizeof(ChargeCycleConfig_t));
+    if (rec->length != length) return false;
+
+    uint32_t calc_crc = calc_crc32((const uint8_t *)&rec->payload, length);
     return rec->crc32 == calc_crc;
+}
+
+static bool validate_record(const ChargeCycleConfigRecord_t *rec) {
+    return validate_record_length(rec, sizeof(ChargeCycleConfig_t));
+}
+
+static bool validate_v5_record(const ChargeCycleConfigRecord_t *rec) {
+    return validate_record_length(rec, CONFIG_V5_PAYLOAD_SIZE);
 }
 
 static bool is_flash_blank(const uint8_t *addr, uint32_t len) {
@@ -52,7 +78,7 @@ static bool is_flash_blank(const uint8_t *addr, uint32_t len) {
 }
 
 static int32_t find_blank_offset(void) {
-    const uint8_t *flash = (const uint8_t *)BSP_CONFIG_FLASH_PAGE_ADDR;
+    const uint8_t *flash = config_flash_at(BSP_CONFIG_FLASH_PAGE_ADDR);
     
     for (uint32_t offset = 0; offset <= (BSP_FLASH_PAGE_SIZE - ALIGNED_RECORD_SIZE); offset += ALIGNED_RECORD_SIZE) {
         if (is_flash_blank(flash + offset, ALIGNED_RECORD_SIZE)) {
@@ -63,28 +89,46 @@ static int32_t find_blank_offset(void) {
 }
 
 static void read_record_at(ChargeCycleConfigRecord_t *rec, uint32_t offset) {
-    const uint8_t *src = (const uint8_t *)(BSP_CONFIG_FLASH_PAGE_ADDR + offset);
+    const uint8_t *src = config_flash_at(BSP_CONFIG_FLASH_PAGE_ADDR + offset);
     memcpy(rec, src, CONFIG_RECORD_SIZE);
 }
 
-static bool load_latest_config(ChargeCycleConfig_t *config, uint32_t *latest_offset_out) {
+static bool load_latest_config(ChargeCycleConfig_t *config, uint32_t *latest_offset_out,
+                               bool *migrated_v5_out) {
     ChargeCycleConfigRecord_t record;
     int32_t latest_valid_offset = -1;
+    bool latest_is_v5 = false;
 
     for (uint32_t offset = 0; offset <= (BSP_FLASH_PAGE_SIZE - ALIGNED_RECORD_SIZE); offset += ALIGNED_RECORD_SIZE) {
         read_record_at(&record, offset);
         if (validate_record(&record)) {
             latest_valid_offset = (int32_t)offset;
+            latest_is_v5 = false;
+        } else if (validate_v5_record(&record)) {
+            latest_valid_offset = (int32_t)offset;
+            latest_is_v5 = true;
         }
     }
 
     if (latest_valid_offset < 0) return false;
 
     read_record_at(&record, (uint32_t)latest_valid_offset);
-    *config = record.payload;
+    if (latest_is_v5) {
+        /* v6 only appends admin_pin. Start from defaults, copy the exact v5
+         * prefix, then install the default PIN before normal validation. */
+        ChargeCycleConfig_GetDefaults(config);
+        memcpy(config, &record.payload, CONFIG_V5_PAYLOAD_SIZE);
+        config->version = CHARGE_CYCLE_CONFIG_VERSION;
+        config->admin_pin = DEFAULT_ADMIN_PIN;
+    } else {
+        *config = record.payload;
+    }
 
     if (latest_offset_out != NULL) {
         *latest_offset_out = (uint32_t)latest_valid_offset;
+    }
+    if (migrated_v5_out != NULL) {
+        *migrated_v5_out = latest_is_v5;
     }
     return true;
 }
@@ -92,10 +136,17 @@ static bool load_latest_config(ChargeCycleConfig_t *config, uint32_t *latest_off
 void ChargeCycleStorage_Init(void) {
     ChargeCycleConfig_t config;
     uint32_t offset = 0;
+    bool migrated_v5 = false;
 
-    if (load_latest_config(&config, &offset)) {
+    if (load_latest_config(&config, &offset, &migrated_v5)) {
         LOG("ChargeCycleStorage: Loaded from flash offset %u\r\n", (unsigned)offset);
         ChargeCycleConfig_Set(&config);
+        if (migrated_v5) {
+            LOG("ChargeCycleStorage: Migrated v5 config to v6\r\n");
+            if (!ChargeCycleStorage_Save(&config)) {
+                LOG("ChargeCycleStorage: v6 migration save failed\r\n");
+            }
+        }
     } else {
         LOG("ChargeCycleStorage: Using default config\r\n");
         /* BUGFIX: still run the RAM defaults through ChargeCycleConfig_Set()
@@ -119,7 +170,7 @@ void ChargeCycleStorage_Init(void) {
 
 bool ChargeCycleStorage_Load(ChargeCycleConfig_t *config) {
     uint32_t offset = 0;
-    return load_latest_config(config, &offset);
+    return load_latest_config(config, &offset, NULL);
 }
 
 bool ChargeCycleStorage_Save(const ChargeCycleConfig_t *config) {
@@ -171,4 +222,3 @@ bool ChargeCycleStorage_Save(const ChargeCycleConfig_t *config) {
     LOG("ChargeCycleStorage: Saved successfully\r\n");
     return true;
 }
-

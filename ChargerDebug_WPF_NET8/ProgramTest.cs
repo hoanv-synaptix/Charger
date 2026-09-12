@@ -13,8 +13,8 @@ namespace ChargerDebugApp
             Console.WriteLine("[TEST 1] Testing Default Config Binary Size...");
             var cfg = ChargeCycleConfig.CreateDefault();
             byte[] bytes = cfg.ToBytes();
-            if (bytes.Length != 239)
-                throw new Exception($"Binary size expected 239, got {bytes.Length}");
+            if (bytes.Length != 243)
+                throw new Exception($"Binary size expected 243, got {bytes.Length}");
             Console.WriteLine($"[PASS] Binary size is exactly {bytes.Length} bytes.");
 
             Console.WriteLine("[TEST 2] Testing Binary Round-Trip...");
@@ -23,13 +23,14 @@ namespace ChargerDebugApp
             cfg.ProtectJackTempTripC = 78.5f;
             cfg.DeviceId = "TEST_DEVICE_01";
             cfg.HwRev = "REV_2.1";
+            cfg.AdminPin = 654321;
             byte[] packed = cfg.ToBytes();
             var restored = ChargeCycleConfig.FromBytes(packed);
             if (Math.Abs(restored.BatteryCapacityAh - 150.5f) > 0.001f ||
                 Math.Abs(restored.VMaxV - 58.4f) > 0.001f ||
                 Math.Abs(restored.ProtectJackTempTripC - 78.5f) > 0.001f ||
                 restored.DeviceId != "TEST_DEVICE_01" ||
-                restored.HwRev != "REV_2.1")
+                restored.HwRev != "REV_2.1" || restored.AdminPin != 654321)
             {
                 throw new Exception("Binary round-trip failed to preserve field values!");
             }

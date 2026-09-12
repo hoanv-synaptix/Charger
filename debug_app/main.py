@@ -1288,7 +1288,8 @@ class ChargerDebugApp:
     def _build_stage_panel(self, parent, title: str, enabled_key: str, delta_key: str,
                            threshold_keys: list[str], current_keys: list[str],
                            threshold_unit: str, current_unit: str,
-                           threshold_label_prefix: str, current_label_prefix: str = "Current"):
+                           threshold_label_prefix: str, current_label_prefix: str = "Current",
+                           delta_label: str = "Delta", delta_unit: str = None):
         panel = tk.LabelFrame(parent, text=title, font=("Segoe UI", 8, "bold"),
                               padx=10, pady=8, bg="#F0F0F0")
         panel.pack(fill=tk.X, pady=(0, 10))
@@ -1297,7 +1298,8 @@ class ChargerDebugApp:
         top.pack(fill=tk.X, pady=(0, 8))
         top.grid_columnconfigure(2, weight=1)
         self._add_cfg_check(top, 0, 0, "Enabled", enabled_key)
-        self._add_cfg_entry(top, 0, 1, "Delta", delta_key, threshold_unit, width=8)
+        d_unit = delta_unit if delta_unit is not None else threshold_unit
+        self._add_cfg_entry(top, 0, 1, delta_label, delta_key, d_unit, width=8)
 
         grid = tk.Frame(panel, bg="#F0F0F0")
         grid.pack(fill=tk.X)
@@ -1448,6 +1450,7 @@ class ChargerDebugApp:
         self._add_cfg_entry(left, 1, 1, "V Max", "vmax_v", "V")
         self._add_cfg_entry(left, 2, 0, "I Min", "imin_c", "C")
         self._add_cfg_entry(left, 2, 1, "I Max", "imax_c", "C")
+        self._add_cfg_entry(left, 3, 0, "Admin PIN", "admin_pin", "")
 
         right = tk.LabelFrame(group, text="Charge Window", font=("Segoe UI", 8, "bold"),
                               padx=8, pady=8, bg="#F0F0F0")
@@ -1481,7 +1484,8 @@ class ChargerDebugApp:
             ["cell_curr_1_c", "cell_curr_2_c", "cell_curr_3_c", "cell_curr_4_c"],
             "V", "C",
             "Cell Voltage",
-            "Current"
+            "Current",
+            delta_label="Delta t", delta_unit="s"
         )
         self._build_stage_panel(
             group,
@@ -1492,7 +1496,8 @@ class ChargerDebugApp:
             ["temp_curr_1_c", "temp_curr_2_c", "temp_curr_3_c", "temp_curr_4_c"],
             "C", "C",
             "Temperature",
-            "Current"
+            "Current",
+            delta_label="Delta", delta_unit="C"
         )
         self._build_stage_panel(
             group,
@@ -1503,7 +1508,8 @@ class ChargerDebugApp:
             ["soc_curr_1_c", "soc_curr_2_c", "soc_curr_3_c", "soc_curr_4_c"],
             "%", "C",
             "SOC",
-            "Current"
+            "Current",
+            delta_label="Delta t", delta_unit="s"
         )
 
     def _build_charge_protection_group(self, parent):
@@ -2222,7 +2228,7 @@ class ChargerDebugApp:
 
     def _load_charge_config_defaults(self):
         defaults = ChargeCycleConfig(
-            version=3,
+            version=6,
             battery_capacity_ah=0.0,
             imin_c=0.0,
             imax_c=0.0,
@@ -2348,6 +2354,7 @@ class ChargerDebugApp:
         self.cfg_vars["module_u_max_v"].set(f"{cfg.module_u_max_v:.2f}")
         self.cfg_vars["module_i_min_a"].set(f"{cfg.module_i_min_a:.2f}")
         self.cfg_vars["module_i_max_a"].set(f"{cfg.module_i_max_a:.2f}")
+        self.cfg_vars["admin_pin"].set(str(cfg.admin_pin))
         module_index = sorted(MODULE_TYPE_NAMES).index(cfg.module_type) if cfg.module_type in MODULE_TYPE_NAMES else 0
         self.cfg_module_type.current(module_index)
         self._apply_charge_source_mode_ui()
@@ -2364,7 +2371,7 @@ class ChargerDebugApp:
         charge_source_name = self.cfg_charge_source_mode.get()
         charge_source_mode = next((idx for idx, name in CHARGE_SOURCE_MODE_NAMES.items() if name == charge_source_name), 0)
         return ChargeCycleConfig(
-            version=3,
+            version=6,
             battery_capacity_ah=self._read_cfg_float("battery_capacity_ah"),
             imin_c=self._read_cfg_float("imin_c"),
             imax_c=self._read_cfg_float("imax_c"),
@@ -2425,6 +2432,7 @@ class ChargerDebugApp:
             module_u_max_v=self._read_cfg_float("module_u_max_v"),
             module_i_min_a=self._read_cfg_float("module_i_min_a"),
             module_i_max_a=self._read_cfg_float("module_i_max_a"),
+            admin_pin=self._read_cfg_int("admin_pin"),
         )
 
     def _export_charge_config(self):
@@ -2508,6 +2516,7 @@ class ChargerDebugApp:
                 "module_u_max_v": cfg.module_u_max_v,
                 "module_i_min_a": cfg.module_i_min_a,
                 "module_i_max_a": cfg.module_i_max_a,
+                "admin_pin": cfg.admin_pin,
             }
             with open(file_path, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=2)
@@ -2530,7 +2539,7 @@ class ChargerDebugApp:
                 data = json.load(f)
 
             cfg = ChargeCycleConfig(
-                version=data.get("version", 3),
+                version=data.get("version", 6),
                 battery_capacity_ah=data.get("battery_capacity_ah", 0.0),
                 imin_c=data.get("imin_c", 0.0),
                 imax_c=data.get("imax_c", 0.0),
@@ -2591,6 +2600,7 @@ class ChargerDebugApp:
                 module_u_max_v=data.get("module_u_max_v", 99.0),
                 module_i_min_a=data.get("module_i_min_a", 5.0),
                 module_i_max_a=data.get("module_i_max_a", 100.0),
+                admin_pin=data.get("admin_pin", 123456),
             )
             self._load_charge_config_to_ui(cfg)
             messagebox.showinfo("Success", f"Config imported from:\n{file_path}")
@@ -2668,7 +2678,7 @@ class ChargerDebugApp:
             # (self.system_info.controller_state), not any locally-cached
             # flag, so this can't go stale.
             info = self.system_info
-            if info is not None and info.controller_state in (2, 3):  # Running, Derating
+            if info is not None and info.controller_state in (2, 5):  # Running, Pre-charge
                 if not messagebox.askyesno(
                     "Charging in progress",
                     "The charger is currently RUNNING.\n\n"

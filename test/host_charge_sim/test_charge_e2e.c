@@ -104,7 +104,8 @@ static void build_default_cfg(ChargeCycleConfig_t *cfg, uint8_t module_type)
     /* Cell-voltage staging enabled and isolated (SOC/temp disabled) so
      * scenario 2 can validate band transitions deterministically. */
     cfg->cell_volt_enabled = 1;
-    cfg->cell_volt_delta_v = 0.02f;
+    cfg->cell_volt_delta_t_s = 0.0f;
+    cfg->soc_delta_t_s = 0.0f;
     cfg->cell_volt_1_v = 3.00f;
     cfg->cell_volt_2_v = 3.30f;
     cfg->cell_volt_3_v = 3.50f;
@@ -625,13 +626,16 @@ static bool test_relay_stays_closed_until_current_settles(void)
 
     ChargeCtrlView_t cv;
     ChargeController_GetView(&cv);
-    ASSERT(cv.state != CHARGE_CTRL_STATE_RUNNING, "controller should have left RUNNING");
+    ASSERT(cv.state == CHARGE_CTRL_STATE_STOPPING,
+           "controller must remain STOPPING until relay current settles");
     ASSERT(cv.relay_should_close == 1, "relay must stay closed while module current is still high (20A)");
 
     g_sim_module.current = 0.5f; /* below RELAY_OPEN_CURRENT_THRESHOLD_A (1.0A) */
     drive_ms(60U); /* a couple ticks for the fresh reading to be picked up */
     ChargeController_GetView(&cv);
     ASSERT(cv.relay_should_close == 0, "relay must open once module current has settled near zero");
+    ASSERT(cv.state == CHARGE_CTRL_STATE_IDLE,
+           "controller may become IDLE only after the relay has opened");
 
     printf("[PASS] test_relay_stays_closed_until_current_settles\n");
     return true;
@@ -652,16 +656,22 @@ static bool test_relay_opens_on_timeout_if_current_never_settles(void)
 
     ChargeCtrlView_t cv;
     ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_STOPPING,
+           "controller must remain STOPPING while waiting for relay-open timeout");
     ASSERT(cv.relay_should_close == 1, "relay must still be closed right after Stop (current still high)");
 
     /* Current deliberately never drops -- only the timeout should open it. */
     drive_ms(2600U); /* short of RELAY_OPEN_TIMEOUT_MS (3000ms) from the Stop */
     ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_STOPPING,
+           "controller must remain STOPPING before relay-open timeout");
     ASSERT(cv.relay_should_close == 1, "relay must still be closed just before the timeout elapses");
 
     drive_ms(600U); /* now past 3000ms total since Stop */
     ChargeController_GetView(&cv);
     ASSERT(cv.relay_should_close == 0, "relay must open once RELAY_OPEN_TIMEOUT_MS elapses, even with current still high");
+    ASSERT(cv.state == CHARGE_CTRL_STATE_IDLE,
+           "controller may become IDLE only after the relay-open timeout opens it");
 
     printf("[PASS] test_relay_opens_on_timeout_if_current_never_settles\n");
     return true;
@@ -1411,6 +1421,663 @@ static bool test_jack_temp_derating_and_trip(void)
     return true;
 }
 
+static bool test_config_admin_pin_validation(void)
+{
+    printf("Running test_config_admin_pin_validation...\n");
+    ChargeCycleConfig_t cfg;
+    ChargeCycleConfig_GetDefaults(&cfg);
+    ASSERT(cfg.version == CHARGE_CYCLE_CONFIG_VERSION, "defaults use current config version");
+    ASSERT(cfg.admin_pin == DEFAULT_ADMIN_PIN, "defaults install the documented admin PIN");
+
+    cfg.admin_pin = 99999U;
+    ASSERT(!ChargeCycleConfig_Set(&cfg), "five-digit PIN must be rejected");
+    cfg.admin_pin = 100000U;
+    ASSERT(ChargeCycleConfig_Set(&cfg), "lowest valid six-digit PIN accepted");
+    cfg.admin_pin = 1000000U;
+    ASSERT(!ChargeCycleConfig_Set(&cfg), "seven-digit PIN must be rejected");
+
+    printf("[PASS] test_config_admin_pin_validation\n");
+    return true;
+}
+
+static bool test_stage_threshold_validation(void)
+{
+    printf("Running test_stage_threshold_validation...\n");
+    ChargeCycleConfig_t cfg;
+
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_MAXWELL, &cfg), "setup failed");
+
+    /* Equal cell thresholds would make the lower band unreachable. */
+    cfg.cell_volt_2_v = cfg.cell_volt_1_v;
+    ASSERT(!ChargeCycleConfig_Set(&cfg), "equal cell thresholds must be rejected");
+
+    /* Equal SOC thresholds have the same unreachable-band problem. */
+    build_default_cfg(&cfg, CHARGE_MODULE_TYPE_MAXWELL);
+    cfg.cell_volt_enabled = 0;
+    cfg.soc_enabled = 1;
+    cfg.soc_1_pct = 20.0f;
+    cfg.soc_2_pct = 40.0f;
+    cfg.soc_3_pct = 60.0f;
+    cfg.soc_4_pct = 80.0f;
+    cfg.soc_5_pct = 80.0f;
+    ASSERT(!ChargeCycleConfig_Set(&cfg), "equal SOC thresholds must be rejected");
+
+    /* Temperature delta may equal the smallest gap, but not exceed it. */
+    build_default_cfg(&cfg, CHARGE_MODULE_TYPE_MAXWELL);
+    cfg.temp_enabled = 1;
+    cfg.temp_1_c = 10.0f;
+    cfg.temp_2_c = 20.0f;
+    cfg.temp_3_c = 30.0f;
+    cfg.temp_4_c = 40.0f;
+    cfg.temp_5_c = 50.0f;
+    cfg.temp_delta_c = 10.0f;
+    ASSERT(ChargeCycleConfig_Set(&cfg), "temp delta equal to minimum gap must be accepted");
+
+    cfg.temp_delta_c = 10.1f;
+    ASSERT(!ChargeCycleConfig_Set(&cfg), "temp delta larger than minimum gap must be rejected");
+
+    printf("[PASS] test_stage_threshold_validation\n");
+    return true;
+}
+
+static bool test_precharge_bms_recovery_hold(void)
+{
+    printf("Running test_precharge_bms_recovery_hold...\n");
+    ChargeCycleConfig_t cfg;
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_MAXWELL, &cfg), "setup failed");
+
+    cfg.vlow_v = 35.0f;
+    cfg.ilow_c = 0.5f; /* 100 Ah -> 50 A total / one module */
+    cfg.module_u_min_v = 30.0f;
+    cfg.module_u_max_v = 60.0f;
+    cfg.module_i_min_a = 1.0f;
+    cfg.module_i_max_a = 100.0f;
+    ASSERT(ChargeCycleConfig_Set(&cfg), "pre-charge config rejected");
+
+    /* Module communication is healthy while the exhausted BMS is silent. */
+    g_sim_bms.transmitting = false;
+    drive_ms(1500U);
+    ASSERT(ChargeController_StartPrecharge(CHARGE_CTRL_OWNER_DWIN, mock_tick),
+           "pre-charge must start while BMS is offline");
+    drive_ms(4500U); /* pre-close voltage ramp reaches 35 V at 10 V/s */
+
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_PRECHARGE, "controller must stay in PRECHARGE");
+    ASSERT(fabsf(cv.target_voltage_v - cfg.vlow_v) < 0.01f, "uses Vlow target");
+    ASSERT(fabsf(cv.target_current_total_a - 50.0f) < 0.01f, "Ilow C-rate converts to total current");
+    ASSERT(cv.relay_should_close != 0U, "relay arms from module Vlow without BMS online");
+
+    /* BATT_ST1 alone is not recovery: CELL_VOLT must also be fresh. */
+    uint8_t batt_st1[8] = { 0x5E, 0x01, 0xA0, 0x0F, 50U, 0U, 0U, 0U };
+    BMS_FeedFrame(0U, 0x02F4U, batt_st1, sizeof(batt_st1));
+    BMS_Process(mock_tick);
+    ASSERT(!BMS_HasFreshPrechargeData(mock_tick), "BATT_ST1 alone must not recover pre-charge");
+
+    set_healthy_bms(35.0f, 5U);
+    g_sim_bms.low_cell_volt = 2U; /* expected low-voltage alarm remains non-critical */
+    g_sim_bms.transmitting = true;
+    drive_ms(30000U);
+
+    /* Losing BMS during the hold resets it; 30 seconds after recovery is not
+     * enough to finish a new full 60-second hold. */
+    g_sim_bms.transmitting = false;
+    drive_ms(1000U);
+    g_sim_bms.transmitting = true;
+    drive_ms(30000U);
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_PRECHARGE, "BMS loss must reset, not complete, hold");
+
+    drive_ms(PRECHARGE_HOLD_MS);
+    drive_ms(40U); /* STOPPING -> IDLE on the controlled-stop path */
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_IDLE, "60 second recovered hold must controlled-stop to IDLE");
+    ASSERT(cv.stop_reason == CHARGE_STOP_PRECHARGE_COMPLETE, "pre-charge completion reason retained");
+
+    printf("[PASS] test_precharge_bms_recovery_hold\n");
+    return true;
+}
+
+static bool test_precharge_start_invalid_state(void)
+{
+    printf("Running test_precharge_start_invalid_state...\n");
+    ChargeCycleConfig_t cfg;
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_MAXWELL, &cfg), "setup failed");
+    set_healthy_bms(400.0f, 50);
+    ASSERT(warmup_and_start(1500U, 4000U), "module never reached RUNNING");
+
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "must be in RUNNING");
+
+    /* Cannot start precharge while running */
+    ASSERT(!ChargeController_StartPrecharge(CHARGE_CTRL_OWNER_DWIN, mock_tick),
+           "StartPrecharge must fail when not IDLE");
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "state must remain RUNNING");
+
+    /* Stop charge -> STOPPING */
+    ChargeController_Stop(mock_tick);
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_STOPPING, "must be in STOPPING");
+    ASSERT(!ChargeController_StartPrecharge(CHARGE_CTRL_OWNER_DWIN, mock_tick),
+           "StartPrecharge must fail while STOPPING");
+
+    /* Complete stop to IDLE */
+    drive_ms(2000U);
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_IDLE, "must reach IDLE");
+
+    printf("[PASS] test_precharge_start_invalid_state\n");
+    return true;
+}
+
+static bool test_precharge_config_boundaries(void)
+{
+    printf("Running test_precharge_config_boundaries...\n");
+    ChargeCycleConfig_t cfg;
+
+    /* Case A: Vlow < module_u_min_v */
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_MAXWELL, &cfg), "setup failed");
+    cfg.vlow_v = 20.0f;
+    cfg.module_u_min_v = 30.0f;
+    cfg.module_u_max_v = 60.0f;
+    ASSERT(ChargeCycleConfig_Set(&cfg), "config set failed");
+    ASSERT(!ChargeController_StartPrecharge(CHARGE_CTRL_OWNER_DWIN, mock_tick),
+           "Vlow < Vmin must be rejected");
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_FAULT, "must enter FAULT");
+    ASSERT((cv.fault_flags & CHARGE_CTRL_FAULT_INVALID_CONFIG) != 0,
+           "fault flag must be INVALID_CONFIG");
+
+    /* Reset to IDLE */
+    ChargeController_Stop(mock_tick);
+    drive_ms(100U);
+
+    /* Case B: Vlow > module_u_max_v */
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_MAXWELL, &cfg), "setup failed");
+    cfg.vlow_v = 75.0f;
+    cfg.module_u_min_v = 30.0f;
+    cfg.module_u_max_v = 60.0f;
+    ASSERT(ChargeCycleConfig_Set(&cfg), "config set failed");
+    ASSERT(!ChargeController_StartPrecharge(CHARGE_CTRL_OWNER_DWIN, mock_tick),
+           "Vlow > Vmax must be rejected");
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_FAULT, "must enter FAULT");
+    ASSERT((cv.fault_flags & CHARGE_CTRL_FAULT_INVALID_CONFIG) != 0,
+           "fault flag must be INVALID_CONFIG");
+
+    /* Reset to IDLE */
+    ChargeController_Stop(mock_tick);
+    drive_ms(100U);
+
+    /* Case C: current per module < min_a */
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_MAXWELL, &cfg), "setup failed");
+    cfg.vlow_v = 45.0f;
+    cfg.ilow_c = 0.001f; /* 100 Ah * 0.001 = 0.1 A < 1.0 A */
+    cfg.module_u_min_v = 30.0f;
+    cfg.module_u_max_v = 60.0f;
+    cfg.module_i_min_a = 1.0f;
+    cfg.module_i_max_a = 50.0f;
+    ASSERT(ChargeCycleConfig_Set(&cfg), "config set failed");
+    ASSERT(!ChargeController_StartPrecharge(CHARGE_CTRL_OWNER_DWIN, mock_tick),
+           "Ilow < Imin must be rejected");
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_FAULT, "must enter FAULT");
+
+    ChargeController_Stop(mock_tick);
+    drive_ms(100U);
+
+    printf("[PASS] test_precharge_config_boundaries\n");
+    return true;
+}
+
+static bool test_precharge_zero_or_faulty_module(void)
+{
+    printf("Running test_precharge_zero_or_faulty_module...\n");
+    ChargeCycleConfig_t cfg;
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_MAXWELL, &cfg), "setup failed");
+    cfg.vlow_v = 45.0f;
+    cfg.ilow_c = 0.2f;
+    cfg.module_u_min_v = 30.0f;
+    cfg.module_u_max_v = 60.0f;
+    cfg.module_i_min_a = 1.0f;
+    cfg.module_i_max_a = 50.0f;
+    ASSERT(ChargeCycleConfig_Set(&cfg), "config set failed");
+
+    /* No modules online */
+    g_sim_module.silent = true;
+    drive_ms(16000U);
+    ASSERT(!ChargeController_StartPrecharge(CHARGE_CTRL_OWNER_DWIN, mock_tick),
+           "Precharge must fail with 0 modules online");
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_FAULT, "must enter FAULT");
+
+    /* Module in fault */
+    ChargeController_Stop(mock_tick);
+    drive_ms(100U);
+    g_sim_module.silent = false;
+    drive_ms(1000U);
+    g_sim_module.maxwell_alarm_raw = (1U << 28);
+    drive_ms(16000U); /* Maxwell polls 1 register/sec in IDLE; reg 5 is ALARM_STATUS */
+    ASSERT(!ChargeController_StartPrecharge(CHARGE_CTRL_OWNER_DWIN, mock_tick),
+           "Precharge must fail with module in fault");
+
+    ChargeController_Stop(mock_tick);
+    drive_ms(100U);
+    printf("[PASS] test_precharge_zero_or_faulty_module\n");
+    return true;
+}
+
+static bool test_precharge_fault_reset_requires_safe_conditions(void)
+{
+    printf("Running test_precharge_fault_reset_requires_safe_conditions...\n");
+    ChargeCycleConfig_t cfg;
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_MAXWELL, &cfg), "setup failed");
+    cfg.vlow_v = 45.0f;
+    cfg.ilow_c = 0.2f;
+    cfg.module_u_min_v = 30.0f;
+    cfg.module_u_max_v = 60.0f;
+    cfg.module_i_min_a = 1.0f;
+    cfg.module_i_max_a = 50.0f;
+    ASSERT(ChargeCycleConfig_Set(&cfg), "config set failed");
+
+    g_sim_module.silent = true;
+    drive_ms(16000U);
+    ASSERT(!ChargeController_StartPrecharge(CHARGE_CTRL_OWNER_DWIN, mock_tick),
+           "pre-charge must fail without an active module");
+
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_FAULT, "start failure must enter FAULT");
+    ASSERT(!ChargeController_ResetFaultIfSafe(mock_tick),
+           "reset must be rejected while the module condition persists");
+
+    /* Let the module recover while the controller remains faulted. Reset is
+     * then allowed without using ChargeController_Stop() as an unconditional
+     * fault bypass. */
+    g_sim_module.silent = false;
+    drive_ms(16000U);
+    ASSERT(ChargeController_ResetFaultIfSafe(mock_tick),
+           "reset must succeed after module recovery");
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_IDLE, "safe reset must return to IDLE");
+    ASSERT(cv.fault_flags == CHARGE_CTRL_FAULT_NONE, "safe reset must clear controller fault");
+
+    /* Emergency stop is intentionally not an ordinary pre-charge retry. */
+    ChargeController_EmergencyStop(mock_tick);
+    ASSERT(!ChargeController_ResetFaultIfSafe(mock_tick),
+           "emergency stop must not be cleared by pre-charge reset");
+
+    printf("[PASS] test_precharge_fault_reset_requires_safe_conditions\n");
+    return true;
+}
+
+static bool test_precharge_voltage_ramp_and_contactor_interlock(void)
+{
+    printf("Running test_precharge_voltage_ramp_and_contactor_interlock...\n");
+    ChargeCycleConfig_t cfg;
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_MAXWELL, &cfg), "setup failed");
+    cfg.vlow_v = 40.0f;
+    cfg.ilow_c = 0.2f; /* 100 Ah * 0.2 = 20 A */
+    cfg.module_u_min_v = 30.0f;
+    cfg.module_u_max_v = 60.0f;
+    cfg.module_i_min_a = 1.0f;
+    cfg.module_i_max_a = 50.0f;
+    ASSERT(ChargeCycleConfig_Set(&cfg), "config set failed");
+
+    g_sim_bms.transmitting = false; /* BMS offline */
+    drive_ms(1500U);
+
+    ASSERT(ChargeController_StartPrecharge(CHARGE_CTRL_OWNER_DWIN, mock_tick),
+           "Precharge start must succeed");
+
+    /* Slew rate is 10 V/s. At 1s, voltage is ~10V, which is < 39V (Vlow - 1V).
+     * Contactor must NOT close! */
+    drive_ms(1000U);
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_PRECHARGE, "must be in PRECHARGE");
+    ASSERT(!cv.relay_should_close, "relay must not close before reaching Vlow - 1V");
+
+    /* After 4.5s, voltage reaches 40V (>= 39V). Contactor MUST arm and latch! */
+    drive_ms(3500U);
+    ChargeController_GetView(&cv);
+    ASSERT(cv.relay_should_close != 0U, "relay should close when within 1V of Vlow");
+
+    /* Manual stop from user */
+    ChargeController_StopPrecharge(mock_tick);
+    drive_ms(100U);
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_IDLE || cv.state == CHARGE_CTRL_STATE_STOPPING,
+           "StopPrecharge must initiate controlled stop");
+
+    printf("[PASS] test_precharge_voltage_ramp_and_contactor_interlock\n");
+    return true;
+}
+
+static bool test_precharge_incomplete_bms_frames(void)
+{
+    printf("Running test_precharge_incomplete_bms_frames...\n");
+    ChargeCycleConfig_t cfg;
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_MAXWELL, &cfg), "setup failed");
+    cfg.vlow_v = 35.0f;
+    cfg.ilow_c = 0.2f;
+    cfg.module_u_min_v = 30.0f;
+    cfg.module_u_max_v = 60.0f;
+    cfg.module_i_min_a = 1.0f;
+    cfg.module_i_max_a = 50.0f;
+    ASSERT(ChargeCycleConfig_Set(&cfg), "config set failed");
+
+    g_sim_bms.transmitting = false;
+    drive_ms(1500U);
+    ASSERT(ChargeController_StartPrecharge(CHARGE_CTRL_OWNER_DWIN, mock_tick), "start failed");
+    drive_ms(4500U); /* reach 35V */
+
+    /* Case A: Send only BATT_ST1 (0x02F4) */
+    uint8_t batt_st1[8] = { 0x5E, 0x01, 0xA0, 0x0F, 50U, 0U, 0U, 0U };
+    BMS_FeedFrame(0U, 0x02F4U, batt_st1, sizeof(batt_st1));
+    BMS_Process(mock_tick);
+    ASSERT(!BMS_HasFreshPrechargeData(mock_tick), "BATT_ST1 alone must not be fresh precharge data");
+
+    drive_ms(1000U);
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_PRECHARGE, "must stay in PRECHARGE");
+
+    /* Case B: Send only CELL_VOLT (0x02F6) while BATT_ST1 goes stale */
+    drive_ms(3000U); /* let BATT_ST1 expire */
+    uint8_t cell_volt[8] = { 0x20, 0x0D, 0x10, 0x0D, 0x00, 0x00, 0x00, 0x00 };
+    BMS_FeedFrame(0U, 0x02F6U, cell_volt, sizeof(cell_volt));
+    BMS_Process(mock_tick);
+    ASSERT(!BMS_HasFreshPrechargeData(mock_tick), "CELL_VOLT alone must not be fresh precharge data");
+
+    ChargeController_StopPrecharge(mock_tick);
+    drive_ms(100U);
+    printf("[PASS] test_precharge_incomplete_bms_frames\n");
+    return true;
+}
+
+static bool test_precharge_bms_critical_fault_injection(void)
+{
+    printf("Running test_precharge_bms_critical_fault_injection...\n");
+    ChargeCycleConfig_t cfg;
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_MAXWELL, &cfg), "setup failed");
+    cfg.vlow_v = 35.0f;
+    cfg.ilow_c = 0.2f;
+    cfg.module_u_min_v = 30.0f;
+    cfg.module_u_max_v = 60.0f;
+    cfg.module_i_min_a = 1.0f;
+    cfg.module_i_max_a = 50.0f;
+    ASSERT(ChargeCycleConfig_Set(&cfg), "config set failed");
+
+    g_sim_bms.transmitting = false;
+    drive_ms(1500U);
+    ASSERT(ChargeController_StartPrecharge(CHARGE_CTRL_OWNER_DWIN, mock_tick), "start failed");
+    drive_ms(4500U); /* reach 35V */
+
+    /* BMS wakes up with a CRITICAL over-temperature alarm */
+    set_healthy_bms(35.0f, 5);
+    g_sim_bms.temp_cell_high_chg = 2U; /* Critical alarm level >= 2 */
+    g_sim_bms.transmitting = true;
+    drive_ms(100U); /* Process BMS frame */
+
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_FAULT, "Critical BMS alarm must trip FAULT immediately");
+    ASSERT((cv.fault_flags & CHARGE_CTRL_FAULT_BMS_ALARM) != 0, "fault must be BMS_ALARM");
+
+    ChargeController_Stop(mock_tick);
+    drive_ms(100U);
+    printf("[PASS] test_precharge_bms_critical_fault_injection\n");
+    return true;
+}
+
+static bool test_precharge_module_can_loss(void)
+{
+    printf("Running test_precharge_module_can_loss...\n");
+    ChargeCycleConfig_t cfg;
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_MAXWELL, &cfg), "setup failed");
+    cfg.vlow_v = 35.0f;
+    cfg.ilow_c = 0.2f;
+    cfg.module_u_min_v = 30.0f;
+    cfg.module_u_max_v = 60.0f;
+    cfg.module_i_min_a = 1.0f;
+    cfg.module_i_max_a = 50.0f;
+    ASSERT(ChargeCycleConfig_Set(&cfg), "config set failed");
+
+    g_sim_bms.transmitting = false;
+    drive_ms(1500U);
+    ASSERT(ChargeController_StartPrecharge(CHARGE_CTRL_OWNER_DWIN, mock_tick), "start failed");
+    drive_ms(4500U);
+
+    /* Kill module CAN communication: requires 10s driver offline timeout + 10s controller mismatch debounce */
+    g_sim_module.silent = true;
+    drive_ms(22000U); /* Exceed module timeout (10s) + mismatch timer (10s) */
+
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_FAULT, "Module CAN loss must trip FAULT");
+
+    ChargeController_Stop(mock_tick);
+    drive_ms(100U);
+    printf("[PASS] test_precharge_module_can_loss\n");
+    return true;
+}
+
+static bool test_temp_stage_asymmetric_hysteresis(void)
+{
+    printf("Running test_temp_stage_asymmetric_hysteresis...\n");
+    ChargeCycleConfig_t cfg;
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_MAXWELL, &cfg), "setup failed");
+
+    cfg.temp_enabled = 1;
+    cfg.temp_1_c = 10.0f;
+    cfg.temp_2_c = 20.0f;
+    cfg.temp_3_c = 40.0f;
+    cfg.temp_4_c = 50.0f;
+    cfg.temp_5_c = 60.0f;
+    cfg.temp_curr_1_c = 0.2f;
+    cfg.temp_curr_2_c = 0.5f;
+    cfg.temp_curr_3_c = 1.0f;
+    cfg.temp_curr_4_c = 0.3f;
+    cfg.temp_delta_c = 3.0f;
+    cfg.cell_volt_enabled = 0;
+    cfg.soc_enabled = 0;
+    ASSERT(ChargeCycleConfig_Set(&cfg), "config set failed");
+
+    set_healthy_bms(400.0f, 50);
+    g_sim_bms.max_cell_temp_c = 45.0f; /* In band 3_4: [40, 50) */
+    ASSERT(warmup_and_start(1500U, 4000U), "module never reached RUNNING");
+
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.active_stage_band == CHARGE_STAGE_BAND_3_4, "initial temp 45C should be in band 3_4");
+    ASSERT(fabsf(cv.target_current_total_a - 100.0f) < 1.0f, "band 3_4 should allow 1.0C (100A)");
+
+    /* 1. Rise to exactly 50.0C (threshold 4_5): with asymmetric hysteresis, must transition immediately */
+    g_sim_bms.max_cell_temp_c = 50.0f;
+    drive_ms(600U);
+    ChargeController_GetView(&cv);
+    ASSERT(cv.active_stage_band == CHARGE_STAGE_BAND_4_5, "rising temp to 50C must trip immediately to band 4_5");
+    ASSERT(fabsf(cv.target_current_total_a - 30.0f) < 1.0f, "band 4_5 should limit to 0.3C (30A)");
+
+    /* 2. Cool down to 49.0C: 49.0 >= 50.0 - 3.0 (47.0C) -> must retain band 4_5 */
+    g_sim_bms.max_cell_temp_c = 49.0f;
+    drive_ms(600U);
+    ChargeController_GetView(&cv);
+    ASSERT(cv.active_stage_band == CHARGE_STAGE_BAND_4_5, "cooling to 49C must remain in band 4_5 (delta not met)");
+
+    /* 3. Cool down to 48.0C: 48.0 >= 47.0C -> still in band 4_5 */
+    g_sim_bms.max_cell_temp_c = 48.0f;
+    drive_ms(600U);
+    ChargeController_GetView(&cv);
+    ASSERT(cv.active_stage_band == CHARGE_STAGE_BAND_4_5, "cooling to 48C must remain in band 4_5 (delta not met)");
+
+    /* 4. Cool down to 46.0C: 46.0 < 47.0C -> recovers to band 3_4 */
+    g_sim_bms.max_cell_temp_c = 46.0f;
+    drive_ms(600U);
+    ChargeController_GetView(&cv);
+    ASSERT(cv.active_stage_band == CHARGE_STAGE_BAND_3_4, "cooling to 46C (< lower_thresh - delta) must recover to band 3_4");
+    ASSERT(fabsf(cv.target_current_total_a - 100.0f) < 1.0f, "recovered band 3_4 should restore 100A");
+
+    /* 5. Jump to 60.0C (threshold 5: ABOVE_MAX): must inhibit immediately */
+    g_sim_bms.max_cell_temp_c = 60.0f;
+    drive_ms(600U);
+    ChargeController_GetView(&cv);
+    ASSERT(cv.active_stage_band == CHARGE_STAGE_BAND_ABOVE_MAX, "rising to 60C must trip immediately to ABOVE_MAX");
+    ASSERT(cv.inhibit == 1, "ABOVE_MAX must set inhibit");
+
+    /* 6. Cool down to 58.0C: 58.0 >= 60.0 - 3.0 (57.0C) -> still ABOVE_MAX */
+    g_sim_bms.max_cell_temp_c = 58.0f;
+    drive_ms(600U);
+    ChargeController_GetView(&cv);
+    ASSERT(cv.active_stage_band == CHARGE_STAGE_BAND_ABOVE_MAX, "cooling to 58C must stay in ABOVE_MAX (delta not met)");
+
+    /* 7. Cool down to 56.0C: 56.0 < 57.0C -> recovers to band 4_5 */
+    g_sim_bms.max_cell_temp_c = 56.0f;
+    drive_ms(600U);
+    ChargeController_GetView(&cv);
+    ASSERT(cv.active_stage_band == CHARGE_STAGE_BAND_4_5, "cooling to 56C must recover from ABOVE_MAX to band 4_5");
+    ASSERT(cv.inhibit == 0, "inhibit must clear on recovery");
+    ASSERT(fabsf(cv.target_current_total_a - 30.0f) < 1.0f, "recovered band 4_5 current target restored");
+
+    printf("[PASS] test_temp_stage_asymmetric_hysteresis\n");
+    return true;
+}
+
+static bool test_cell_volt_stage_delta_t_debounce(void)
+{
+    printf("Running test_cell_volt_stage_delta_t_debounce...\n");
+    ChargeCycleConfig_t cfg;
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_MAXWELL, &cfg), "setup failed");
+
+    /* Cell voltage stages with 3.0s delta_t debounce */
+    cfg.cell_volt_enabled = 1;
+    cfg.cell_volt_delta_t_s = 3.0f;
+    cfg.cell_volt_1_v = 3.00f;
+    cfg.cell_volt_2_v = 3.30f;
+    cfg.cell_volt_3_v = 3.50f;
+    cfg.cell_volt_4_v = 3.65f;
+    cfg.cell_volt_5_v = 3.80f;
+    cfg.cell_curr_1_c = 1.00f; /* 100A */
+    cfg.cell_curr_2_c = 0.70f; /* 70A */
+    cfg.cell_curr_3_c = 0.40f; /* 40A */
+    cfg.cell_curr_4_c = 0.20f; /* 20A */
+    cfg.temp_enabled = 0;
+    cfg.soc_enabled = 0;
+    ASSERT(ChargeCycleConfig_Set(&cfg), "config set failed");
+
+    set_healthy_bms(400.0f, 50);
+    g_sim_bms.max_cell_mv = 3100; /* In band 1_2: [3.00V, 3.30V) -> 100A */
+    ASSERT(warmup_and_start(1500U, 4000U), "module never reached RUNNING");
+
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.active_stage_band == CHARGE_STAGE_BAND_1_2, "initial cell 3.10V should seed band 1_2");
+    ASSERT(fabsf(cv.target_current_total_a - 100.0f) < 1.0f, "band 1_2 should allow 1.0C (100A)");
+
+    /* 1. Spike to 3.40V (Band 2_3: >= 3.30V) for only 1.5s (less than 3.0s delta_t) */
+    g_sim_bms.max_cell_mv = 3400;
+    drive_ms(1500U);
+    ChargeController_GetView(&cv);
+    ASSERT(cv.active_stage_band == CHARGE_STAGE_BAND_1_2, "voltage spike for 1.5s (< 3.0s) must NOT transition to band 2_3");
+    ASSERT(fabsf(cv.target_current_total_a - 100.0f) < 1.0f, "current must remain 100A while waiting for debounce");
+
+    /* 2. Spike drops back to 3.20V (Band 1_2) -> cancels candidate timer */
+    g_sim_bms.max_cell_mv = 3200;
+    drive_ms(1000U);
+    ChargeController_GetView(&cv);
+    ASSERT(cv.active_stage_band == CHARGE_STAGE_BAND_1_2, "candidate timer canceled, still band 1_2");
+
+    /* 3. Voltage rises to 3.40V and STAYS for full 3.0s (3200ms) */
+    g_sim_bms.max_cell_mv = 3400;
+    drive_ms(2000U);
+    ChargeController_GetView(&cv);
+    ASSERT(cv.active_stage_band == CHARGE_STAGE_BAND_1_2, "after 2.0s, still waiting for 3.0s debounce");
+    drive_ms(1200U); /* total 3.2s >= 3.0s */
+    ChargeController_GetView(&cv);
+    ASSERT(cv.active_stage_band == CHARGE_STAGE_BAND_2_3, "after 3.2s >= delta_t, must confirm transition to band 2_3");
+    ASSERT(fabsf(cv.target_current_total_a - 70.0f) < 1.0f, "band 2_3 target current is 70A");
+
+    /* 4. Voltage rises to 3.85V (ABOVE_MAX: >= 3.80V) for only 1.5s -> must NOT stop yet */
+    g_sim_bms.max_cell_mv = 3850;
+    drive_ms(1500U);
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "ABOVE_MAX spike for 1.5s must not stop charge cycle early");
+    ASSERT(cv.active_stage_band == CHARGE_STAGE_BAND_2_3, "still in band 2_3 during debounce");
+
+    /* 5. Stay at 3.85V for remaining time (> 3.0s total) -> confirms ABOVE_MAX and stops cycle */
+    drive_ms(1800U); /* 1.5s + 1.8s = 3.3s >= 3.0s */
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_STOPPING || cv.state == CHARGE_CTRL_STATE_IDLE,
+           "after delta_t at ABOVE_MAX, cycle must stop (STOPPING or settled to IDLE)");
+    ASSERT(cv.stop_reason == CHARGE_STOP_CELL_VOLTAGE_REACHED, "stop reason must be CELL_VOLTAGE_REACHED");
+
+    printf("[PASS] test_cell_volt_stage_delta_t_debounce\n");
+    return true;
+}
+
+static bool test_soc_stage_delta_t_debounce(void)
+{
+    printf("Running test_soc_stage_delta_t_debounce...\n");
+    ChargeCycleConfig_t cfg;
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_MAXWELL, &cfg), "setup failed");
+
+    /* SOC stages with 2.0s delta_t debounce */
+    cfg.soc_enabled = 1;
+    cfg.soc_delta_t_s = 2.0f;
+    cfg.soc_1_pct = 20.0f;
+    cfg.soc_2_pct = 50.0f;
+    cfg.soc_3_pct = 80.0f;
+    cfg.soc_4_pct = 90.0f;
+    cfg.soc_5_pct = 99.0f;
+    cfg.soc_curr_1_c = 1.00f; /* 100A */
+    cfg.soc_curr_2_c = 0.70f; /* 70A */
+    cfg.soc_curr_3_c = 0.40f; /* 40A */
+    cfg.soc_curr_4_c = 0.20f; /* 20A */
+    cfg.cell_volt_enabled = 0;
+    cfg.temp_enabled = 0;
+    ASSERT(ChargeCycleConfig_Set(&cfg), "config set failed");
+
+    set_healthy_bms(400.0f, 30); /* In band 1_2: [20%, 50%) -> 100A */
+    ASSERT(warmup_and_start(1500U, 4000U), "module never reached RUNNING");
+
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.active_stage_band == CHARGE_STAGE_BAND_1_2, "initial SOC 30% should seed band 1_2");
+
+    /* Spike to 60% (Band 2_3: >= 50%) for 1.0s (< 2.0s debounce) */
+    g_sim_bms.soc_pct = 60;
+    drive_ms(1000U);
+    ChargeController_GetView(&cv);
+    ASSERT(cv.active_stage_band == CHARGE_STAGE_BAND_1_2, "SOC spike for 1.0s must not transition early");
+
+    /* Stay at 60% for another 1.2s (total 2.2s >= 2.0s debounce) */
+    drive_ms(1200U);
+    ChargeController_GetView(&cv);
+    ASSERT(cv.active_stage_band == CHARGE_STAGE_BAND_2_3, "after debounce, confirmed transition to band 2_3");
+    ASSERT(fabsf(cv.target_current_total_a - 70.0f) < 1.0f, "band 2_3 target current 70A");
+
+    /* Spike to 100% (ABOVE_MAX: >= 99%) for 1.0s (< 2.0s debounce) -> must NOT stop */
+    g_sim_bms.soc_pct = 100;
+    drive_ms(1000U);
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "SOC 100% for 1.0s must not stop cycle early");
+
+    /* Stay at 100% for another 1.2s (total 2.2s >= 2.0s debounce) -> stop cycle */
+    drive_ms(1200U);
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_STOPPING || cv.state == CHARGE_CTRL_STATE_IDLE,
+           "after delta_t at 100% SOC, cycle must stop (STOPPING or settled to IDLE)");
+    ASSERT(cv.stop_reason == CHARGE_STOP_SOC_REACHED, "stop reason must be SOC_REACHED");
+
+    printf("[PASS] test_soc_stage_delta_t_debounce\n");
+    return true;
+}
+
 /* ================================================================== */
 
 int main(void)
@@ -1421,6 +2088,9 @@ int main(void)
 
     pass &= test_driver_happy_path(CHARGE_MODULE_TYPE_TONHE, "tonhe");
     pass &= test_driver_stage_derating(CHARGE_MODULE_TYPE_TONHE, "tonhe");
+    pass &= test_temp_stage_asymmetric_hysteresis();
+    pass &= test_cell_volt_stage_delta_t_debounce();
+    pass &= test_soc_stage_delta_t_debounce();
     pass &= test_driver_module_fault(CHARGE_MODULE_TYPE_TONHE, "tonhe");
     pass &= test_driver_fault_recovery_debounce(CHARGE_MODULE_TYPE_TONHE, "tonhe");
     pass &= test_tonhe_fault_matrix();
@@ -1455,6 +2125,17 @@ int main(void)
     pass &= test_voltage_ramp_up();
     pass &= test_ramp_down_immediate();
     pass &= test_jack_temp_derating_and_trip();
+    pass &= test_config_admin_pin_validation();
+    pass &= test_stage_threshold_validation();
+    pass &= test_precharge_bms_recovery_hold();
+    pass &= test_precharge_start_invalid_state();
+    pass &= test_precharge_config_boundaries();
+    pass &= test_precharge_zero_or_faulty_module();
+    pass &= test_precharge_fault_reset_requires_safe_conditions();
+    pass &= test_precharge_voltage_ramp_and_contactor_interlock();
+    pass &= test_precharge_incomplete_bms_frames();
+    pass &= test_precharge_bms_critical_fault_injection();
+    pass &= test_precharge_module_can_loss();
 
     pass &= test_multi_module_timing_budget();
 

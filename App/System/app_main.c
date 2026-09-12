@@ -136,6 +136,16 @@ static void log_can_diagnostics(uint32_t now)
 /* One-shot: identity strings + initial page pushed to the DWIN panel once
  * it has had time to boot (the panel comes up slower than the MCU). */
 static bool     dwin_boot_sent    = false;
+/* DWIN login/pre-charge session belongs to the composition root: it is UI
+ * state, not charge policy or a DWIN protocol concern. PIN digits are never
+ * logged and are cleared whenever the short-lived session ends. */
+static char     dwin_pin_digits[7];
+static uint8_t  dwin_pin_length = 0U;
+static bool     dwin_precharge_session = false;
+static bool     dwin_precharge_exit_pending = false;
+static bool     dwin_precharge_seen_active = false;
+static bool     dwin_precharge_error_hold = false;
+static AlarmCode_t dwin_precharge_error_code = ALARM_NONE;
 static double   s_total_charged_ah;
 static double   s_total_energy_kwh;
 static uint32_t s_last_energy_tick;
@@ -160,6 +170,66 @@ static void dwin_set_unavailable(char *text, size_t text_size)
     if (text_size > 3U) {
         memcpy(text, "---", 3U);
     }
+}
+
+static void dwin_login_clear(void)
+{
+    dwin_pin_length = 0U;
+    memset(dwin_pin_digits, 0, sizeof(dwin_pin_digits));
+    DWIN_SendString(VP_LOGIN_PIN_TEXT, "", DWIN_TEXT_8_BYTES_WORDS);
+}
+
+static void dwin_login_show_mask(void)
+{
+    char mask[7];
+    memset(mask, '*', dwin_pin_length);
+    mask[dwin_pin_length] = '\0';
+    DWIN_SendString(VP_LOGIN_PIN_TEXT, mask, DWIN_TEXT_8_BYTES_WORDS);
+}
+
+static uint32_t dwin_login_pin_value(void)
+{
+    uint32_t value = 0U;
+    for (uint8_t i = 0U; i < dwin_pin_length; i++) {
+        value = (value * 10U) + (uint32_t)(dwin_pin_digits[i] - '0');
+    }
+    return value;
+}
+
+static void dwin_open_login(void)
+{
+    dwin_precharge_session = false;
+    dwin_precharge_error_hold = false;
+    dwin_precharge_error_code = ALARM_NONE;
+    dwin_precharge_exit_pending = false;
+    dwin_precharge_seen_active = false;
+    dwin_login_clear();
+    DWIN_SetPage(DWIN_PAGE_LOGIN);
+    DWIN_ForceFullRefresh();
+}
+
+static void dwin_open_precharge(void)
+{
+    uint16_t status = DWIN_PRECHARGE_STATUS_READY;
+    uint16_t button = DWIN_PRECHARGE_BTN_START;
+    dwin_precharge_error_hold = false;
+    dwin_precharge_error_code = ALARM_NONE;
+    dwin_precharge_exit_pending = false;
+    dwin_precharge_seen_active = false;
+    DWIN_SetPage(DWIN_PAGE_PRECHARGE);
+    DWIN_SendWords(VP_PRECHARGE_STATUS_ICON, &status, 1U);
+    DWIN_SendWords(VP_PRECHARGE_BTN_ICON, &button, 1U);
+    DWIN_ForceFullRefresh();
+}
+
+static void dwin_end_precharge_session(void)
+{
+    dwin_precharge_session = false;
+    dwin_precharge_error_hold = false;
+    dwin_precharge_error_code = ALARM_NONE;
+    dwin_precharge_exit_pending = false;
+    dwin_precharge_seen_active = false;
+    dwin_login_clear();
 }
 
 static void dwin_set_soc_unavailable(char *text, size_t text_size)
@@ -277,6 +347,7 @@ static uint16_t dwin_status_from_state(const ChargeCtrlView_t *cc,
 
     switch (cc->state) {
         case CHARGE_CTRL_STATE_RUNNING:
+        case CHARGE_CTRL_STATE_PRECHARGE:
             /* relay latched closed == real current is flowing */
             return cc->relay_should_close ? DWIN_STATUS_CHARGING
                                           : DWIN_STATUS_STARTING;
@@ -608,6 +679,54 @@ void App_Loop(void)
 
         ChargeCtrlView_t cc_view;
         ChargeController_GetView(&cc_view);
+        AlarmView_t av;
+        Alarm_GetView(&av);
+
+        bool controller_fault = (cc_view.state == CHARGE_CTRL_STATE_FAULT) ||
+                                (cc_view.fault_flags != CHARGE_CTRL_FAULT_NONE);
+        bool runtime_alarm = dwin_precharge_seen_active &&
+                             (av.highest_action >= ALARM_ACT_STOP);
+
+        /* A pre-charge error is a presentation latch only. The controller
+         * still owns the safety stop and relay sequencing; this latch keeps
+         * the operator on Page 07 long enough to read the existing alarm code. */
+        if (dwin_precharge_session &&
+            (controller_fault || runtime_alarm || dwin_precharge_error_hold)) {
+            if (!dwin_precharge_error_hold) {
+                dwin_precharge_error_hold = true;
+                dwin_precharge_error_code = av.worst_code;
+            } else if (dwin_precharge_error_code == ALARM_NONE &&
+                       av.worst_code != ALARM_NONE) {
+                dwin_precharge_error_code = av.worst_code;
+            }
+        }
+
+        /* Leaving PRECHARGE normally closes the privileged panel session.
+         * Fault/protection is the exception: remain on Page 07 until the
+         * operator chooses Reset or Back. User Stop and normal completion
+         * still use the pending route after the controller is safe. */
+        if (cc_view.state == CHARGE_CTRL_STATE_PRECHARGE) {
+            dwin_precharge_seen_active = true;
+        }
+        if (dwin_precharge_seen_active && cc_view.state != CHARGE_CTRL_STATE_PRECHARGE) {
+            dwin_precharge_seen_active = false;
+            if (controller_fault || (av.highest_action >= ALARM_ACT_STOP)) {
+                dwin_precharge_error_hold = true;
+                if (dwin_precharge_error_code == ALARM_NONE) {
+                    dwin_precharge_error_code = av.worst_code;
+                }
+            } else {
+                dwin_end_precharge_session();
+                dwin_precharge_exit_pending = true;
+            }
+        }
+        if (dwin_precharge_exit_pending &&
+            cc_view.state == CHARGE_CTRL_STATE_IDLE &&
+            !dwin_precharge_error_hold) {
+            DWIN_SetPage(DWIN_PAGE_DASH);
+            DWIN_ForceFullRefresh();
+            dwin_precharge_exit_pending = false;
+        }
 
         CHG_LIB_SystemSummary_t sum;
         CHG_LIB_GetSystemSummary(&sum);
@@ -666,6 +785,25 @@ void App_Loop(void)
                 dwin_set_unavailable(dd.dc_current_text, sizeof(dd.dc_current_text));
                 dwin_set_unavailable(dd.dc_power_text, sizeof(dd.dc_power_text));
             }
+        }
+
+        /* Page 07 intentionally reuses the same validated system summary as
+         * Home. Its Text Displays therefore show exactly the total output
+         * voltage/current the operator sees on the dashboard. */
+        memcpy(dd.precharge_voltage_text, dd.dc_voltage_text,
+               sizeof(dd.precharge_voltage_text));
+        memcpy(dd.precharge_current_text, dd.dc_current_text,
+               sizeof(dd.precharge_current_text));
+        if (dwin_precharge_error_hold || cc_view.state == CHARGE_CTRL_STATE_FAULT ||
+            (dwin_precharge_session && av.highest_action >= ALARM_ACT_STOP)) {
+            dd.precharge_status_mode = DWIN_PRECHARGE_STATUS_ERROR;
+            dd.precharge_btn_mode = DWIN_PRECHARGE_BTN_RESET;
+        } else if (cc_view.state == CHARGE_CTRL_STATE_PRECHARGE) {
+            dd.precharge_status_mode = DWIN_PRECHARGE_STATUS_ACTIVE;
+            dd.precharge_btn_mode = DWIN_PRECHARGE_BTN_STOP;
+        } else {
+            dd.precharge_status_mode = DWIN_PRECHARGE_STATUS_READY;
+            dd.precharge_btn_mode = DWIN_PRECHARGE_BTN_START;
         }
 
         /* Battery telemetry: online is necessary but not sufficient for every
@@ -833,10 +971,13 @@ void App_Loop(void)
                                     s_total_energy_kwh);
 
         /* Topbar fault code: "0000" if normal, worst code (e.g. "E006") if fault active */
-        AlarmView_t av;
-        Alarm_GetView(&av);
         if (av.active_count == 0U && av.latched_mask == 0U) {
-            strncpy(dd.topbar_fault_code, "0000", sizeof(dd.topbar_fault_code) - 1U);
+            if (dwin_precharge_error_hold && dwin_precharge_error_code != ALARM_NONE) {
+                const char *c_str = DWIN_Alarm_GetCodeString(dwin_precharge_error_code);
+                strncpy(dd.topbar_fault_code, c_str, sizeof(dd.topbar_fault_code) - 1U);
+            } else {
+                strncpy(dd.topbar_fault_code, "0000", sizeof(dd.topbar_fault_code) - 1U);
+            }
         } else {
             const char *c_str = DWIN_Alarm_GetCodeString(av.worst_code);
             strncpy(dd.topbar_fault_code, c_str, sizeof(dd.topbar_fault_code) - 1U);
@@ -907,5 +1048,119 @@ void DWIN_OnActionButton(uint16_t keyval)
     {
         uint16_t btn = dwin_btn_mode_from_status(dwin_current_status());
         DWIN_SendWords(VP_SYS_BTN_ICON, &btn, 1);
+    }
+}
+
+void DWIN_OnKeyEvent(uint16_t vp, uint16_t keyval)
+{
+    uint32_t now = BSP_GetTick();
+
+    if (vp == VP_SET_LOGIN_KEY) {
+        if (keyval == DWIN_SETTING_KEY_LOGIN) {
+            dwin_open_login();
+        }
+        return;
+    }
+
+    if (vp == VP_LOGIN_KEY) {
+        if (keyval >= DWIN_LOGIN_KEY_DIGIT_0 && keyval <= DWIN_LOGIN_KEY_DIGIT_9) {
+            if (dwin_pin_length < 6U) {
+                dwin_pin_digits[dwin_pin_length++] =
+                    (char)('0' + (keyval - DWIN_LOGIN_KEY_DIGIT_0));
+                dwin_login_show_mask();
+            }
+        } else if (keyval == DWIN_LOGIN_KEY_DELETE) {
+            if (dwin_pin_length > 0U) {
+                dwin_pin_length--;
+                dwin_pin_digits[dwin_pin_length] = '\0';
+                dwin_login_show_mask();
+            }
+        } else if (keyval == DWIN_LOGIN_KEY_BACK) {
+            dwin_end_precharge_session();
+            DWIN_SetPage(DWIN_PAGE_DASH);
+        } else if (keyval == DWIN_LOGIN_KEY_OK) {
+            ChargeCycleConfig_t cfg;
+            ChargeCycleConfig_Get(&cfg);
+            if (dwin_pin_length == 6U && dwin_login_pin_value() == cfg.admin_pin) {
+                dwin_login_clear();
+                dwin_precharge_session = true;
+                dwin_open_precharge();
+            } else {
+                /* Never log PINs or attempted values. */
+                dwin_login_clear();
+            }
+        }
+        return;
+    }
+
+    if (vp != VP_PRECHARGE_ACTION_KEY || !dwin_precharge_session) {
+        return;
+    }
+
+    if (keyval == DWIN_PRECHARGE_KEY_ACTION) {
+        ChargeCtrlView_t view;
+        AlarmView_t alarm_view;
+        ChargeController_GetView(&view);
+        Alarm_GetView(&alarm_view);
+
+        if (dwin_precharge_error_hold || view.state == CHARGE_CTRL_STATE_FAULT ||
+            alarm_view.highest_action >= ALARM_ACT_STOP) {
+            /* RESET is an acknowledge/retry request, never a forced clear.
+             * A persistent root cause keeps the page in ERROR. */
+            Alarm_Acknowledge(now);
+            ChargeController_GetView(&view);
+
+            if (view.state == CHARGE_CTRL_STATE_FAULT) {
+                if (ChargeController_ResetFaultIfSafe(now)) {
+                    dwin_precharge_error_hold = false;
+                    dwin_precharge_error_code = ALARM_NONE;
+                }
+            } else if (view.state == CHARGE_CTRL_STATE_PRECHARGE) {
+                /* A STOP-level alarm may be observed before the controller
+                 * processes its stop request. Do not let RESET resume output. */
+                ChargeController_StopPrecharge(now);
+            } else {
+                Alarm_GetView(&alarm_view);
+                if (view.state == CHARGE_CTRL_STATE_IDLE &&
+                    alarm_view.highest_action < ALARM_ACT_STOP) {
+                    dwin_precharge_error_hold = false;
+                    dwin_precharge_error_code = ALARM_NONE;
+                }
+            }
+        } else if (view.state == CHARGE_CTRL_STATE_PRECHARGE) {
+            ChargeController_StopPrecharge(now);
+            dwin_end_precharge_session();
+            dwin_precharge_exit_pending = true;
+        } else {
+            if (ChargeController_StartPrecharge(CHARGE_CTRL_OWNER_DWIN, now)) {
+                uint16_t status = DWIN_PRECHARGE_STATUS_ACTIVE;
+                uint16_t button = DWIN_PRECHARGE_BTN_STOP;
+                dwin_precharge_seen_active = true;
+                DWIN_SendWords(VP_PRECHARGE_STATUS_ICON, &status, 1U);
+                DWIN_SendWords(VP_PRECHARGE_BTN_ICON, &button, 1U);
+            } else {
+                /* Start failure is shown on Page 07 by the normal HMI
+                 * refresh (controller FAULT + existing alarm code). */
+                dwin_precharge_exit_pending = false;
+            }
+        }
+    } else if (keyval == DWIN_PRECHARGE_KEY_BACK) {
+        ChargeCtrlView_t view;
+        ChargeController_GetView(&view);
+        if (view.state == CHARGE_CTRL_STATE_PRECHARGE) {
+            ChargeController_StopPrecharge(now);
+            dwin_end_precharge_session();
+            dwin_precharge_exit_pending = true;
+        } else if (view.state == CHARGE_CTRL_STATE_STOPPING ||
+                   view.relay_should_close) {
+            /* Preserve the page until the existing stop/relay-settle path
+             * reports that the output is safe. */
+            dwin_end_precharge_session();
+            dwin_precharge_exit_pending = true;
+        } else {
+            dwin_end_precharge_session();
+            DWIN_SetPage(DWIN_PAGE_DASH);
+            DWIN_ForceFullRefresh();
+        }
     }
 }

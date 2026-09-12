@@ -29,53 +29,52 @@
 
         /* Header */
         .header {
-            background-color: #ffffff; 
+            background-color: #ffffff;
             height: 28px;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 0 10px;
+            padding: 0 12px 0 10px;
             border-bottom: 2px solid #cbd5e1;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.08); 
+            box-shadow: 0 2px 5px rgba(0,0,0,0.08);
             position: relative;
             z-index: 10;
         }
-        .logo { 
-            display: flex; 
-            align-items: center; 
+        .logo {
+            display: flex;
+            align-items: center;
             height: 100%;
         }
         .logo-icon-wrapper {
-            height: 16px; 
+            height: 16px;
             overflow: hidden;
             display: flex;
         }
         .logo-icon-wrapper img {
-            height: 22px; 
+            height: 22px;
             object-fit: cover;
             object-position: left top;
         }
         .logo-battery {
-            color: #000000; 
-            font-size: 14px; 
+            color: #000000;
+            font-size: 14px;
             font-weight: bold;
             margin-left: 6px;
             letter-spacing: 0.5px;
             font-family: Arial, sans-serif;
         }
-        .device-id { 
-            color: #444444; 
-            font-size: 12px; 
-            font-weight: bold; 
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
-            letter-spacing: 0.5px; 
+        .device-id { width: 95px; color: #444444;
+            font-size: 12px;
+            font-weight: bold;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            letter-spacing: 0.5px;
         }
 
         /* Main Content */
         .main-content {
             display: flex;
             justify-content: space-between;
-            padding: 6px 6px 4px 6px; 
+            padding: 6px 6px 4px 6px;
             height: 216px;
         }
         .col { width: 135px; display: flex; flex-direction: column; justify-content: space-between; }
@@ -102,7 +101,7 @@
             gap: 6px;
         }
         .panel-header i { font-size: 13px; }
-        
+
         .bg-blue { background-color: #1a51a1; }
         .bg-green { background-color: #179344; }
         .bg-orange { background-color: #ea851c; }
@@ -120,20 +119,20 @@
             display: flex;
             justify-content: space-between;
             align-items: baseline;
-            font-size: 11px; 
+            font-size: 11px;
             font-weight: bold;
             font-family: Arial, sans-serif;
         }
         .data-label { color: #334155; text-transform: uppercase; white-space: nowrap; }
-        .data-value { 
-            display: grid; 
-            grid-template-columns: 1fr 18px; 
-            gap: 4px; 
-            align-items: baseline; 
-            width: 72px; 
+        .data-value {
+            display: grid;
+            grid-template-columns: 1fr 18px;
+            gap: 4px;
+            align-items: baseline;
+            width: 72px;
         }
-        .data-num { font-size: 17px; color: #000; text-align: right; } 
-        .data-unit { font-size: 13px; color: #333; text-align: right; } 
+        .data-num { font-size: 17px; color: #000; text-align: right; }
+        .data-unit { font-size: 13px; color: #333; text-align: right; }
         .text-red { color: #e12b18; }
 
         /* SOC Panel */
@@ -141,7 +140,7 @@
             background-color: white;
             border: 1px solid #d0d7e0;
             border-radius: 6px;
-            height: 206px; 
+            height: 206px;
             display: flex;
             flex-direction: column;
             align-items: center;
@@ -156,16 +155,16 @@
             padding: 3px 12px;
             border-radius: 12px;
             position: absolute;
-            top: -5px; 
+            top: -5px;
             letter-spacing: 0.5px;
-            box-shadow: 0 2px 4px rgba(26,81,161,0.2); 
+            box-shadow: 0 2px 4px rgba(26,81,161,0.2);
             cursor: pointer; /* Thêm con trỏ để báo hiệu click được */
         }
         .soc-value {
-            font-size: 68px; 
+            font-size: 68px;
             font-weight: bold;
             color: #1a51a1;
-            margin-top: 28px; 
+            margin-top: 28px;
             line-height: 1;
             font-family: Arial, sans-serif;
             letter-spacing: -2px;
@@ -175,22 +174,22 @@
             width: 85%;
             height: 1px;
             background-color: #1a51a1;
-            margin: 8px 0 14px; 
+            margin: 8px 0 14px;
             transition: background-color 0.3s ease;
         }
-        
+
         /* Status Box & Action Button Base Styles */
         .status-box {
             border: 1.5px solid #94b5e2; /* Default Blue */
             color: #1a51a1;
-            font-size: 18px; 
+            font-size: 18px;
             font-weight: bold;
             width: 85%;
             height: 32px;
             display: flex;
             align-items: center;
             justify-content: center;
-            border-radius: 16px; 
+            border-radius: 16px;
             margin-bottom: 12px;
             letter-spacing: 0.5px;
             background-color: #f7fbff;
@@ -205,8 +204,8 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            border-radius: 15px; 
-            font-size: 16px; 
+            border-radius: 15px;
+            font-size: 16px;
             font-weight: bold;
             cursor: pointer;
             letter-spacing: 0.5px;
@@ -218,7 +217,7 @@
         }
 
         /* --- STATE MODIFIERS (Dynamic Colors) --- */
-        
+
         /* GREEN: CHARGING, COMPLETE */
         .status-green { border-color: #179344; color: #179344; background-color: #f0fdf4; }
         .btn-green { background-color: #179344; box-shadow: 0 3px 6px rgba(23,147,68,0.3); }
@@ -237,9 +236,9 @@
 
         /* Footer */
         .footer {
-            height: 28px; 
+            height: 28px;
             display: flex;
-            padding: 0 8px 4px 8px; 
+            padding: 0 8px 4px 8px;
             gap: 6px;
         }
         .footer-btn {
@@ -258,7 +257,7 @@
         }
         .footer-btn.active { color: #1a51a1; }
         .footer-btn i { font-size: 13px; }
-        
+
         .footer-time {
             flex: 1.2;
             background-color: white;
@@ -266,18 +265,18 @@
             border-radius: 4px;
             display: flex;
             align-items: center;
-            justify-content: center;
+            justify-content: flex-start; padding-left: 14px;
             gap: 6px;
             font-size: 12px;
             font-weight: bold;
             color: #000;
         }
         .footer-time i { font-size: 14px; }
-    
+
 /* SETTING CSS */
 
-        
-        
+
+
         .dashboard-container {
             width: 480px;
             height: 272px;
@@ -290,46 +289,46 @@
 
         /* --- TÁI SỬ DỤNG HEADER TRẮNG TỪ DASHBOARD --- */
         .header {
-            background-color: #ffffff; 
+            background-color: #ffffff;
             height: 28px;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 0 10px;
+            padding: 0 12px 0 10px;
             border-bottom: 2px solid #cbd5e1;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.08); 
+            box-shadow: 0 2px 5px rgba(0,0,0,0.08);
             position: relative;
             z-index: 10;
             flex-shrink: 0;
         }
-        
-        
-        
+
+
+
         .logo-battery {
-            color: #000000; 
-            font-size: 14px; 
+            color: #000000;
+            font-size: 14px;
             font-weight: bold;
             margin-left: 6px;
             letter-spacing: 0.5px;
             font-family: Arial, sans-serif;
         }
-        
+
 
         /* --- GIAO DIỆN SETTING CHÍNH --- */
         .setting-content {
             /* Kế thừa font Segoe UI từ body để các Tiêu đề mềm mại, sang trọng hơn */
             flex: 1;
-            padding: 6px 12px; 
+            padding: 6px 12px;
             display: flex;
             flex-direction: column;
-            gap: 6px; 
+            gap: 6px;
         }
 
         /* Box chung */
         .box-panel {
             background-color: white;
-            border: 1px solid #cbd5e1; 
-            border-radius: 8px; 
+            border: 1px solid #cbd5e1;
+            border-radius: 8px;
             box-shadow: 0 1px 3px rgba(0,0,0,0.03);
             display: flex;
         }
@@ -338,14 +337,14 @@
         .info-panel {
             flex-direction: column;
             align-items: center;
-            padding: 8px 12px; 
+            padding: 8px 12px;
         }
         .company-title {
             color: #1a51a1;
             font-size: 24px; /* Phóng to hẳn lên vì font Segoe UI thanh mảnh hơn */
             font-weight: 800; /* Độ đậm vừa phải, không bị thô như 900 */
             letter-spacing: 0.5px;
-            margin-bottom: 6px; 
+            margin-bottom: 6px;
             text-transform: uppercase;
         }
         .contact-row {
@@ -356,7 +355,7 @@
         .contact-box {
             flex: 1;
             border: 1px solid #cbd5e1;
-            border-radius: 12px; 
+            border-radius: 12px;
             padding: 4px 0;
             text-align: center;
             font-size: 11px;
@@ -368,50 +367,50 @@
         .specs-row {
             display: flex;
             gap: 10px;
-            flex: 1; 
+            flex: 1;
         }
         .spec-panel {
             flex-direction: column;
             flex: 1;
-            padding: 0; 
-            overflow: hidden; 
+            padding: 0;
+            overflow: hidden;
         }
         .spec-header {
-            background-color: #f4f7fb; 
+            background-color: #f4f7fb;
             color: #1a51a1;
             font-size: 17px; /* Tăng size để nổi bật làm tiêu đề cột */
             font-weight: 800;
             text-align: center;
             padding: 6px 0;
-            border-bottom: 1px solid #cbd5e1; 
+            border-bottom: 1px solid #cbd5e1;
             letter-spacing: 0.5px;
         }
         .spec-body {
             display: flex;
             flex-direction: column;
             flex: 1;
-            padding: 0; 
+            padding: 0;
         }
         .spec-item {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            flex: 1; 
-            padding: 0 12px; 
-            font-size: 11px; 
+            flex: 1;
+            padding: 0 12px;
+            font-size: 11px;
             font-family: Arial, sans-serif; /* Riêng Data vẫn giữ Arial kỹ thuật */
-            border-bottom: 1px solid #cbd5e1; 
+            border-bottom: 1px solid #cbd5e1;
         }
         .spec-item:last-child {
-            border-bottom: none; 
+            border-bottom: none;
         }
         .spec-label {
-            color: #666; 
+            color: #666;
             font-weight: bold;
             text-transform: uppercase;
         }
         .spec-value {
-            color: #000; 
+            color: #000;
             font-weight: bold;
         }
 
@@ -437,7 +436,7 @@
             width: 90px;
             height: 26px;
             border: 1px solid #cbd5e1;
-            border-radius: 13px; 
+            border-radius: 13px;
             text-align: center;
             font-size: 24px; /* Dấu chấm to và rõ ràng hơn */
             line-height: 24px; /* Căn giữa dọc dấu chấm */
@@ -451,42 +450,64 @@
             background-color: #1a51a1;
             color: white;
             border: none;
-            border-radius: 13px; 
-            width: 75px; 
+            border-radius: 13px;
+            width: 75px;
             height: 26px;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-family: Arial, sans-serif; 
-            font-size: 14px; 
+            font-family: Arial, sans-serif;
+            font-size: 14px;
             font-weight: bold;
             cursor: pointer;
         }
         .btn-login:active { transform: scale(0.95); }
-        
+
         .btn-back {
             background-color: white;
             color: #333;
             border: 1px solid #cbd5e1;
-            border-radius: 13px; 
-            width: 65px; 
+            border-radius: 13px;
+            width: 65px;
             height: 26px;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-family: Arial, sans-serif; 
-            font-size: 14px; 
+            font-family: Arial, sans-serif;
+            font-size: 14px;
             font-weight: bold;
             cursor: pointer;
         }
         .btn-back:hover { background-color: #f1f5f9; }
         .btn-back:active { transform: scale(0.95); }
 
-    
-/* ALARM CSS */
 
-        
-        
+
+
+        /* --- LOGIN & PRE-CHARGE ADDITIONS --- */
+        .num-btn {
+            background: #fff;
+            border: 1px solid #d0d7e0;
+            border-radius: 4px;
+            height: 28px;
+            line-height: 1;
+            font-size: 15px;
+            font-weight: bold;
+            color: #0b1c3f;
+            cursor: pointer;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.02);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding-top: 0px;
+            padding-bottom: 2px;
+        }
+        .num-btn:active { background: #f0f3f6; }
+        /* ALARM CSS */
+
+
+
+
         .dashboard-container {
             width: 480px;
             height: 272px;
@@ -499,29 +520,29 @@
 
         /* --- TÁI SỬ DỤNG HEADER TRẮNG ĐỒNG BỘ --- */
         .header {
-            background-color: #ffffff; 
+            background-color: #ffffff;
             height: 28px;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 0 10px;
+            padding: 0 12px 0 10px;
             border-bottom: 2px solid #cbd5e1;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.08); 
+            box-shadow: 0 2px 5px rgba(0,0,0,0.08);
             position: relative;
             z-index: 10;
         }
-        
-        
-        
+
+
+
         .logo-battery {
-            color: #000000; 
-            font-size: 14px; 
+            color: #000000;
+            font-size: 14px;
             font-weight: bold;
             margin-left: 6px;
             letter-spacing: 0.5px;
             font-family: Arial, sans-serif;
         }
-        
+
 
         /* --- GIAO DIỆN ALARMS --- */
         .alarm-content {
@@ -538,7 +559,7 @@
             align-items: center;
             justify-content: center; /* Dùng flexbox căn giữa tiêu đề tự nhiên nhất */
             height: 28px;
-            position: relative; 
+            position: relative;
         }
         .btn-back-square {
             position: absolute; /* Đưa nút back ra khỏi luồng căn giữa */
@@ -547,7 +568,7 @@
             height: 28px;
             background-color: white;
             border: 1px solid #cbd5e1;
-            border-radius: 6px; 
+            border-radius: 6px;
             display: flex;
             justify-content: center;
             align-items: center;
@@ -556,7 +577,7 @@
             font-weight: bold; /* Làm icon đậm đà hơn */
             cursor: pointer;
             box-shadow: 0 1px 3px rgba(0,0,0,0.03);
-            text-decoration: none; 
+            text-decoration: none;
             transition: background-color 0.1s;
         }
         .btn-back-square:active { transform: scale(0.95); }
@@ -564,7 +585,7 @@
             color: #1a51a1;
             /* Đã xóa dòng ép font Arial để kế thừa font Segoe UI của hệ thống */
             font-size: 20px; /* Tăng từ 17px lên 20px để ra dáng Tiêu đề trang */
-            font-weight: 800; 
+            font-weight: 800;
             letter-spacing: 0.5px;
             text-transform: uppercase;
         }
@@ -575,7 +596,7 @@
             gap: 10px;
             flex: 1; /* Chiếm hết chiều cao còn lại */
         }
-        
+
         /* Bảng log */
         .table-container {
             flex: 1;
@@ -590,22 +611,22 @@
         .table-row {
             display: flex;
             align-items: center;
-            flex: 1; 
+            flex: 1;
             border-bottom: 1px solid #cbd5e1;
             padding: 0 14px; /* Tăng padding ngang để rộng rãi hơn */
-            font-family: Arial, sans-serif; 
+            font-family: Arial, sans-serif;
             font-size: 11px;
             font-weight: bold;
             color: #000; /* Mặc định chữ đen cho toàn bộ data */
         }
         .table-row:last-child { border-bottom: none; }
-        
+
         .table-header {
             background-color: #f4f7fb;
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             font-weight: 900;
             color: #1a51a1; /* Đảm bảo cả hàng tiêu đề màu xanh đồng bộ */
-            font-size: 11px; 
+            font-size: 11px;
             text-transform: uppercase;
         }
 
@@ -614,16 +635,16 @@
         .table-row:not(.table-header) .col-code {
             color: #444;
         }
-        
-        /* Độ rộng các cột (Đã bỏ cột Level) */
-        .col-time { width: 85px; color: #444; }
-        .col-code { width: 65px; }
+
+        /* Độ rộng các cột (Đã thu hẹp để nhường chỗ cho Desc) */
+        .col-time { width: 60px; color: #444; }
+        .col-code { width: 45px; }
         .col-desc { flex: 1; }
 
         /* Màu sắc báo động */
-        .level-fault { color: #dc2626 !important; } 
-        .level-warn { color: #ea851c !important; } 
-        .level-info { color: #1a51a1 !important; } 
+        .level-fault { color: #dc2626 !important; }
+        .level-warn { color: #ea851c !important; }
+        .level-info { color: #1a51a1 !important; }
 
         /* Nút cuộn dọc */
         .scroll-container {
@@ -633,7 +654,7 @@
             gap: 6px; /* Giảm gap */
         }
         .btn-scroll {
-            flex: 1; 
+            flex: 1;
             background-color: white;
             border: 1px solid #cbd5e1;
             border-radius: 6px;
@@ -647,7 +668,7 @@
         }
         .btn-scroll:active { background-color: #f1f5f9; transform: scale(0.95); }
 
-    
+
         /* SPA specific styles */
         .screen-view {
             display: none;
@@ -667,11 +688,11 @@
             <span class="logo-battery">BATTERY</span>
         </div>
         <div class="device-id">
-            CODE: <span class="dwin-hide">0000</span>
+            CODE: <span class="dwin-hide">E00001</span>
         </div>
     </div>
 
-        
+
     <!-- DASHBOARD SCREEN -->
     <div id="screen-dashboard" class="screen-view" style="display: flex;">
 <div class="main-content">
@@ -705,7 +726,7 @@
                     </div>
                 </div>
             </div>
-            
+
             <div class="panel">
                 <div class="panel-header bg-green">
                     <i class="fa-solid fa-battery-half"></i> BATTERY
@@ -721,12 +742,12 @@
                     <div class="data-row">
                         <span class="data-label">CELL</span>
                         <div class="data-value">
-                            <span class="data-num">3315</span>
-                            <span class="data-unit">mV</span>
+                            <span class="data-num">3.25</span>
+                            <span class="data-unit">V</span>
                         </div>
                     </div>
                     <div class="data-row">
-                        <span class="data-label">CAPACITY</span>
+                        <span class="data-label">CAPA</span>
                         <div class="data-value">
                             <span class="data-num">0.0</span>
                             <span class="data-unit">Ah</span>
@@ -779,7 +800,7 @@
                     </div>
                 </div>
             </div>
-            
+
             <div class="panel">
                 <div class="panel-header bg-orange">
                     <i class="fa-solid fa-temperature-half"></i> TEMP
@@ -828,7 +849,7 @@
     </div>
 
     </div>
-    
+
     <!-- SETTING SCREEN -->
     <div id="screen-setting" class="screen-view">
 <div class="setting-content">
@@ -860,7 +881,7 @@
                     </div>
                 </div>
             </div>
-            
+
             <div class="box-panel spec-panel">
                 <div class="spec-header">SYSTEM</div>
                 <div class="spec-body">
@@ -884,7 +905,7 @@
         <div class="box-panel admin-panel">
             <div class="admin-label">ADMIN ACCESS</div>
             <div class="admin-actions">
-                <button class="btn-login" onclick="alert('Login form clicked!')">LOGIN</button>
+                <button class="btn-login" onclick="switchScreen('login')">LOGIN</button>
                 <!-- Nút Back link về dashboard -->
                 <button class="btn-back" onclick="switchScreen('dashboard')">BACK</button>
             </div>
@@ -892,11 +913,96 @@
     </div>
 
     </div>
-    
+
+
+
+    <!-- LOGIN SCREEN -->
+    <div id="screen-login" class="screen-view" style="display: none;">
+        <div style="flex: 1; display: flex; align-items: center; justify-content: center; position: relative;">
+            <div class="alarm-sub-header" style="position: absolute; top: 6px; left: 12px; width: auto; justify-content: flex-start;">
+                <a href="javascript:void(0)" onclick="switchScreen('setting')" class="btn-back-square">
+                    <i class="fa-solid fa-angle-left"></i>
+                </a>
+            </div>
+            <div class="box-panel" style="width: 240px; padding: 8px 12px 10px 12px; display: flex; flex-direction: column; align-items: center;">
+                <div class="page-title" style="font-size: 16px; margin-bottom: 6px; color: #1a51a1; font-weight: 800;">ADMIN LOGIN</div>
+                <div style="background: #f4f7fb; border: 1px solid #d0d7e0; border-radius: 4px; height: 28px; width: 100%; display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: bold; letter-spacing: 6px; color: #334155; margin-bottom: 7px;">
+                    <span id="pass-stars">****</span>
+                </div>
+                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; width: 100%;">
+                    <div class="num-btn" style="height: 33px; font-size: 17px; padding-bottom: 2px; border-radius: 4px;" onclick="pressPin('1')">1</div>
+                    <div class="num-btn" style="height: 33px; font-size: 17px; padding-bottom: 2px; border-radius: 4px;" onclick="pressPin('2')">2</div>
+                    <div class="num-btn" style="height: 33px; font-size: 17px; padding-bottom: 2px; border-radius: 4px;" onclick="pressPin('3')">3</div>
+                    <div class="num-btn" style="height: 33px; font-size: 17px; padding-bottom: 2px; border-radius: 4px;" onclick="pressPin('4')">4</div>
+                    <div class="num-btn" style="height: 33px; font-size: 17px; padding-bottom: 2px; border-radius: 4px;" onclick="pressPin('5')">5</div>
+                    <div class="num-btn" style="height: 33px; font-size: 17px; padding-bottom: 2px; border-radius: 4px;" onclick="pressPin('6')">6</div>
+                    <div class="num-btn" style="height: 33px; font-size: 17px; padding-bottom: 2px; border-radius: 4px;" onclick="pressPin('7')">7</div>
+                    <div class="num-btn" style="height: 33px; font-size: 17px; padding-bottom: 2px; border-radius: 4px;" onclick="pressPin('8')">8</div>
+                    <div class="num-btn" style="height: 33px; font-size: 17px; padding-bottom: 2px; border-radius: 4px;" onclick="pressPin('9')">9</div>
+                    <div class="num-btn" style="height: 33px; background: #e12b18; color: white; border: 1px solid #e12b18; font-size: 12px; font-weight: 800; padding-bottom: 2px; border-radius: 4px;" onclick="pressPin('DEL')">DEL</div>
+                    <div class="num-btn" style="height: 33px; font-size: 17px; padding-bottom: 2px; border-radius: 4px;" onclick="pressPin('0')">0</div>
+                    <div class="num-btn" style="height: 33px; background: #1a51a1; color: white; border: 1px solid #1a51a1; font-size: 12px; font-weight: 800; padding-bottom: 2px; border-radius: 4px;" onclick="pressPin('OK')">OK</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- PRE-CHARGE SCREEN -->
+    <div id="screen-precharge" class="screen-view" style="display: none;">
+        <div style="flex: 1; padding: 6px 12px; display: flex; flex-direction: column; gap: 6px;">
+            <div class="alarm-sub-header">
+                <a href="javascript:void(0)" onclick="switchScreen('setting')" class="btn-back-square">
+                    <i class="fa-solid fa-angle-left"></i>
+                </a>
+                <div class="page-title">BATTERY PRE-CHARGE</div>
+            </div>
+
+            <div style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;">
+                <!-- Khung: State & Dòng/Áp -->
+                <div class="box-panel" style="width: 280px; padding: 12px 16px; display: flex; flex-direction: column; align-items: center;">
+                    <!-- 2. State -->
+                    <div class="status-box status-green" id="precharge-status" style="width: 100%; height: 28px; margin-bottom: 12px; font-size: 13px; font-weight: bold; letter-spacing: 1px; display: flex; align-items: center; justify-content: center; gap: 6px;">
+                        <i id="precharge-status-icon" class="fa-solid fa-circle-check"></i>
+                        <span id="precharge-status-text">READY</span>
+                    </div>
+
+                    <div id="precharge-error-row" class="data-row" style="display: none; color: #dc2626;">
+                        <span class="data-label">ERROR CODE</span>
+                        <span class="data-num" id="precharge-error-code">----</span>
+                    </div>
+
+                    <!-- 3. Dòng và Áp -->
+                    <div style="width: 100%; display: flex; flex-direction: column; gap: 8px;">
+                        <div class="data-row">
+                            <span class="data-label">VOLTAGE</span>
+                            <div class="data-value">
+                                <span class="data-num" id="precharge-volt" style="font-size: 20px; display: inline-block; width: 60px; text-align: right;">2.40</span>
+                                <span class="data-unit" style="font-size: 14px; display: inline-block; width: 16px; text-align: left;">V</span>
+                            </div>
+                        </div>
+                        <div class="data-row">
+                            <span class="data-label">CURRENT</span>
+                            <div class="data-value">
+                                <span class="data-num" id="precharge-curr" style="font-size: 20px; display: inline-block; width: 60px; text-align: right;">0.00</span>
+                                <span class="data-unit" style="font-size: 14px; display: inline-block; width: 16px; text-align: left;">A</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 1. Nút bấm duy nhất tại 1 vị trí cố định -->
+                <button class="action-btn btn-green" id="precharge-action-btn" style="width: 280px; height: 34px; border-radius: 6px; font-size: 13px; font-weight: bold; letter-spacing: 0.5px;" onclick="handlePrechargeAction()">
+                    START
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- ALARM SCREEN -->
+
     <div id="screen-alarm" class="screen-view">
 <div class="alarm-content">
-            
+
             <div class="alarm-sub-header">
                 <!-- Nút BACK gắn link về setting -->
                 <a href="javascript:void(0)" onclick="switchScreen('dashboard')" class="btn-back-square">
@@ -906,7 +1012,7 @@
             </div>
 
             <div class="alarm-body">
-                
+
                 <!-- Bảng danh sách cảnh báo -->
                 <div class="table-container">
                     <div class="table-row table-header">
@@ -914,13 +1020,13 @@
                         <div class="col-code">CODE</div>
                         <div class="col-desc">DESCRIPTION</div>
                     </div>
-                    
+
                     <div class="table-row">
                         <div class="col-time">10:30:21</div>
                         <div class="col-code level-fault">E006</div>
                         <div class="col-desc level-fault">CELL 6 OVER VOLTAGE</div>
                     </div>
-                    
+
                     <div class="table-row">
                         <div class="col-time">10:28:45</div>
                         <div class="col-code level-warn">W002</div>
@@ -942,10 +1048,11 @@
 
                 <!-- Thanh cuộn giả lập cảm ứng -->
                 <div class="scroll-container">
-                    <div class="btn-scroll">
+                    <div class="btn-scroll" onclick="changeAlarmPage(-1)">
                         <i class="fa-solid fa-caret-up"></i>
                     </div>
-                    <div class="btn-scroll">
+                    <div class="page-indicator" style="height: 24px; display: flex; justify-content: center; align-items: center; font-size: 11px; font-weight: 900; color: #1a51a1; border: 1px solid #cbd5e1; background: white; border-radius: 4px;"><span id="alarm-page-num">1/3</span></div>
+                        <div class="btn-scroll" onclick="changeAlarmPage(1)">
                         <i class="fa-solid fa-caret-down"></i>
                     </div>
                 </div>
@@ -954,7 +1061,7 @@
 
         </div>
 
-    
+
     </div>
 </div>
 
@@ -965,7 +1072,7 @@
     const actionBtn = document.getElementById('sys-action');
     const socText = document.getElementById('soc-text');
     const socDiv = document.getElementById('soc-div');
-    
+
     const STATE = {
         READY: { name: "READY", btnText: "START", statusClass: "", btnClass: "", color: "#1a51a1" },
         STARTING: { name: "STARTING", btnText: "STOP", statusClass: "status-orange", btnClass: "btn-red", color: "#ea851c" },
@@ -983,18 +1090,18 @@
     function applyState(stateKey) {
         currentState = stateKey;
         const s = STATE[stateKey];
-        
+
         statusBox.innerText = s.name;
         actionBtn.innerText = s.btnText;
         statusBox.className = "status-box " + s.statusClass;
         actionBtn.className = "action-btn " + s.btnClass;
         socText.style.color = s.color;
         socDiv.style.backgroundColor = s.color;
-        
+
         // Reset timers
         clearTimeout(simTimer);
         clearInterval(chargeTimer);
-        
+
         // Logic mô phỏng tự động
         if (stateKey === "STARTING") {
             // Sau 2s tự động chuyển sang CHARGING
@@ -1005,7 +1112,7 @@
                 socValue += 1;
                 socText.innerText = socValue + "%";
                 if (socValue >= 100) applyState("COMPLETE");
-            }, 500); 
+            }, 500);
         } else if (stateKey === "COMPLETE") {
             socValue = 100;
             socText.innerText = "100%";
@@ -1033,7 +1140,7 @@
         if (currentState === "ERROR") applyState("OFFLINE");
         else applyState("ERROR");
     });
-    
+
     // Khởi tạo ban đầu
     applyState("READY");
 
@@ -1052,10 +1159,14 @@
     // --- SINGLE PAGE APPLICATION LOGIC ---
     function switchScreen(screenId) {
         // Hide all screens
+
         document.getElementById('screen-dashboard').style.display = 'none';
         document.getElementById('screen-setting').style.display = 'none';
         document.getElementById('screen-alarm').style.display = 'none';
-        
+        if(document.getElementById('screen-login')) document.getElementById('screen-login').style.display = 'none';
+        if(document.getElementById('screen-precharge')) document.getElementById('screen-precharge').style.display = 'none';
+
+
         // Show target screen
         const target = document.getElementById('screen-' + screenId);
         if (target) {
@@ -1066,16 +1177,132 @@
         const fHome = document.getElementById('f-home');
         const fSet = document.getElementById('f-set');
         const fAlarm = document.getElementById('f-alarm');
-        
+
         if (fHome) fHome.classList.remove('active');
         if (fSet) fSet.classList.remove('active');
         if (fAlarm) fAlarm.classList.remove('active');
-        
+
         if (screenId === 'dashboard' && fHome) fHome.classList.add('active');
         if (screenId === 'setting' && fSet) fSet.classList.add('active');
         if (screenId === 'alarm' && fAlarm) fAlarm.classList.add('active');
     }
 
+    // --- ALARM PAGINATION LOGIC ---
+    let currentAlarmPage = 1;
+    function changeAlarmPage(dir) {
+        currentAlarmPage += dir;
+        if (currentAlarmPage < 1) currentAlarmPage = 3;
+        if (currentAlarmPage > 3) currentAlarmPage = 1;
+        const pageSpan = document.getElementById('alarm-page-num');
+        if (pageSpan) pageSpan.innerText = currentAlarmPage + '/3';
+    }
+
+    // --- PRECHARGE SIMULATION SCRIPT ---
+    let prechargeState = "READY";
+    let prechargeTimer = null;
+    let prechargeVoltVal = 2.40;
+    let prechargeErrorCode = "E021"; // Representative existing system alarm code.
+
+    const PRE_STATES = {
+        READY: { text: "READY", icon: "fa-solid fa-circle-check", statusClass: "status-green", btnText: "START", btnClass: "btn-green", volt: "2.40", curr: "0.00" },
+        CHARGING: { text: "PRE-CHARGING", icon: "fa-solid fa-bolt", statusClass: "status-orange", btnText: "STOP", btnClass: "btn-red", curr: "1.20" },
+        ERROR: { text: "ERROR", icon: "fa-solid fa-triangle-exclamation", statusClass: "status-red", btnText: "RESET", btnClass: "btn-orange", curr: "0.00" }
+    };
+
+    function applyPrechargeState(stateKey) {
+        prechargeState = stateKey;
+        const s = PRE_STATES[stateKey];
+        const box = document.getElementById('precharge-status');
+        const text = document.getElementById('precharge-status-text');
+        const icon = document.getElementById('precharge-status-icon');
+        const btn = document.getElementById('precharge-action-btn');
+        const voltEl = document.getElementById('precharge-volt');
+        const currEl = document.getElementById('precharge-curr');
+        const errorRow = document.getElementById('precharge-error-row');
+        const errorCode = document.getElementById('precharge-error-code');
+
+        clearInterval(prechargeTimer);
+
+        if (box) {
+            box.className = "status-box " + s.statusClass;
+            box.style.width = "100%";
+            box.style.height = "28px";
+            box.style.marginBottom = "12px";
+            box.style.fontSize = "13px";
+            box.style.fontWeight = "bold";
+            box.style.letterSpacing = "1px";
+            box.style.display = "flex";
+            box.style.alignItems = "center";
+            box.style.justifyContent = "center";
+            box.style.gap = "6px";
+        }
+        if (icon) icon.className = s.icon;
+        if (text) text.innerText = s.text;
+        if (btn) {
+            btn.className = "action-btn " + s.btnClass;
+            btn.style.width = "280px";
+            btn.style.height = "34px";
+            btn.style.borderRadius = "6px";
+            btn.style.fontSize = "13px";
+            btn.style.fontWeight = "bold";
+            btn.style.letterSpacing = "0.5px";
+            btn.innerText = s.btnText;
+        }
+
+        if (errorRow) errorRow.style.display = stateKey === "ERROR" ? "flex" : "none";
+        if (errorCode && stateKey === "ERROR") errorCode.innerText = prechargeErrorCode;
+
+        if (stateKey === "READY") {
+            prechargeVoltVal = 2.40;
+            if (voltEl) voltEl.innerText = "2.40";
+            if (currEl) currEl.innerText = "0.00";
+        } else if (stateKey === "CHARGING") {
+            if (currEl) currEl.innerText = s.curr;
+            prechargeTimer = setInterval(() => {
+                prechargeVoltVal += 0.05;
+                if (voltEl) voltEl.innerText = prechargeVoltVal.toFixed(2);
+                if (prechargeVoltVal >= 3.00) {
+                    clearInterval(prechargeTimer);
+                    // Kích pin thành công: Tự động reset và chuyển thẳng sang màn HOME để tiếp tục chu trình sạc chính!
+                    applyPrechargeState("READY");
+                    switchScreen("dashboard");
+                    if (typeof applyState === "function") {
+                        applyState("CHARGING");
+                    }
+                }
+            }, 350);
+        } else if (stateKey === "ERROR") {
+            if (currEl) currEl.innerText = "0.00";
+        }
+    }
+
+    function handlePrechargeAction() {
+        if (prechargeState === "READY") {
+            applyPrechargeState("CHARGING");
+        } else if (prechargeState === "CHARGING") {
+            applyPrechargeState("READY");
+        } else if (prechargeState === "ERROR") {
+            applyPrechargeState("READY");
+        }
+    }
+
+    let enteredPin = "";
+    function pressPin(val) {
+        const starEl = document.getElementById('pass-stars');
+        if (val === 'DEL') {
+            enteredPin = enteredPin.slice(0, -1);
+        } else if (val === 'OK') {
+            enteredPin = "";
+            switchScreen('precharge');
+        } else {
+            if (enteredPin.length < 6) {
+                enteredPin += val;
+            }
+        }
+        if (starEl) {
+            starEl.innerText = enteredPin.length > 0 ? "*".repeat(enteredPin.length) : "****";
+        }
+    }
 </script>
 </body>
 </html>

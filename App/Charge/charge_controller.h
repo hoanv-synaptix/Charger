@@ -21,6 +21,7 @@ typedef enum {
     CHARGE_CTRL_STATE_RUNNING,
     CHARGE_CTRL_STATE_STOPPING,
     CHARGE_CTRL_STATE_FAULT,
+    CHARGE_CTRL_STATE_PRECHARGE,
 } ChargeCtrlState_t;
 
 typedef enum {
@@ -63,7 +64,14 @@ typedef enum {
     CHARGE_STOP_VOLTAGE_REACHED,
     CHARGE_STOP_CELL_VOLTAGE_REACHED,
     CHARGE_STOP_SOC_REACHED,
+    CHARGE_STOP_PRECHARGE_COMPLETE,
 } ChargeStopReason_t;
+
+#define PRECHARGE_VOLTAGE_TOLERANCE_V  1.0f
+#define PRECHARGE_HOLD_MS              60000U
+/* Intentionally zero: pre-charge waits for an exhausted BMS to wake until
+ * the operator stops it or another protection path stops it. */
+#define PRECHARGE_BMS_WAKE_TIMEOUT_MS  0U
 
 /* ============== Fault Flags ============== */
 
@@ -150,6 +158,14 @@ bool ChargeController_CheckPreconditions(uint32_t *fault_flags_out);
  * @return true if start request accepted, false if cannot start
  */
 bool ChargeController_Start(ChargeCtrlOwner_t owner, bool manual_mode, uint32_t now_tick);
+
+/** Start the BMS wake/recovery pre-charge flow using config Vlow/Ilow. */
+bool ChargeController_StartPrecharge(ChargeCtrlOwner_t owner, uint32_t now_tick);
+
+/** Request the normal controlled stop path for an active pre-charge. */
+void ChargeController_StopPrecharge(uint32_t now_tick);
+/** Clear a pre-charge fault only after the controller verifies it is safe. */
+bool ChargeController_ResetFaultIfSafe(uint32_t now_tick);
 void ChargeController_SetManualTarget(float voltage, float current);
 bool ChargeController_IsManualMode(void);
 
@@ -202,4 +218,3 @@ void ChargeController_GetView(ChargeCtrlView_t *view);
 #endif
 
 #endif /* CHARGE_CONTROLLER_H */
-

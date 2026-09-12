@@ -100,6 +100,12 @@ static struct {
     bool cell_full_latched;
     bool soc_full_latched;
 
+    /* Forward transition debounce timers for cell voltage and SOC (Delta t). */
+    ChargeStageBand_t cell_candidate_band;
+    uint32_t cell_candidate_start_tick;
+    ChargeStageBand_t soc_candidate_band;
+    uint32_t soc_candidate_start_tick;
+
     /* Module count tracking */
     uint8_t source_module_count;
     uint8_t actual_module_count;
@@ -126,6 +132,10 @@ static struct {
 
     /* Setpoint ramp: last tick a ramp step was taken (see apply_charge_targets). */
     uint32_t ramp_tick;
+
+    /* Pre-charge recovery hold state */
+    bool precharge_hold_active;
+    uint32_t precharge_hold_start_tick;
 
     /* Jack/connector temperature, in degrees C, supplied by the composition
      * root (App_Loop) once per control cycle via ChargeController_SetJackTempC().
@@ -183,20 +193,23 @@ static void update_bms_charge_allow(void);
 static void transition_to(ChargeCtrlState_t new_state, uint32_t now);
 static uint8_t get_active_module_count(void);
 static bool check_preconditions_set_fault(uint32_t now);
+static uint32_t check_precharge_faults(void);
 static void apply_charge_targets(uint32_t now_tick);
 static void stop_charging(void);
 
 /* Stage evaluation */
-static ChargeStageEval_t eval_cell_stage(const ChargeCycleConfig_t *cfg, const BMS_View_t *bms);
+static ChargeStageEval_t eval_cell_stage(const ChargeCycleConfig_t *cfg, const BMS_View_t *bms, uint32_t now_tick);
 static ChargeStageEval_t eval_temp_stage(const ChargeCycleConfig_t *cfg, const BMS_View_t *bms);
-static ChargeStageEval_t eval_soc_stage(const ChargeCycleConfig_t *cfg, const BMS_View_t *bms);
-static bool compute_stage_limits(const ChargeCycleConfig_t *cfg, const BMS_View_t *bms,
+static ChargeStageEval_t eval_soc_stage(const ChargeCycleConfig_t *cfg, const BMS_View_t *bms, uint32_t now_tick);
+static bool compute_stage_limits(const ChargeCycleConfig_t *cfg, const BMS_View_t *bms, uint32_t now_tick,
                                  float *limit_c_out, uint8_t *inhibit_out,
                                  uint8_t *limit_source_out, uint8_t *stage_band_out);
 
 /* Mode handlers */
 static void run_standalone_mode(uint32_t now_tick);
 static void run_bms_controlled_mode(uint32_t now_tick);
+static void run_precharge_mode(uint32_t now_tick);
+static bool precharge_modules_at_target(const ChargeCycleConfig_t *cfg, uint32_t now_tick);
 static bool check_standalone_voltage_reached(uint32_t now_tick);
 
 /* Hard protection handlers */
@@ -222,7 +235,8 @@ static void set_fault(uint32_t flags, uint32_t now) {
                         CHARGE_CTRL_FAULT_NO_DRIVER)) {
         g_ctrl.stop_reason = CHARGE_STOP_PRECONDITION;
     }
-    if (g_ctrl.state == CHARGE_CTRL_STATE_RUNNING) {
+    if (g_ctrl.state == CHARGE_CTRL_STATE_RUNNING ||
+        g_ctrl.state == CHARGE_CTRL_STATE_PRECHARGE) {
         transition_to(CHARGE_CTRL_STATE_FAULT, now);
     }
 }
@@ -365,12 +379,14 @@ static float compute_voltage_ref(const ChargeCycleConfig_t *cfg) {
  *        nothing to wait for.
  */
 static void update_relay_decision(uint32_t now_tick) {
-    bool controller_wants_relay = (g_ctrl.state == CHARGE_CTRL_STATE_RUNNING);
+    bool controller_wants_relay = (g_ctrl.state == CHARGE_CTRL_STATE_RUNNING ||
+                                   g_ctrl.state == CHARGE_CTRL_STATE_PRECHARGE);
 
     ChargeCycleConfig_t cfg;
     ChargeCycleConfig_Get(&cfg);
     bool bms_safe = true;
-    if (controller_wants_relay && cfg.charge_source_mode == CHARGE_SOURCE_BMS_CONTROLLED) {
+    if (controller_wants_relay && g_ctrl.state != CHARGE_CTRL_STATE_PRECHARGE &&
+        cfg.charge_source_mode == CHARGE_SOURCE_BMS_CONTROLLED) {
         bms_safe = BMS_ShouldCloseChargeRelay();
     }
 
@@ -447,7 +463,8 @@ static void update_relay_decision(uint32_t now_tick) {
         return;
     }
 
-    float voltage_ref = compute_voltage_ref(&cfg);
+    float voltage_ref = (g_ctrl.state == CHARGE_CTRL_STATE_PRECHARGE)
+        ? cfg.vlow_v : compute_voltage_ref(&cfg);
 
     float min_voltage = -1.0f;
     CHG_LIB_ModuleView_t view;
@@ -495,7 +512,8 @@ static void update_relay_decision(uint32_t now_tick) {
  *        existing periodic cadence -- same reasoning as BUG-05's fix to
  *        apply_charge_targets(). */
 static void update_bms_charge_allow(void) {
-    bool want_allow = (g_ctrl.state == CHARGE_CTRL_STATE_RUNNING);
+    bool want_allow = (g_ctrl.state == CHARGE_CTRL_STATE_RUNNING ||
+                       g_ctrl.state == CHARGE_CTRL_STATE_PRECHARGE);
     if (want_allow != g_ctrl.bms_charge_allow_sent) {
         g_ctrl.bms_charge_allow_sent = want_allow;
         BMS_ChargeCtrl_t ctrl = { .allow_charge = want_allow, .allow_discharge = false };
@@ -546,6 +564,29 @@ static uint32_t check_preconditions_faults(void) {
             LOG("ChargeController_Check: BMS offline\r\n");
             faults |= CHARGE_CTRL_FAULT_BMS_OFFLINE;
         }
+    }
+
+    return faults;
+}
+
+/* Keep the pre-charge validation in one place so StartPrecharge() and the
+ * operator's fault reset cannot disagree about whether the low-voltage
+ * recovery setup is usable. BMS offline is deliberately excluded because
+ * waking an exhausted BMS is the purpose of this mode. */
+static uint32_t check_precharge_faults(void) {
+    ChargeCycleConfig_t cfg;
+    uint32_t faults = check_preconditions_faults() & ~CHARGE_CTRL_FAULT_BMS_OFFLINE;
+    uint8_t actual_count;
+    float current_per_module;
+
+    ChargeCycleConfig_Get(&cfg);
+    actual_count = get_active_module_count();
+    current_per_module = (actual_count > 0U)
+        ? (cfg.ilow_c * cfg.battery_capacity_ah) / (float)actual_count : 0.0f;
+
+    if (cfg.vlow_v < cfg.module_u_min_v || cfg.vlow_v > cfg.module_u_max_v ||
+        current_per_module < cfg.module_i_min_a || current_per_module > cfg.module_i_max_a) {
+        faults |= CHARGE_CTRL_FAULT_INVALID_CONFIG;
     }
 
     return faults;
@@ -668,6 +709,12 @@ static void stop_charging(void) {
     g_ctrl.protect_jack_temp_trip_timer_tick = 0;
     g_ctrl.ramp_tick = 0;
     g_ctrl.last_running = 0;
+    g_ctrl.precharge_hold_active = false;
+    g_ctrl.precharge_hold_start_tick = 0;
+    g_ctrl.cell_candidate_start_tick = 0;
+    g_ctrl.cell_candidate_band = CHARGE_STAGE_BAND_NONE;
+    g_ctrl.soc_candidate_start_tick = 0;
+    g_ctrl.soc_candidate_band = CHARGE_STAGE_BAND_NONE;
 }
 
 /**
@@ -846,7 +893,7 @@ static float get_lower_threshold_for_band(const ChargeCycleConfig_t *cfg, Charge
  * @brief Shared 5-threshold band lookup, identical across all 3 stage
  *        sources (cell voltage / temperature / SOC) -- see the callers
  *        below. Only this ladder is truly identical between the three;
- *        what happens next (monotonic latch for cell/SOC vs. symmetric
+ *        what happens next (monotonic latch for cell/SOC vs. asymmetric
  *        hysteresis for temp) genuinely differs per source and is kept
  *        inline in each eval_*_stage(), not forced into a shared helper.
  */
@@ -923,7 +970,7 @@ static void apply_band_current_limit(ChargeStageBand_t band, float curr1, float 
     }
 }
 
-static ChargeStageEval_t eval_cell_stage(const ChargeCycleConfig_t *cfg, const BMS_View_t *bms) {
+static ChargeStageEval_t eval_cell_stage(const ChargeCycleConfig_t *cfg, const BMS_View_t *bms, uint32_t now_tick) {
     ChargeStageEval_t eval = {0};
 
     if (!cfg->cell_volt_enabled) {
@@ -935,31 +982,65 @@ static ChargeStageEval_t eval_cell_stage(const ChargeCycleConfig_t *cfg, const B
     eval.source = CHARGE_LIMIT_SOURCE_CELL_VOLTAGE;
     float cell_volt_v = (float)bms->max_cell_volt / 1000.0f;  /* mV -> V */
 
-    ChargeStageBand_t new_band = band_from_thresholds(
+    ChargeStageBand_t measured_band = band_from_thresholds(
         cell_volt_v, cfg->cell_volt_1_v, cfg->cell_volt_2_v,
         cfg->cell_volt_3_v, cfg->cell_volt_4_v, cfg->cell_volt_5_v);
 
-    /* Cell voltage is monotonic within one user-started cycle.  A drop
-     * below a previously reached band must never restore a higher current.
-     * Below-min remains a live block, but does not erase progress. */
-    if (new_band == CHARGE_STAGE_BAND_ABOVE_MAX) {
-        g_ctrl.cell_full_latched = true;
-        g_ctrl.max_cell_band = CHARGE_STAGE_BAND_ABOVE_MAX;
-    } else if (new_band == CHARGE_STAGE_BAND_BELOW_MIN) {
-        /* Keep the high-watermark unchanged while blocking current. */
-    } else if (new_band > g_ctrl.max_cell_band) {
-        g_ctrl.max_cell_band = new_band;
+    g_ctrl.last_cell_band = measured_band;
+
+    /* Cell voltage is below min: immediate block without erasing progress */
+    if (measured_band == CHARGE_STAGE_BAND_BELOW_MIN) {
+        g_ctrl.cell_candidate_start_tick = 0U;
+        g_ctrl.cell_candidate_band = CHARGE_STAGE_BAND_NONE;
+        apply_band_current_limit(CHARGE_STAGE_BAND_BELOW_MIN, cfg->cell_curr_1_c, cfg->cell_curr_2_c,
+                                 cfg->cell_curr_3_c, cfg->cell_curr_4_c, &eval);
+        return eval;
     }
 
-    g_ctrl.last_cell_band = new_band;
     if (g_ctrl.cell_full_latched) {
-        new_band = CHARGE_STAGE_BAND_ABOVE_MAX;
-    } else if (new_band != CHARGE_STAGE_BAND_BELOW_MIN &&
-               g_ctrl.max_cell_band > new_band) {
-        new_band = g_ctrl.max_cell_band;
+        apply_band_current_limit(CHARGE_STAGE_BAND_ABOVE_MAX, cfg->cell_curr_1_c, cfg->cell_curr_2_c,
+                                 cfg->cell_curr_3_c, cfg->cell_curr_4_c, &eval);
+        return eval;
     }
 
-    apply_band_current_limit(new_band, cfg->cell_curr_1_c, cfg->cell_curr_2_c,
+    /* Seed the initial band if this is the first evaluation of the cycle */
+    if (g_ctrl.max_cell_band == CHARGE_STAGE_BAND_NONE) {
+        g_ctrl.max_cell_band = measured_band;
+        if (g_ctrl.max_cell_band == CHARGE_STAGE_BAND_ABOVE_MAX) {
+            g_ctrl.cell_full_latched = true;
+        }
+    } else if (measured_band > g_ctrl.max_cell_band) {
+        /* Stepping up (chuyển tiến): apply delta t debounce */
+        uint32_t delay_ms = (uint32_t)(cfg->cell_volt_delta_t_s * 1000.0f);
+        if (delay_ms == 0U) {
+            g_ctrl.max_cell_band = measured_band;
+            g_ctrl.cell_candidate_start_tick = 0U;
+            g_ctrl.cell_candidate_band = CHARGE_STAGE_BAND_NONE;
+            if (g_ctrl.max_cell_band == CHARGE_STAGE_BAND_ABOVE_MAX) {
+                g_ctrl.cell_full_latched = true;
+            }
+        } else {
+            if (g_ctrl.cell_candidate_band != measured_band || g_ctrl.cell_candidate_start_tick == 0U) {
+                g_ctrl.cell_candidate_band = measured_band;
+                g_ctrl.cell_candidate_start_tick = now_tick;
+            } else if ((now_tick - g_ctrl.cell_candidate_start_tick) >= delay_ms) {
+                /* Debounce elapsed: confirm forward transition */
+                g_ctrl.max_cell_band = measured_band;
+                g_ctrl.cell_candidate_start_tick = 0U;
+                g_ctrl.cell_candidate_band = CHARGE_STAGE_BAND_NONE;
+                if (g_ctrl.max_cell_band == CHARGE_STAGE_BAND_ABOVE_MAX) {
+                    g_ctrl.cell_full_latched = true;
+                }
+            }
+        }
+    } else {
+        /* Reading stays within or dips below current max band: reset candidate timer */
+        g_ctrl.cell_candidate_start_tick = 0U;
+        g_ctrl.cell_candidate_band = CHARGE_STAGE_BAND_NONE;
+    }
+
+    ChargeStageBand_t effective_band = g_ctrl.cell_full_latched ? CHARGE_STAGE_BAND_ABOVE_MAX : g_ctrl.max_cell_band;
+    apply_band_current_limit(effective_band, cfg->cell_curr_1_c, cfg->cell_curr_2_c,
                              cfg->cell_curr_3_c, cfg->cell_curr_4_c, &eval);
     return eval;
 }
@@ -979,16 +1060,12 @@ static ChargeStageEval_t eval_temp_stage(const ChargeCycleConfig_t *cfg, const B
     ChargeStageBand_t new_band = band_from_thresholds(
         temp_c, cfg->temp_1_c, cfg->temp_2_c, cfg->temp_3_c, cfg->temp_4_c, cfg->temp_5_c);
 
-    /* Apply hysteresis */
+    /* Apply hysteresis: asymmetric - immediate trip/derate on temperature rise,
+     * recovery delta required only when stepping back down as temperature cools. */
     if (g_ctrl.last_temp_band != CHARGE_STAGE_BAND_NONE) {
         if (new_band < g_ctrl.last_temp_band) {
             float lower_thresh = get_lower_threshold_for_band(cfg, CHARGE_LIMIT_SOURCE_TEMPERATURE, g_ctrl.last_temp_band);
             if (temp_c >= (lower_thresh - cfg->temp_delta_c)) {
-                new_band = g_ctrl.last_temp_band; /* Keep current band */
-            }
-        } else if (new_band > g_ctrl.last_temp_band) {
-            float upper_thresh = get_lower_threshold_for_band(cfg, CHARGE_LIMIT_SOURCE_TEMPERATURE, new_band);
-            if (temp_c <= (upper_thresh + cfg->temp_delta_c)) {
                 new_band = g_ctrl.last_temp_band; /* Keep current band */
             }
         }
@@ -1001,7 +1078,7 @@ static ChargeStageEval_t eval_temp_stage(const ChargeCycleConfig_t *cfg, const B
     return eval;
 }
 
-static ChargeStageEval_t eval_soc_stage(const ChargeCycleConfig_t *cfg, const BMS_View_t *bms) {
+static ChargeStageEval_t eval_soc_stage(const ChargeCycleConfig_t *cfg, const BMS_View_t *bms, uint32_t now_tick) {
     ChargeStageEval_t eval = {0};
 
     if (!cfg->soc_enabled) {
@@ -1013,39 +1090,74 @@ static ChargeStageEval_t eval_soc_stage(const ChargeCycleConfig_t *cfg, const BM
     eval.source = CHARGE_LIMIT_SOURCE_SOC;
     float soc_pct = (float)bms->soc;  /* Already in percentage */
 
-    ChargeStageBand_t new_band = band_from_thresholds(
+    ChargeStageBand_t measured_band = band_from_thresholds(
         soc_pct, cfg->soc_1_pct, cfg->soc_2_pct, cfg->soc_3_pct, cfg->soc_4_pct, cfg->soc_5_pct);
 
-    /* SOC is monotonic within one user-started cycle.  A decrease never
-     * lowers the charge level or increases the current again. */
-    if (new_band == CHARGE_STAGE_BAND_ABOVE_MAX) {
-        g_ctrl.soc_full_latched = true;
-        g_ctrl.max_soc_band = CHARGE_STAGE_BAND_ABOVE_MAX;
-    } else if (new_band == CHARGE_STAGE_BAND_BELOW_MIN) {
-        /* Keep the high-watermark unchanged while blocking current. */
-    } else if (new_band > g_ctrl.max_soc_band) {
-        g_ctrl.max_soc_band = new_band;
+    g_ctrl.last_soc_band = measured_band;
+
+    /* Below-min: immediate block without erasing progress */
+    if (measured_band == CHARGE_STAGE_BAND_BELOW_MIN) {
+        g_ctrl.soc_candidate_start_tick = 0U;
+        g_ctrl.soc_candidate_band = CHARGE_STAGE_BAND_NONE;
+        apply_band_current_limit(CHARGE_STAGE_BAND_BELOW_MIN, cfg->soc_curr_1_c, cfg->soc_curr_2_c,
+                                 cfg->soc_curr_3_c, cfg->soc_curr_4_c, &eval);
+        return eval;
     }
 
-    g_ctrl.last_soc_band = new_band;
     if (g_ctrl.soc_full_latched) {
-        new_band = CHARGE_STAGE_BAND_ABOVE_MAX;
-    } else if (new_band != CHARGE_STAGE_BAND_BELOW_MIN &&
-               g_ctrl.max_soc_band > new_band) {
-        new_band = g_ctrl.max_soc_band;
+        apply_band_current_limit(CHARGE_STAGE_BAND_ABOVE_MAX, cfg->soc_curr_1_c, cfg->soc_curr_2_c,
+                                 cfg->soc_curr_3_c, cfg->soc_curr_4_c, &eval);
+        return eval;
     }
 
-    apply_band_current_limit(new_band, cfg->soc_curr_1_c, cfg->soc_curr_2_c,
+    /* Seed the initial band if this is the first evaluation of the cycle */
+    if (g_ctrl.max_soc_band == CHARGE_STAGE_BAND_NONE) {
+        g_ctrl.max_soc_band = measured_band;
+        if (g_ctrl.max_soc_band == CHARGE_STAGE_BAND_ABOVE_MAX) {
+            g_ctrl.soc_full_latched = true;
+        }
+    } else if (measured_band > g_ctrl.max_soc_band) {
+        /* Stepping up (chuyển tiến): apply delta t debounce */
+        uint32_t delay_ms = (uint32_t)(cfg->soc_delta_t_s * 1000.0f);
+        if (delay_ms == 0U) {
+            g_ctrl.max_soc_band = measured_band;
+            g_ctrl.soc_candidate_start_tick = 0U;
+            g_ctrl.soc_candidate_band = CHARGE_STAGE_BAND_NONE;
+            if (g_ctrl.max_soc_band == CHARGE_STAGE_BAND_ABOVE_MAX) {
+                g_ctrl.soc_full_latched = true;
+            }
+        } else {
+            if (g_ctrl.soc_candidate_band != measured_band || g_ctrl.soc_candidate_start_tick == 0U) {
+                g_ctrl.soc_candidate_band = measured_band;
+                g_ctrl.soc_candidate_start_tick = now_tick;
+            } else if ((now_tick - g_ctrl.soc_candidate_start_tick) >= delay_ms) {
+                /* Debounce elapsed: confirm forward transition */
+                g_ctrl.max_soc_band = measured_band;
+                g_ctrl.soc_candidate_start_tick = 0U;
+                g_ctrl.soc_candidate_band = CHARGE_STAGE_BAND_NONE;
+                if (g_ctrl.max_soc_band == CHARGE_STAGE_BAND_ABOVE_MAX) {
+                    g_ctrl.soc_full_latched = true;
+                }
+            }
+        }
+    } else {
+        /* Reading stays within or dips below current max band: reset candidate timer */
+        g_ctrl.soc_candidate_start_tick = 0U;
+        g_ctrl.soc_candidate_band = CHARGE_STAGE_BAND_NONE;
+    }
+
+    ChargeStageBand_t effective_band = g_ctrl.soc_full_latched ? CHARGE_STAGE_BAND_ABOVE_MAX : g_ctrl.max_soc_band;
+    apply_band_current_limit(effective_band, cfg->soc_curr_1_c, cfg->soc_curr_2_c,
                              cfg->soc_curr_3_c, cfg->soc_curr_4_c, &eval);
     return eval;
 }
 
-static bool compute_stage_limits(const ChargeCycleConfig_t *cfg, const BMS_View_t *bms,
+static bool compute_stage_limits(const ChargeCycleConfig_t *cfg, const BMS_View_t *bms, uint32_t now_tick,
                                  float *limit_c_out, uint8_t *inhibit_out,
                                  uint8_t *limit_source_out, uint8_t *stage_band_out) {
-    ChargeStageEval_t cell_eval = eval_cell_stage(cfg, bms);
+    ChargeStageEval_t cell_eval = eval_cell_stage(cfg, bms, now_tick);
     ChargeStageEval_t temp_eval = eval_temp_stage(cfg, bms);
-    ChargeStageEval_t soc_eval = eval_soc_stage(cfg, bms);
+    ChargeStageEval_t soc_eval = eval_soc_stage(cfg, bms, now_tick);
 
     /* Count enabled groups */
     uint8_t enabled_count = cell_eval.enabled + temp_eval.enabled + soc_eval.enabled;
@@ -1349,7 +1461,7 @@ static void run_bms_controlled_mode(uint32_t now_tick) {
     uint8_t stage_inhibit = 0;
     uint8_t stage_limit_source = CHARGE_LIMIT_SOURCE_NONE;
     uint8_t stage_band = CHARGE_STAGE_BAND_NONE;
-    compute_stage_limits(&cfg, &bms, &stage_limit_c, &stage_inhibit,
+    compute_stage_limits(&cfg, &bms, now_tick, &stage_limit_c, &stage_inhibit,
                          &stage_limit_source, &stage_band);
 
     /* Completion check FIRST, ahead of the ordinary inhibit/derating fields
@@ -1422,6 +1534,83 @@ static void run_bms_controlled_mode(uint32_t now_tick) {
     apply_charge_targets(now_tick);
 }
 
+static bool precharge_modules_at_target(const ChargeCycleConfig_t *cfg, uint32_t now_tick)
+{
+    CHG_LIB_ModuleView_t view;
+    uint8_t expected_count = get_active_module_count();
+    uint8_t ready_count = 0U;
+    uint8_t total = CHG_LIB_GetModuleCount();
+
+    if (expected_count == 0U) {
+        return false;
+    }
+
+    for (uint8_t i = 0U; i < total; i++) {
+        if (!CHG_LIB_GetModuleView(i, &view) || !view.enabled ||
+            !view.online || view.state == CHG_LIB_STATE_OFFLINE ||
+            view.state == CHG_LIB_STATE_FAULT) {
+            continue;
+        }
+
+        if (view.last_rx_tick == 0U ||
+            (now_tick - view.last_rx_tick) > CHARGE_CTRL_MODULE_VOLTAGE_MAX_AGE_MS ||
+            fabsf(view.voltage - cfg->vlow_v) > PRECHARGE_VOLTAGE_TOLERANCE_V) {
+            return false;
+        }
+        ready_count++;
+    }
+
+    return ready_count == expected_count;
+}
+
+static void run_precharge_mode(uint32_t now_tick)
+{
+    ChargeCycleConfig_t cfg;
+    ChargeCycleConfig_Get(&cfg);
+
+    /* A low-voltage alarm is expected while recovering an exhausted pack.
+     * Critical BMS alarms become actionable only once both recovery frames
+     * are fresh; stale pre-wake flags cannot stop the wake sequence. */
+    if (BMS_HasFreshPrechargeData(now_tick) && BMS_HasCriticalAlarm()) {
+        LOG("CC: Pre-charge critical BMS alarm\r\n");
+        set_fault(CHARGE_CTRL_FAULT_BMS_ALARM, now_tick);
+        return;
+    }
+
+    g_ctrl.target_voltage_v = cfg.vlow_v;
+    g_ctrl.target_current_total_a = cfg.ilow_c * cfg.battery_capacity_ah;
+    g_ctrl.target_current_per_module_a =
+        g_ctrl.target_current_total_a / (float)g_ctrl.actual_module_count;
+    g_ctrl.inhibit = 0U;
+    g_ctrl.derating = 0U;
+    g_ctrl.active_limit_source = CHARGE_LIMIT_SOURCE_NONE;
+    g_ctrl.active_stage_band = CHARGE_STAGE_BAND_NONE;
+    g_ctrl.active_limit_current_c = cfg.ilow_c;
+
+    apply_charge_targets(now_tick);
+
+    bool conditions_met = precharge_modules_at_target(&cfg, now_tick) &&
+                          BMS_HasFreshPrechargeData(now_tick);
+    if (!conditions_met) {
+        g_ctrl.precharge_hold_active = false;
+        return;
+    }
+
+    if (!g_ctrl.precharge_hold_active) {
+        g_ctrl.precharge_hold_active = true;
+        g_ctrl.precharge_hold_start_tick = now_tick;
+        LOG("CC: Pre-charge recovery hold started\r\n");
+        return;
+    }
+
+    if ((now_tick - g_ctrl.precharge_hold_start_tick) >= PRECHARGE_HOLD_MS) {
+        g_ctrl.stop_reason = CHARGE_STOP_PRECHARGE_COMPLETE;
+        g_ctrl.precharge_hold_active = false;
+        LOG("CC: Pre-charge recovery complete\r\n");
+        transition_to(CHARGE_CTRL_STATE_STOPPING, now_tick);
+    }
+}
+
 /* ============== Public API ============== */
 
 void ChargeController_Init(void) {
@@ -1450,7 +1639,8 @@ void ChargeController_Process(uint32_t now_tick) {
     g_ctrl.actual_module_count = get_active_module_count();
 
     /* Check for module count mismatch during running */
-    if (g_ctrl.state == CHARGE_CTRL_STATE_RUNNING &&
+    if ((g_ctrl.state == CHARGE_CTRL_STATE_RUNNING ||
+         g_ctrl.state == CHARGE_CTRL_STATE_PRECHARGE) &&
         g_ctrl.actual_module_count != g_ctrl.source_module_count) {
         
         if (g_ctrl.module_mismatch_timer_tick == 0) {
@@ -1516,14 +1706,28 @@ void ChargeController_Process(uint32_t now_tick) {
             break;
         }
 
+        case CHARGE_CTRL_STATE_PRECHARGE: {
+            ChargeCycleConfig_t cfg;
+            BMS_View_t bms;
+            ChargeCycleConfig_Get(&cfg);
+            BMS_GetView(&bms);
+
+            ChargeCtrlState_t state_before_protection = g_ctrl.state;
+            update_hard_protection(&cfg, &bms, now_tick);
+            if (g_ctrl.state == state_before_protection) {
+                run_precharge_mode(now_tick);
+            } else {
+                stop_charging();
+            }
+            break;
+        }
+
         case CHARGE_CTRL_STATE_STOPPING:
             stop_charging();
             /* Clear protection timers */
             g_ctrl.protect_jack_v_timer_tick = 0;
             g_ctrl.protect_jack_temp_timer_tick = 0;
             g_ctrl.protect_jack_temp_trip_timer_tick = 0;
-            transition_to(CHARGE_CTRL_STATE_IDLE, now_tick);
-            g_ctrl.owner = CHARGE_CTRL_OWNER_NONE;
             break;
 
         case CHARGE_CTRL_STATE_FAULT:
@@ -1537,6 +1741,16 @@ void ChargeController_Process(uint32_t now_tick) {
     }
 
     update_relay_decision(now_tick);
+
+    /* A controlled stop is complete only after the relay-open policy has
+     * finished. While current is still above the settle threshold (or until
+     * the bounded relay-open timeout), retain STOPPING so neither DWIN nor
+     * another control surface can treat the charger as READY and start a new
+     * cycle across a still-closed DC relay. */
+    if (g_ctrl.state == CHARGE_CTRL_STATE_STOPPING && !g_ctrl.relay_should_close) {
+        transition_to(CHARGE_CTRL_STATE_IDLE, now_tick);
+        g_ctrl.owner = CHARGE_CTRL_OWNER_NONE;
+    }
     update_bms_charge_allow();
 }
 
@@ -1552,6 +1766,10 @@ bool ChargeController_Start(ChargeCtrlOwner_t owner, bool manual_mode, uint32_t 
     if (g_ctrl.state == CHARGE_CTRL_STATE_RUNNING) {
         LOG("CC: Already running\r\n");
         return true;  /* Already running */
+    }
+    if (g_ctrl.state == CHARGE_CTRL_STATE_PRECHARGE) {
+        LOG("CC: Normal start rejected during pre-charge\r\n");
+        return false;
     }
 
     g_ctrl.owner = owner;
@@ -1594,11 +1812,142 @@ bool ChargeController_Start(ChargeCtrlOwner_t owner, bool manual_mode, uint32_t 
     g_ctrl.max_soc_band = CHARGE_STAGE_BAND_NONE;
     g_ctrl.cell_full_latched = false;
     g_ctrl.soc_full_latched = false;
+    g_ctrl.cell_candidate_start_tick = 0U;
+    g_ctrl.cell_candidate_band = CHARGE_STAGE_BAND_NONE;
+    g_ctrl.soc_candidate_start_tick = 0U;
+    g_ctrl.soc_candidate_band = CHARGE_STAGE_BAND_NONE;
     g_ctrl.last_running = 0;
 
     clear_fault();
 
     transition_to(CHARGE_CTRL_STATE_READY, now_tick);
+    return true;
+}
+
+bool ChargeController_StartPrecharge(ChargeCtrlOwner_t owner, uint32_t now_tick)
+{
+    ChargeCycleConfig_t cfg;
+
+    if (g_ctrl.state != CHARGE_CTRL_STATE_IDLE) {
+        LOG("CC: Pre-charge requires IDLE\r\n");
+        return false;
+    }
+
+    g_ctrl.manual_mode = false;
+    uint32_t faults = check_precharge_faults();
+    ChargeCycleConfig_Get(&cfg);
+    uint8_t actual_count = get_active_module_count();
+
+    if (faults != CHARGE_CTRL_FAULT_NONE) {
+        LOG("CC: Pre-charge preconditions failed fault=0x%08lX\r\n", (unsigned long)faults);
+        g_ctrl.fault_flags = faults;
+        g_ctrl.stop_reason = CHARGE_STOP_PRECONDITION;
+        transition_to(CHARGE_CTRL_STATE_FAULT, now_tick);
+        return false;
+    }
+
+    g_ctrl.owner = owner;
+    g_ctrl.source_module_count = cfg.source_module_count;
+    g_ctrl.actual_module_count = actual_count;
+    g_ctrl.stop_reason = CHARGE_STOP_NONE;
+    g_ctrl.precharge_hold_active = false;
+    g_ctrl.precharge_hold_start_tick = 0U;
+    g_ctrl.last_running = 0U;
+    g_ctrl.relay_latched_closed = false;
+    g_ctrl.relay_should_close = false;
+    g_ctrl.relay_open_pending = false;
+    clear_fault();
+
+    LOG("CC: Pre-charge start src=%u act=%u\r\n",
+        (unsigned)g_ctrl.source_module_count, (unsigned)g_ctrl.actual_module_count);
+    transition_to(CHARGE_CTRL_STATE_PRECHARGE, now_tick);
+    return true;
+}
+
+void ChargeController_StopPrecharge(uint32_t now_tick)
+{
+    if (g_ctrl.state == CHARGE_CTRL_STATE_PRECHARGE) {
+        ChargeController_Stop(now_tick);
+    }
+}
+
+bool ChargeController_ResetFaultIfSafe(uint32_t now_tick)
+{
+    ChargeCycleConfig_t cfg;
+    BMS_View_t bms;
+    CHG_LIB_SystemSummary_t summary;
+    uint32_t clearable_faults;
+
+    if (g_ctrl.state != CHARGE_CTRL_STATE_FAULT) {
+        return false;
+    }
+
+    /* Emergency stop requires an explicit safety recovery outside this
+     * pre-charge UI flow. Never acknowledge it as an ordinary retry. */
+    if ((g_ctrl.fault_flags & CHARGE_CTRL_FAULT_EMERGENCY_STOP) != 0U) {
+        return false;
+    }
+
+    clearable_faults = CHARGE_CTRL_FAULT_NO_DRIVER |
+                       CHARGE_CTRL_FAULT_NO_MODULE |
+                       CHARGE_CTRL_FAULT_MODULE_COUNT_MISMATCH |
+                       CHARGE_CTRL_FAULT_BMS_OFFLINE |
+                       CHARGE_CTRL_FAULT_BMS_ALARM |
+                       CHARGE_CTRL_FAULT_INVALID_CONFIG |
+                       CHARGE_CTRL_FAULT_PROTECT_JACK_V |
+                       CHARGE_CTRL_FAULT_PROTECT_JACK_TEMP;
+    if ((g_ctrl.fault_flags & ~clearable_faults) != 0U) {
+        return false;
+    }
+
+    /* Re-run the exact pre-charge start checks. This keeps module presence,
+     * count, driver and Vlow/Ilow validation owned by the controller. */
+    if (check_precharge_faults() != CHARGE_CTRL_FAULT_NONE) {
+        return false;
+    }
+
+    ChargeCycleConfig_Get(&cfg);
+    BMS_GetView(&bms);
+    CHG_LIB_GetSystemSummary(&summary);
+
+    if ((g_ctrl.fault_flags & CHARGE_CTRL_FAULT_BMS_ALARM) != 0U) {
+        /* A lost/stale BMS cannot prove that the alarm has cleared. Require
+         * both recovery frames to be fresh and the critical mask to be clear
+         * before allowing the operator to retry pre-charge. */
+        if (!BMS_HasFreshPrechargeData(now_tick) || BMS_HasCriticalAlarm()) {
+            return false;
+        }
+    }
+
+    if ((g_ctrl.fault_flags & CHARGE_CTRL_FAULT_PROTECT_JACK_V) != 0U) {
+        if (!bms.online || BMS_IsDataStale() ||
+            (cfg.protect_jack_charge_enabled &&
+             (summary.voltage - bms.batt_voltage) > cfg.protect_jack_charge_delta_v)) {
+            return false;
+        }
+    }
+
+    if ((g_ctrl.fault_flags & CHARGE_CTRL_FAULT_PROTECT_JACK_TEMP) != 0U &&
+        cfg.protect_jack_temp_enabled &&
+        g_ctrl.jack_temp_input_c >= cfg.protect_jack_temp_trip_c) {
+        return false;
+    }
+
+    /* A reset is allowed only after the previous output path is fully safe;
+     * the normal stop process owns current settle and relay opening. */
+    if (g_ctrl.relay_should_close || g_ctrl.relay_latched_closed ||
+        g_ctrl.relay_open_pending) {
+        return false;
+    }
+
+    stop_charging();
+    clear_fault();
+    g_ctrl.stop_reason = CHARGE_STOP_NONE;
+    g_ctrl.owner = CHARGE_CTRL_OWNER_NONE;
+    g_ctrl.relay_should_close = false;
+    g_ctrl.relay_latched_closed = false;
+    g_ctrl.relay_open_pending = false;
+    transition_to(CHARGE_CTRL_STATE_IDLE, now_tick);
     return true;
 }
 
@@ -1646,7 +1995,8 @@ void ChargeController_EmergencyStop(uint32_t now_tick) {
 }
 
 bool ChargeController_IsRunning(void) {
-    return (g_ctrl.state == CHARGE_CTRL_STATE_RUNNING);
+    return (g_ctrl.state == CHARGE_CTRL_STATE_RUNNING ||
+            g_ctrl.state == CHARGE_CTRL_STATE_PRECHARGE);
 }
 
 void ChargeController_AcknowledgeCompletion(void) {
@@ -1698,7 +2048,5 @@ void ChargeController_GetView(ChargeCtrlView_t *view) {
     view->stop_reason = g_ctrl.stop_reason;
     view->relay_should_close = g_ctrl.relay_should_close ? 1U : 0U;
 }
-
-
 
 

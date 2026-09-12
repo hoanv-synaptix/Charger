@@ -114,6 +114,14 @@ typedef struct {
 /* ---- generic mirror evals ---- */
 
 static bool ev_bms(const AlarmInputs_t *in, uint32_t bit) {
+    /* An exhausted BMS can leave a stale alarm snapshot behind while it is
+     * unpowered. During PRECHARGE, BMS alarms become actionable only after
+     * the two explicit recovery frames are fresh; low-voltage alarms are
+     * still reported normally once the BMS wakes. */
+    if (in->cc.state == CHARGE_CTRL_STATE_PRECHARGE &&
+        !BMS_HasFreshPrechargeData(in->now)) {
+        return false;
+    }
     return (in->bms.alarm_flags & bit) != 0U;
 }
 static bool ev_mod(const AlarmInputs_t *in, uint32_t bit) {

@@ -45,11 +45,21 @@ void UART_Transmit_To_DWIN(uint8_t *data, uint16_t len)
 
 static uint16_t g_last_keyval = 0xFFFF;
 static int      g_action_count = 0;
+static uint16_t g_last_event_vp = 0xFFFF;
+static uint16_t g_last_event_key = 0xFFFF;
+static int      g_key_event_count = 0;
 
 void DWIN_OnActionButton(uint16_t keyval)
 {
     g_last_keyval = keyval;
     g_action_count++;
+}
+
+void DWIN_OnKeyEvent(uint16_t vp, uint16_t keyval)
+{
+    g_last_event_vp = vp;
+    g_last_event_key = keyval;
+    g_key_event_count++;
 }
 
 static void reset_capture(void)
@@ -59,6 +69,9 @@ static void reset_capture(void)
     g_tx_count = 0;
     g_last_keyval = 0xFFFF;
     g_action_count = 0;
+    g_last_event_vp = 0xFFFF;
+    g_last_event_key = 0xFFFF;
+    g_key_event_count = 0;
 }
 
 /* Build a real DGUS touch-upload frame:
@@ -231,6 +244,29 @@ static bool test_parse_rx_ignores_zero_and_other_vp(void)
     return true;
 }
 
+static bool test_parse_rx_dispatches_precharge_keys(void)
+{
+    printf("Running test_parse_rx_dispatches_precharge_keys...\n");
+    reset_capture();
+
+    uint8_t f[9];
+    build_touch_frame(f, VP_LOGIN_KEY, DWIN_LOGIN_KEY_DIGIT_0);
+    DWIN_ParseRX(f, sizeof(f));
+    ASSERT(g_key_event_count == 1, "login digit 0 dispatches as a real key");
+    ASSERT(g_last_event_vp == VP_LOGIN_KEY && g_last_event_key == DWIN_LOGIN_KEY_DIGIT_0,
+           "login VP/key are preserved");
+
+    build_touch_frame(f, VP_PRECHARGE_ACTION_KEY, DWIN_PRECHARGE_KEY_START);
+    DWIN_ParseRX(f, sizeof(f));
+    ASSERT(g_key_event_count == 2, "pre-charge action dispatches");
+    ASSERT(g_last_event_vp == VP_PRECHARGE_ACTION_KEY &&
+           g_last_event_key == DWIN_PRECHARGE_KEY_START, "pre-charge VP/key preserved");
+    ASSERT(g_action_count == 0, "new key VPs do not invoke dashboard action callback");
+
+    printf("[PASS] test_parse_rx_dispatches_precharge_keys\n");
+    return true;
+}
+
 static bool test_parse_rx_resyncs_on_stray_header1(void)
 {
     printf("Running test_parse_rx_resyncs_on_stray_header1...\n");
@@ -300,7 +336,7 @@ static bool test_update_data_scatter(void)
     d.charge_duration_s = 125;
     d.uptime_s = 3600;
 
-    const int steps = 11;
+    const int steps = 12;
 
     /* First full cycle: every step sends (no previous snapshot). */
     int frames_first_cycle = 0;
@@ -308,7 +344,7 @@ static bool test_update_data_scatter(void)
         reset_capture();
         DWIN_UpdateData(&d);
         frames_first_cycle += g_tx_count;
-        ASSERT(g_tx_count <= 3, "reasonable frame count per call");
+        ASSERT(g_tx_count <= 4, "reasonable frame count per call");
     }
     ASSERT(frames_first_cycle >= 8, "first cycle pushes field groups");
 
@@ -352,9 +388,9 @@ static bool test_update_data_scatter(void)
     }
     ASSERT((seen & 0x01FB) == 0x01FB, "forced refresh re-sends all dashboard groups");
 
-    /* ForceFullRefresh marks all 4 alarm rows dirty; STEP_ALARM_ROW services 1 row
-     * per 11-step cycle to avoid UART congestion. Drain the remaining 3 rows: */
-    for (int c = 0; c < 3; c++) {
+    /* ForceFullRefresh marks all 12 alarm rows dirty; STEP_ALARM_ROW services 1 row
+     * per 11-step cycle to avoid UART congestion. Drain the remaining rows: */
+    for (int c = 0; c < (int)VP_ALARM_ROW_COUNT - 1; c++) {
         for (int i = 0; i < steps; i++) {
             DWIN_UpdateData(&d);
         }
@@ -394,12 +430,12 @@ static bool test_alarm_fifo_push(void)
     DWIN_SystemData_t d;
     memset(&d, 0, sizeof(d));
 
-    /* Run scatter steps until all 4 alarm rows are emitted */
+    /* Run scatter steps until all 12 alarm rows are emitted */
     reset_capture();
-    for (int i = 0; i < 44; i++) {
+    for (int i = 0; i < 150; i++) {
         DWIN_UpdateData(&d);
     }
-    ASSERT(g_tx_count >= 12, "all 4 alarm rows emitted");
+    ASSERT(g_tx_count >= 36, "all 12 alarm rows emitted");
 
     /* Check newest alarm at row 0 (base 0x1200) has "E005" */
     bool found_e005 = false;
@@ -459,6 +495,143 @@ static bool test_soc_color_write_and_cache(void)
     return true;
 }
 
+static bool test_dwin_precharge_page_update_and_diff(void)
+{
+    printf("Running test_dwin_precharge_page_update_and_diff...\n");
+    DWIN_SystemData_t d;
+    memset(&d, 0, sizeof(d));
+    strncpy(d.precharge_voltage_text, "45.0 V", sizeof(d.precharge_voltage_text) - 1U);
+    strncpy(d.precharge_current_text, "20.0 A", sizeof(d.precharge_current_text) - 1U);
+    strncpy(d.topbar_fault_code, "E021", sizeof(d.topbar_fault_code) - 1U);
+    d.precharge_status_mode = DWIN_PRECHARGE_STATUS_ACTIVE;
+    d.precharge_btn_mode = DWIN_PRECHARGE_BTN_STOP;
+
+    DWIN_ForceFullRefresh();
+    const int steps = 11;
+    bool found_v = false, found_i = false, found_status = false, found_btn = false;
+    bool found_fault_code = false;
+
+    for (int i = 0; i < steps; i++) {
+        reset_capture();
+        DWIN_UpdateData(&d);
+        for (int frame = 0; frame < g_tx_count; frame++) {
+            uint16_t vp = ((uint16_t)g_tx[frame][4] << 8) | g_tx[frame][5];
+            if (vp == VP_PRECHARGE_VOLTAGE_TEXT) found_v = true;
+            if (vp == VP_PRECHARGE_CURRENT_TEXT) found_i = true;
+            if (vp == VP_PRECHARGE_STATUS_ICON) {
+                found_status = true;
+                uint16_t val = ((uint16_t)g_tx[frame][6] << 8) | g_tx[frame][7];
+                ASSERT(val == DWIN_PRECHARGE_STATUS_ACTIVE, "status icon active mode value");
+            }
+            if (vp == VP_PRECHARGE_BTN_ICON) {
+                found_btn = true;
+                uint16_t val = ((uint16_t)g_tx[frame][6] << 8) | g_tx[frame][7];
+                ASSERT(val == DWIN_PRECHARGE_BTN_STOP, "btn icon stop mode value");
+            }
+            if (vp == VP_TOPBAR_FAULT_CODE) {
+                found_fault_code = true;
+                ASSERT(g_tx[frame][6] == 'E' && g_tx[frame][7] == '0' &&
+                       g_tx[frame][8] == '2' && g_tx[frame][9] == '1',
+                       "shared fault code field carries the alarm code");
+            }
+        }
+    }
+    ASSERT(found_v && found_i && found_status && found_btn && found_fault_code,
+           "precharge fields and shared fault code emitted during full refresh");
+
+    /* Drain any remaining alarm row updates if any */
+    for (int c = 0; c < (int)VP_ALARM_ROW_COUNT; c++) {
+        for (int i = 0; i < steps; i++) {
+            DWIN_UpdateData(&d);
+        }
+    }
+
+    /* Next full cycle: identical data must produce 0 precharge frames */
+    for (int i = 0; i < steps; i++) {
+        reset_capture();
+        DWIN_UpdateData(&d);
+        for (int frame = 0; frame < g_tx_count; frame++) {
+            uint16_t vp = ((uint16_t)g_tx[frame][4] << 8) | g_tx[frame][5];
+            ASSERT(vp != VP_PRECHARGE_VOLTAGE_TEXT && vp != VP_PRECHARGE_CURRENT_TEXT &&
+                   vp != VP_PRECHARGE_STATUS_ICON && vp != VP_PRECHARGE_BTN_ICON,
+                   "unchanged precharge data must be diff-suppressed");
+        }
+    }
+
+    /* Change status icon to ERROR and button to RESET */
+    d.precharge_status_mode = DWIN_PRECHARGE_STATUS_ERROR;
+    d.precharge_btn_mode = DWIN_PRECHARGE_BTN_RESET;
+    found_status = false;
+    found_btn = false;
+    for (int i = 0; i < steps; i++) {
+        reset_capture();
+        DWIN_UpdateData(&d);
+        for (int frame = 0; frame < g_tx_count; frame++) {
+            uint16_t vp = ((uint16_t)g_tx[frame][4] << 8) | g_tx[frame][5];
+            if (vp == VP_PRECHARGE_STATUS_ICON) {
+                found_status = true;
+                uint16_t val = ((uint16_t)g_tx[frame][6] << 8) | g_tx[frame][7];
+                ASSERT(val == DWIN_PRECHARGE_STATUS_ERROR, "status icon error mode value");
+            }
+            if (vp == VP_PRECHARGE_BTN_ICON) {
+                found_btn = true;
+                uint16_t val = ((uint16_t)g_tx[frame][6] << 8) | g_tx[frame][7];
+                ASSERT(val == DWIN_PRECHARGE_BTN_RESET, "btn icon reset mode value");
+            }
+        }
+    }
+    ASSERT(found_status && found_btn, "changed precharge icons emitted on cycle");
+
+    printf("[PASS] test_dwin_precharge_page_update_and_diff\n");
+    return true;
+}
+
+static bool test_dwin_login_keypad_full_matrix(void)
+{
+    printf("Running test_dwin_login_keypad_full_matrix...\n");
+    reset_capture();
+
+    const uint16_t keys[] = {
+        DWIN_LOGIN_KEY_DIGIT_0, DWIN_LOGIN_KEY_DIGIT_1, DWIN_LOGIN_KEY_DIGIT_2,
+        DWIN_LOGIN_KEY_DIGIT_3, DWIN_LOGIN_KEY_DIGIT_4, DWIN_LOGIN_KEY_DIGIT_5,
+        DWIN_LOGIN_KEY_DIGIT_6, DWIN_LOGIN_KEY_DIGIT_7, DWIN_LOGIN_KEY_DIGIT_8,
+        DWIN_LOGIN_KEY_DIGIT_9, DWIN_LOGIN_KEY_DELETE, DWIN_LOGIN_KEY_OK, DWIN_LOGIN_KEY_BACK
+    };
+    uint8_t f[9];
+
+    for (size_t i = 0; i < sizeof(keys)/sizeof(keys[0]); i++) {
+        build_touch_frame(f, VP_LOGIN_KEY, keys[i]);
+        DWIN_ParseRX(f, sizeof(f));
+        ASSERT(g_last_event_vp == VP_LOGIN_KEY, "VP matches login key VP");
+        ASSERT(g_last_event_key == keys[i], "key code matches dispatched key");
+    }
+
+    printf("[PASS] test_dwin_login_keypad_full_matrix\n");
+    return true;
+}
+
+static bool test_dwin_precharge_touch_matrix(void)
+{
+    printf("Running test_dwin_precharge_touch_matrix...\n");
+    reset_capture();
+    uint8_t f[9];
+
+    /* Action key: 0x0001 (Start/Stop/Reset) */
+    build_touch_frame(f, VP_PRECHARGE_ACTION_KEY, DWIN_PRECHARGE_KEY_ACTION);
+    DWIN_ParseRX(f, sizeof(f));
+    ASSERT(g_last_event_vp == VP_PRECHARGE_ACTION_KEY, "VP matches precharge action VP");
+    ASSERT(g_last_event_key == DWIN_PRECHARGE_KEY_ACTION, "Action key 0x0001 dispatched");
+
+    /* Back key: 0x0002 (Safe abort and back to home) */
+    build_touch_frame(f, VP_PRECHARGE_ACTION_KEY, DWIN_PRECHARGE_KEY_BACK);
+    DWIN_ParseRX(f, sizeof(f));
+    ASSERT(g_last_event_vp == VP_PRECHARGE_ACTION_KEY, "VP matches precharge action VP");
+    ASSERT(g_last_event_key == DWIN_PRECHARGE_KEY_BACK, "Back key 0x0002 dispatched");
+
+    printf("[PASS] test_dwin_precharge_touch_matrix\n");
+    return true;
+}
+
 /* ================================================================== */
 
 int main(void)
@@ -474,11 +647,15 @@ int main(void)
     pass &= test_parse_rx_dispatches();
     pass &= test_parse_rx_byte_by_byte();
     pass &= test_parse_rx_ignores_zero_and_other_vp();
+    pass &= test_parse_rx_dispatches_precharge_keys();
     pass &= test_parse_rx_resyncs_on_stray_header1();
     pass &= test_parse_rx_rejects_oversized_length();
     pass &= test_update_data_scatter();
     pass &= test_alarm_fifo_push();
     pass &= test_soc_color_write_and_cache();
+    pass &= test_dwin_precharge_page_update_and_diff();
+    pass &= test_dwin_login_keypad_full_matrix();
+    pass &= test_dwin_precharge_touch_matrix();
 
     if (pass) {
         printf("ALL TESTS PASSED.\n");

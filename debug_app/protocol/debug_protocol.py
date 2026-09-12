@@ -101,9 +101,9 @@ CHARGE_CTRL_STATE_NAMES = {
     0: "Idle",
     1: "Ready",
     2: "Running",
-    3: "Derating",
-    4: "Stopping",
-    5: "Fault",
+    3: "Stopping",
+    4: "Fault",
+    5: "Pre-charge",
 }
 
 CHARGE_LIMIT_SOURCE_NAMES = {
@@ -138,6 +138,7 @@ CHARGE_STOP_REASON_NAMES = {
     11: "Charger voltage reached Vmax",
     12: "Cell voltage limit reached",
     13: "Battery full / SOC target reached",
+    14: "Pre-charge recovery complete",
 }
 
 BMS_ALARM_FLAG_NAMES = {
@@ -609,7 +610,7 @@ class ChargeCycleConfig:
     vlow_v: float
     temp_limit_c: float
     cell_volt_enabled: bool
-    cell_volt_delta_v: float
+    cell_volt_delta_t_s: float
     cell_volt_1_v: float
     cell_volt_2_v: float
     cell_volt_3_v: float
@@ -631,7 +632,7 @@ class ChargeCycleConfig:
     temp_curr_3_c: float
     temp_curr_4_c: float
     soc_enabled: bool
-    soc_delta_pct: float
+    soc_delta_t_s: float
     soc_1_pct: float
     soc_2_pct: float
     soc_3_pct: float
@@ -667,9 +668,12 @@ class ChargeCycleConfig:
     # after a Read MCU doesn't blank them out.
     device_id: str = ""
     hw_rev: str = ""
+    # v6: canonical DWIN pre-charge authorization PIN, appended to preserve
+    # all v5 wire offsets.
+    admin_pin: int = 123456
 
     FORMAT = ("<H" + ("f" * 10) + "B" + ("f" * 10) + "B" + ("f" * 10) + "B" + ("f" * 10) + "BfH" + "BHffff" +
-              "BBBBffff" + "16s12s")
+              "BBBBffff" + "16s12sI")
     SIZE = struct.calcsize(FORMAT)
 
     @classmethod
@@ -691,7 +695,7 @@ class ChargeCycleConfig:
             vlow_v=values[9],
             temp_limit_c=values[10],
             cell_volt_enabled=bool(values[11]),
-            cell_volt_delta_v=values[12],
+            cell_volt_delta_t_s=values[12],
             cell_volt_1_v=values[13],
             cell_volt_2_v=values[14],
             cell_volt_3_v=values[15],
@@ -713,7 +717,7 @@ class ChargeCycleConfig:
             temp_curr_3_c=values[31],
             temp_curr_4_c=values[32],
             soc_enabled=bool(values[33]),
-            soc_delta_pct=values[34],
+            soc_delta_t_s=values[34],
             soc_1_pct=values[35],
             soc_2_pct=values[36],
             soc_3_pct=values[37],
@@ -745,7 +749,24 @@ class ChargeCycleConfig:
             # expected ASCII, but never let a garbage byte crash a Read).
             device_id=values[61].split(b"\x00", 1)[0].decode("ascii", errors="replace"),
             hw_rev=values[62].split(b"\x00", 1)[0].decode("ascii", errors="replace"),
+            admin_pin=values[63],
         )
+
+    @property
+    def cell_volt_delta_v(self) -> float:
+        return self.cell_volt_delta_t_s
+
+    @cell_volt_delta_v.setter
+    def cell_volt_delta_v(self, val: float) -> None:
+        self.cell_volt_delta_t_s = val
+
+    @property
+    def soc_delta_pct(self) -> float:
+        return self.soc_delta_t_s
+
+    @soc_delta_pct.setter
+    def soc_delta_pct(self, val: float) -> None:
+        self.soc_delta_t_s = val
 
     def to_bytes(self) -> bytes:
         return struct.pack(
@@ -762,7 +783,7 @@ class ChargeCycleConfig:
             self.vlow_v,
             self.temp_limit_c,
             int(self.cell_volt_enabled),
-            self.cell_volt_delta_v,
+            self.cell_volt_delta_t_s,
             self.cell_volt_1_v,
             self.cell_volt_2_v,
             self.cell_volt_3_v,
@@ -784,7 +805,7 @@ class ChargeCycleConfig:
             self.temp_curr_3_c,
             self.temp_curr_4_c,
             int(self.soc_enabled),
-            self.soc_delta_pct,
+            self.soc_delta_t_s,
             self.soc_1_pct,
             self.soc_2_pct,
             self.soc_3_pct,
@@ -817,6 +838,7 @@ class ChargeCycleConfig:
             # in principle exceed 16/12 bytes.
             self.device_id.encode("ascii", errors="replace")[:16],
             self.hw_rev.encode("ascii", errors="replace")[:12],
+            self.admin_pin,
         )
 
     def get_module_type_name(self) -> str:

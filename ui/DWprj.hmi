@@ -13,4 +13,8 @@ CMD2=0003=RESET
 00=00_logo.png
 01=01_dashboard.png
 02=02_setting.png
-03=03_alarm.png
+03=03_alarm_page1.png
+04=04_alarm_page2.png
+05=05_alarm_page3.png
+06=06_login.png
+07=07_precharge.png

@@ -218,8 +218,8 @@
                                                 <Border Background="#F8FAFC" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="4" Padding="10" Margin="0,0,0,10">
                                                     <StackPanel Orientation="Horizontal">
                                                         <CheckBox Content="Enabled" IsChecked="{Binding Config.CellVoltEnabled, Mode=TwoWay}" Margin="0,0,30,0" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                                                        <TextBlock Text="Delta (V):" Style="{StaticResource LabelStyle}"/>
-                                                        <TextBox Text="{Binding Config.CellVoltDeltaV, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="80"/>
+                                                        <TextBlock Text="Delta t (s):" Style="{StaticResource LabelStyle}"/>
+                                                        <TextBox Text="{Binding Config.CellVoltDeltaTS, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="80"/>
                                                     </StackPanel>
                                                 </Border>
                                                 
@@ -332,8 +332,8 @@
                                                 <Border Background="#F8FAFC" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="4" Padding="10" Margin="0,0,0,10">
                                                     <StackPanel Orientation="Horizontal">
                                                         <CheckBox Content="Enabled" IsChecked="{Binding Config.SocEnabled, Mode=TwoWay}" Margin="0,0,30,0" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                                                        <TextBlock Text="Delta (%):" Style="{StaticResource LabelStyle}"/>
-                                                        <TextBox Text="{Binding Config.SocDeltaPct, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="80"/>
+                                                        <TextBlock Text="Delta t (s):" Style="{StaticResource LabelStyle}"/>
+                                                        <TextBox Text="{Binding Config.SocDeltaTS, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="80"/>
                                                     </StackPanel>
                                                 </Border>
                                                 
@@ -393,6 +393,7 @@
                                     <StackPanel>
                                         <GroupBox Header="System Mapping">
                                             <UniformGrid Columns="2">
+                                                <StackPanel Margin="0,5"><TextBlock Text="Admin PIN:" Style="{StaticResource LabelStyle}"/><TextBox Text="{Binding Config.AdminPin, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
                                                 <StackPanel Margin="0,5"><TextBlock Text="BMS CAN ID:" Style="{StaticResource LabelStyle}"/><TextBox Text="{Binding Config.CanBatteryId, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
                                                 <StackPanel Margin="0,5"><TextBlock Text="Charge Source:" Style="{StaticResource LabelStyle}"/>
                                                     <ComboBox SelectedIndex="{Binding Config.ChargeSourceMode, Mode=TwoWay}">

@@ -187,6 +187,15 @@ bool BMS_IsOnline(void);
 bool BMS_IsDataStale(void);
 
 /**
+ * @brief True when both BATT_ST1 and CELL_VOLT have been parsed recently.
+ *
+ * Pre-charge uses this deliberately narrower recovery predicate instead of
+ * the general online watchdog: a random valid BMS frame must not complete a
+ * battery-wake cycle before voltage/status telemetry is available.
+ */
+bool BMS_HasFreshPrechargeData(uint32_t now_tick);
+
+/**
  * @brief  Check if any critical alarm is active
  */
 bool BMS_HasCriticalAlarm(void);

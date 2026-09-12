@@ -506,6 +506,24 @@ bool BMS_IsDataStale(void)
     return stale;
 }
 
+bool BMS_HasFreshPrechargeData(uint32_t now_tick)
+{
+    uint32_t batt_st1_tick;
+    uint32_t cell_volt_tick;
+
+    BSP_EnterCritical();
+    batt_st1_tick = g_bms_data.last_rx_tick[BMS_FRAME_BATT_ST1];
+    cell_volt_tick = g_bms_data.last_rx_tick[BMS_FRAME_CELL_VOLT];
+    BSP_ExitCritical();
+
+    if (batt_st1_tick == 0U || cell_volt_tick == 0U) {
+        return false;
+    }
+
+    return bms_tick_elapsed(now_tick, batt_st1_tick) <= bms_stale_timeout_ms(BMS_FRAME_BATT_ST1) &&
+           bms_tick_elapsed(now_tick, cell_volt_tick) <= bms_stale_timeout_ms(BMS_FRAME_CELL_VOLT);
+}
+
 void BMS_GetDiagnostics(BMS_Diagnostics_t *diagnostics)
 {
     if (diagnostics == NULL) return;

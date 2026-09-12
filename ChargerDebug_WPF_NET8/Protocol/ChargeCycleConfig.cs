@@ -8,11 +8,11 @@ namespace ChargerDebugApp.Protocol
 {
     public class ChargeCycleConfig
     {
-        public const int EXPECTED_BINARY_SIZE = 239;
+        public const int EXPECTED_BINARY_SIZE = 243;
 
         // 1. Version
         [JsonPropertyName("version")]
-        public ushort Version { get; set; } = 5;
+        public ushort Version { get; set; } = 6;
 
         // 2. General Limits (10 floats = 40 bytes)
         [JsonPropertyName("battery_capacity_ah")]
@@ -45,12 +45,18 @@ namespace ChargerDebugApp.Protocol
         [JsonPropertyName("temp_limit_c")]
         public float TempLimitC { get; set; } = 55.0f;
 
-        // 3. Cell Voltage Stages (1 + 4 + 20 + 16 = 41 bytes)
         [JsonPropertyName("cell_volt_enabled")]
         public bool CellVoltEnabled { get; set; } = true;
 
-        [JsonPropertyName("cell_volt_delta_v")]
-        public float CellVoltDeltaV { get; set; } = 0.02f;
+        [JsonPropertyName("cell_volt_delta_t_s")]
+        public float CellVoltDeltaTS { get; set; } = 3.0f;
+
+        [JsonIgnore]
+        public float CellVoltDeltaV
+        {
+            get => CellVoltDeltaTS;
+            set => CellVoltDeltaTS = value;
+        }
 
         [JsonPropertyName("cell_volt_1_v")]
         public float CellVolt1V { get; set; } = 3.2f;
@@ -117,8 +123,15 @@ namespace ChargerDebugApp.Protocol
         [JsonPropertyName("soc_enabled")]
         public bool SocEnabled { get; set; } = false;
 
-        [JsonPropertyName("soc_delta_pct")]
-        public float SocDeltaPct { get; set; } = 2.0f;
+        [JsonPropertyName("soc_delta_t_s")]
+        public float SocDeltaTS { get; set; } = 2.0f;
+
+        [JsonIgnore]
+        public float SocDeltaPct
+        {
+            get => SocDeltaTS;
+            set => SocDeltaTS = value;
+        }
 
         [JsonPropertyName("soc_1_pct")]
         public float Soc1Pct { get; set; } = 20.0f;
@@ -208,6 +221,10 @@ namespace ChargerDebugApp.Protocol
         [JsonPropertyName("hw_rev")]
         public string HwRev { get; set; } = "";
 
+        // 10. v6 pre-charge authorization PIN (app/Flash canonical config)
+        [JsonPropertyName("admin_pin")]
+        public uint AdminPin { get; set; } = 123456;
+
         public static ChargeCycleConfig CreateDefault()
         {
             return new ChargeCycleConfig();
@@ -235,7 +252,7 @@ namespace ChargerDebugApp.Protocol
 
             // Cell Volt Stages (41)
             writer.Write((byte)(CellVoltEnabled ? 1 : 0));
-            writer.Write(CellVoltDeltaV);
+            writer.Write(CellVoltDeltaTS);
             writer.Write(CellVolt1V);
             writer.Write(CellVolt2V);
             writer.Write(CellVolt3V);
@@ -261,7 +278,7 @@ namespace ChargerDebugApp.Protocol
 
             // SOC Stages (41)
             writer.Write((byte)(SocEnabled ? 1 : 0));
-            writer.Write(SocDeltaPct);
+            writer.Write(SocDeltaTS);
             writer.Write(Soc1Pct);
             writer.Write(Soc2Pct);
             writer.Write(Soc3Pct);
@@ -312,6 +329,9 @@ namespace ChargerDebugApp.Protocol
             }
             writer.Write(hwBytes);
 
+            // v6 admin PIN (u32, appended after the v5 payload)
+            writer.Write(AdminPin);
+
             return ms.ToArray();
         }
 
@@ -341,7 +361,7 @@ namespace ChargerDebugApp.Protocol
                 TempLimitC = reader.ReadSingle(),
 
                 CellVoltEnabled = reader.ReadByte() != 0,
-                CellVoltDeltaV = reader.ReadSingle(),
+                CellVoltDeltaTS = reader.ReadSingle(),
                 CellVolt1V = reader.ReadSingle(),
                 CellVolt2V = reader.ReadSingle(),
                 CellVolt3V = reader.ReadSingle(),
@@ -365,7 +385,7 @@ namespace ChargerDebugApp.Protocol
                 TempCurr4C = reader.ReadSingle(),
 
                 SocEnabled = reader.ReadByte() != 0,
-                SocDeltaPct = reader.ReadSingle(),
+                SocDeltaTS = reader.ReadSingle(),
                 Soc1Pct = reader.ReadSingle(),
                 Soc2Pct = reader.ReadSingle(),
                 Soc3Pct = reader.ReadSingle(),
@@ -406,6 +426,7 @@ namespace ChargerDebugApp.Protocol
             int hwLen = Array.IndexOf(hwRaw, (byte)0);
             if (hwLen < 0) hwLen = 12;
             cfg.HwRev = Encoding.ASCII.GetString(hwRaw, 0, hwLen);
+            cfg.AdminPin = reader.ReadUInt32();
 
             return cfg;
         }

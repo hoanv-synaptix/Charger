@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.ComponentModel;
 using System.Windows;
 using System.Windows.Data;
 using System.Windows.Threading;
@@ -49,7 +50,7 @@ namespace ChargerDebugApp
             ViewModel.PlotModel.Series.Add(_currentSeries);
 
             DataContext = ViewModel;
-            _trafficLogView = CollectionViewSource.GetDefaultCollectionView(ViewModel.TrafficLogs);
+            _trafficLogView = CollectionViewSource.GetDefaultView(ViewModel.TrafficLogs);
             _trafficLogView.Filter = TrafficLogFilter;
             
             // Backend Setup

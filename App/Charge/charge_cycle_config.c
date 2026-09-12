@@ -40,6 +40,11 @@ void ChargeCycleConfig_GetDefaults(ChargeCycleConfig_t *config)
     config->imax_c = DEFAULT_IMAX_C;
     config->ipre_c = DEFAULT_IPRE_C;
     config->ilow_c = DEFAULT_ILOW_C;
+    config->vmin_v = DEFAULT_VMIN_V;
+    config->vmax_v = DEFAULT_VMAX_V;
+    config->vpre_v = DEFAULT_VPRE_V;
+    config->vlow_v = DEFAULT_VLOW_V;
+    config->temp_limit_c = DEFAULT_TEMP_LIMIT_C;
 
     config->module_u_min_v = DEFAULT_MODULE_U_MIN_V;
     config->module_u_max_v = DEFAULT_MODULE_U_MAX_V;
@@ -47,6 +52,7 @@ void ChargeCycleConfig_GetDefaults(ChargeCycleConfig_t *config)
     config->module_i_max_a = DEFAULT_MODULE_I_MAX_A;
     config->protect_jack_temp_power_limit_pct = DEFAULT_JACK_TEMP_POWER_LIMIT_PCT;
     config->protect_jack_temp_trip_c = DEFAULT_JACK_TEMP_TRIP_C;
+    config->admin_pin = DEFAULT_ADMIN_PIN;
 
     /* strncpy into a memset-0 buffer leaves the field NUL-terminated as long
      * as the literal is shorter than the field, which both are. */
@@ -75,7 +81,8 @@ bool ChargeCycleConfig_Set(const ChargeCycleConfig_t *config)
     }
 
     if (config->version != CHARGE_CYCLE_CONFIG_VERSION &&
-        config->version != 1U && config->version != 2U && config->version != 3U && config->version != 4U) {
+        config->version != 1U && config->version != 2U && config->version != 3U &&
+        config->version != 4U && config->version != 5U) {
         return false;
     }
 
@@ -89,7 +96,7 @@ bool ChargeCycleConfig_Set(const ChargeCycleConfig_t *config)
         !validate_non_negative(config->vpre_v) ||
         !validate_non_negative(config->vlow_v) ||
         !validate_range(config->temp_limit_c, -50.0f, 200.0f) ||
-        !validate_non_negative(config->cell_volt_delta_v) ||
+        !validate_range(config->cell_volt_delta_t_s, 0.0f, 600.0f) ||
         !validate_non_negative(config->cell_volt_1_v) ||
         !validate_non_negative(config->cell_volt_2_v) ||
         !validate_non_negative(config->cell_volt_3_v) ||
@@ -109,7 +116,7 @@ bool ChargeCycleConfig_Set(const ChargeCycleConfig_t *config)
         !validate_non_negative(config->temp_curr_2_c) ||
         !validate_non_negative(config->temp_curr_3_c) ||
         !validate_non_negative(config->temp_curr_4_c) ||
-        !validate_range(config->soc_delta_pct, 0.0f, 100.0f) ||
+        !validate_range(config->soc_delta_t_s, 0.0f, 600.0f) ||
         !validate_range(config->soc_1_pct, 0.0f, 100.0f) ||
         !validate_range(config->soc_2_pct, 0.0f, 100.0f) ||
         !validate_range(config->soc_3_pct, 0.0f, 100.0f) ||
@@ -127,7 +134,8 @@ bool ChargeCycleConfig_Set(const ChargeCycleConfig_t *config)
         !validate_non_negative(config->module_u_min_v) ||
         !validate_non_negative(config->module_u_max_v) ||
         !validate_non_negative(config->module_i_min_a) ||
-        !validate_non_negative(config->module_i_max_a)) {
+        !validate_non_negative(config->module_i_max_a) ||
+        config->admin_pin < 100000U || config->admin_pin > 999999U) {
         return false;
     }
 
@@ -153,6 +161,51 @@ bool ChargeCycleConfig_Set(const ChargeCycleConfig_t *config)
         return false;
     }
 
+    /* An enabled stage must have five distinct thresholds.  Equal thresholds
+     * are technically monotonic, but band_from_thresholds() evaluates from
+     * the highest threshold down, so an equal pair silently removes one
+     * operating band.  Disabled stages keep accepting their unused zeroed
+     * defaults. */
+    if (config->cell_volt_enabled &&
+        !(config->cell_volt_1_v < config->cell_volt_2_v &&
+          config->cell_volt_2_v < config->cell_volt_3_v &&
+          config->cell_volt_3_v < config->cell_volt_4_v &&
+          config->cell_volt_4_v < config->cell_volt_5_v)) {
+        return false;
+    }
+
+    if (config->soc_enabled &&
+        !(config->soc_1_pct < config->soc_2_pct &&
+          config->soc_2_pct < config->soc_3_pct &&
+          config->soc_3_pct < config->soc_4_pct &&
+          config->soc_4_pct < config->soc_5_pct)) {
+        return false;
+    }
+
+    if (config->temp_enabled) {
+        float gap_12 = config->temp_2_c - config->temp_1_c;
+        float gap_23 = config->temp_3_c - config->temp_2_c;
+        float gap_34 = config->temp_4_c - config->temp_3_c;
+        float gap_45 = config->temp_5_c - config->temp_4_c;
+        float min_gap = gap_12;
+
+        if (!(config->temp_1_c < config->temp_2_c &&
+              config->temp_2_c < config->temp_3_c &&
+              config->temp_3_c < config->temp_4_c &&
+              config->temp_4_c < config->temp_5_c)) {
+            return false;
+        }
+        if (gap_23 < min_gap) min_gap = gap_23;
+        if (gap_34 < min_gap) min_gap = gap_34;
+        if (gap_45 < min_gap) min_gap = gap_45;
+
+        /* At equality the recovery boundary lands exactly on the previous
+         * threshold; values below it still recover normally. */
+        if (config->temp_delta_c > min_gap) {
+            return false;
+        }
+    }
+
     if (config->source_module_count == 0U || config->source_module_count > 8U) {
         return false;
     }
@@ -166,6 +219,7 @@ bool ChargeCycleConfig_Set(const ChargeCycleConfig_t *config)
     }
 
     g_charge_cycle_config = *config;
+    g_charge_cycle_config.version = CHARGE_CYCLE_CONFIG_VERSION;
     /* Defend the display/consumer side against a caller that filled the
      * identity fields to the brim without a terminator. */
     g_charge_cycle_config.device_id[sizeof(g_charge_cycle_config.device_id) - 1U] = '\0';
@@ -233,4 +287,3 @@ const char *ChargeCycleConfig_GetHwRev(void)
     }
     return g_charge_cycle_config.hw_rev;
 }
-

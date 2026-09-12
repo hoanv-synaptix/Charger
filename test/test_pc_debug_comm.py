@@ -238,9 +238,10 @@ def test_feedbyte_burst_100_frames():
 # ═══════════════════════════════════════════════════════
 
 def test_charge_cycle_config_size():
-    """ChargeCycleConfig_t must be exactly 239 bytes"""
+    """ChargeCycleConfig_t must be exactly 243 bytes (v6)."""
     h = read("App/Charge/charge_cycle_config.h")
-    assert "_Static_assert(sizeof(ChargeCycleConfig_t) == 239" in h
+    assert "_Static_assert(sizeof(ChargeCycleConfig_t) == 243" in h
+    assert "uint32_t admin_pin" in h
 
 def test_debug_module_data_size():
     """DebugModuleData_t must be 123 bytes"""
