@@ -1941,17 +1941,17 @@ static bool test_temp_stage_asymmetric_hysteresis(void)
     ChargeController_GetView(&cv);
     ASSERT(cv.active_stage_band == CHARGE_STAGE_BAND_4_5, "cooling to 49C must remain in band 4_5 (delta not met)");
 
-    /* 3. Cool down to 48.0C: 48.0 >= 47.0C -> still in band 4_5 */
+    /* 3. Cool down to 48.0C: 48.0 > 50.0 - 3.0 (47.0C) -> still in band 4_5 */
     g_sim_bms.max_cell_temp_c = 48.0f;
     drive_ms(600U);
     ChargeController_GetView(&cv);
     ASSERT(cv.active_stage_band == CHARGE_STAGE_BAND_4_5, "cooling to 48C must remain in band 4_5 (delta not met)");
 
-    /* 4. Cool down to 46.0C: 46.0 < 47.0C -> recovers to band 3_4 */
-    g_sim_bms.max_cell_temp_c = 46.0f;
+    /* 4. Cool down to exactly 47.0C (lower_thresh - delta): must recover to band 3_4 immediately */
+    g_sim_bms.max_cell_temp_c = 47.0f;
     drive_ms(600U);
     ChargeController_GetView(&cv);
-    ASSERT(cv.active_stage_band == CHARGE_STAGE_BAND_3_4, "cooling to 46C (< lower_thresh - delta) must recover to band 3_4");
+    ASSERT(cv.active_stage_band == CHARGE_STAGE_BAND_3_4, "cooling to exactly 47C (= lower_thresh - delta) must recover to band 3_4");
     ASSERT(fabsf(cv.target_current_total_a - 100.0f) < 1.0f, "recovered band 3_4 should restore 100A");
 
     /* 5. Jump to 60.0C (threshold 5: ABOVE_MAX): must inhibit immediately */
@@ -1961,17 +1961,17 @@ static bool test_temp_stage_asymmetric_hysteresis(void)
     ASSERT(cv.active_stage_band == CHARGE_STAGE_BAND_ABOVE_MAX, "rising to 60C must trip immediately to ABOVE_MAX");
     ASSERT(cv.inhibit == 1, "ABOVE_MAX must set inhibit");
 
-    /* 6. Cool down to 58.0C: 58.0 >= 60.0 - 3.0 (57.0C) -> still ABOVE_MAX */
+    /* 6. Cool down to 58.0C: 58.0 > 60.0 - 3.0 (57.0C) -> still ABOVE_MAX */
     g_sim_bms.max_cell_temp_c = 58.0f;
     drive_ms(600U);
     ChargeController_GetView(&cv);
     ASSERT(cv.active_stage_band == CHARGE_STAGE_BAND_ABOVE_MAX, "cooling to 58C must stay in ABOVE_MAX (delta not met)");
 
-    /* 7. Cool down to 56.0C: 56.0 < 57.0C -> recovers to band 4_5 */
-    g_sim_bms.max_cell_temp_c = 56.0f;
+    /* 7. Cool down to exactly 57.0C (lower_thresh - delta): must recover to band 4_5 */
+    g_sim_bms.max_cell_temp_c = 57.0f;
     drive_ms(600U);
     ChargeController_GetView(&cv);
-    ASSERT(cv.active_stage_band == CHARGE_STAGE_BAND_4_5, "cooling to 56C must recover from ABOVE_MAX to band 4_5");
+    ASSERT(cv.active_stage_band == CHARGE_STAGE_BAND_4_5, "cooling to exactly 57C must recover from ABOVE_MAX to band 4_5");
     ASSERT(cv.inhibit == 0, "inhibit must clear on recovery");
     ASSERT(fabsf(cv.target_current_total_a - 30.0f) < 1.0f, "recovered band 4_5 current target restored");
 

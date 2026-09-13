@@ -473,6 +473,115 @@ static bool test_dc_load_lost_hot_unplug(void)
     return true;
 }
 
+static bool test_bms_thermal_warning_suppresses_load_lost(void)
+{
+    printf("Running test_bms_thermal_warning_suppresses_load_lost...\n");
+    ASSERT(setup(NULL), "setup");
+    healthy_bms(400.0f);
+    ASSERT(start_running(), "controller never RUNNING");
+    establish_load(400.0f, 40.0f);
+
+    /* Severity 1 identifies the thermal cause but remains reporting-only. */
+    set_bms_alarm_severity(4U, 1U);
+    drive_ms(600U);
+
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    g_sim_module.voltage = cv.target_voltage_v;
+    g_sim_module.current = 0.0f;
+    g_sim_bms.pack_current_a = 0.0f;
+    drive_ms(1500U);
+
+    AlarmView_t view;
+    Alarm_GetView(&view);
+    ASSERT(alarm_active(ALARM_BMS_TEMP_HIGH_CHG),
+           "severity 1 thermal warning must remain visible");
+    ASSERT(view.highest_action == ALARM_ACT_INFO,
+           "severity 1 thermal warning must remain INFO");
+    ASSERT(!alarm_active(ALARM_DC_LOAD_LOST),
+           "known BMS thermal cause must suppress latched E023");
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING,
+           "severity 1 thermal warning must not stop charging by itself");
+    printf("[PASS] test_bms_thermal_warning_suppresses_load_lost\n");
+    return true;
+}
+
+static bool test_bms_thermal_fault_owns_stop_without_e023(void)
+{
+    printf("Running test_bms_thermal_fault_owns_stop_without_e023...\n");
+    ASSERT(setup(NULL), "setup");
+    healthy_bms(400.0f);
+    ASSERT(start_running(), "controller never RUNNING");
+    establish_load(400.0f, 40.0f);
+
+    set_bms_alarm_severity(4U, 2U);
+    drive_ms(1000U);
+
+    AlarmView_t view;
+    Alarm_GetView(&view);
+    ASSERT(alarm_active(ALARM_BMS_TEMP_HIGH_CHG),
+           "severity 2 thermal alarm must be visible");
+    ASSERT(view.highest_action == ALARM_ACT_STOP,
+           "severity 2 thermal alarm must request STOP");
+    ASSERT(!alarm_active(ALARM_DC_LOAD_LOST),
+           "BMS thermal fault must not create duplicate E023");
+
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state != CHARGE_CTRL_STATE_RUNNING,
+           "severity 2 thermal alarm must stop charging");
+    printf("[PASS] test_bms_thermal_fault_owns_stop_without_e023\n");
+    return true;
+}
+
+static bool test_controller_temperature_inhibit_suppresses_load_lost(void)
+{
+    printf("Running test_controller_temperature_inhibit_suppresses_load_lost...\n");
+    ChargeCycleConfig_t cfg;
+    ASSERT(setup(&cfg), "setup");
+
+    cfg.temp_enabled = 1U;
+    cfg.temp_delta_c = 1.0f;
+    cfg.temp_1_c = 10.0f;
+    cfg.temp_2_c = 20.0f;
+    cfg.temp_3_c = 40.0f;
+    cfg.temp_4_c = 50.0f;
+    cfg.temp_5_c = 55.0f;
+    cfg.temp_curr_1_c = 1.0f;
+    cfg.temp_curr_2_c = 0.8f;
+    cfg.temp_curr_3_c = 0.5f;
+    cfg.temp_curr_4_c = 0.2f;
+    ASSERT(ChargeCycleConfig_Set(&cfg), "temperature config rejected");
+
+    healthy_bms(400.0f);
+    ASSERT(start_running(), "controller never RUNNING");
+    establish_load(400.0f, 40.0f);
+
+    /* Temperature stage ABOVE_MAX is a recoverable controller inhibit. */
+    g_sim_bms.max_cell_temp_c = 60.0f;
+    drive_ms(600U);
+
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.inhibit != 0U &&
+           cv.active_limit_source == CHARGE_LIMIT_SOURCE_TEMPERATURE,
+           "controller must expose temperature as the active inhibit source");
+
+    g_sim_module.voltage = cv.target_voltage_v;
+    g_sim_module.current = 0.0f;
+    g_sim_bms.pack_current_a = 0.0f;
+    drive_ms(1500U);
+
+    ASSERT(!alarm_active(ALARM_DC_LOAD_LOST),
+           "controller thermal inhibit must suppress latched E023");
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING,
+           "recoverable temperature inhibit must keep RUNNING state");
+    printf("[PASS] test_controller_temperature_inhibit_suppresses_load_lost\n");
+    return true;
+}
+
 static bool test_dc_out_not_established(void)
 {
     printf("Running test_dc_out_not_established...\n");
@@ -629,6 +738,9 @@ int main(void)
     ok &= test_module_specific_alarms_and_dwin_text();
     ok &= test_cv_taper_no_false_load_lost();
     ok &= test_dc_load_lost_hot_unplug();
+    ok &= test_bms_thermal_warning_suppresses_load_lost();
+    ok &= test_bms_thermal_fault_owns_stop_without_e023();
+    ok &= test_controller_temperature_inhibit_suppresses_load_lost();
     ok &= test_dc_out_not_established();
     ok &= test_bms_comm_lost_mid_charge();
     ok &= test_bms_no_pack_voltage();

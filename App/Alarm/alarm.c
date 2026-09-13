@@ -278,9 +278,25 @@ static bool ev_bms_no_pack_voltage(const AlarmInputs_t *in, uint32_t param) {
  * the commanded voltage is still pinned at target AND (BMS mode) the BMS's own
  * pack current has also fallen to ~0. A genuine taper keeps batt_current > 0
  * and decays smoothly; an opened DC path drops both to zero at once while the
- * module output voltage jumps to its ceiling. */
+ * module output voltage jumps to its ceiling.
+ *
+ * A thermal protection event can intentionally open the BMS contactor and make
+ * the exact same electrical signature. When that thermal cause is already
+ * present in this snapshot, the thermal alarm/inhibit owns the response and
+ * this derived alarm must not create a second latched E023. */
 static bool ev_dc_load_lost(const AlarmInputs_t *in, uint32_t param) {
     (void)param;
+
+    bool thermal_inhibit =
+        (in->cc.inhibit != 0U) &&
+        (in->cc.active_limit_source == CHARGE_LIMIT_SOURCE_TEMPERATURE);
+    bool bms_thermal_alarm =
+        in->bms.online &&
+        (((in->bms.warning_flags | in->bms.alarm_flags) &
+          BMS_ALARM_TEMP_HIGH_CHG) != 0U);
+
+    if (thermal_inhibit || bms_thermal_alarm) return false;
+
     if (in->cc.state != CHARGE_CTRL_STATE_RUNNING) return false;
     if (!g_alarm.load_established) return false;
     if (in->cc.applied_current_per_module_a <= ALARM_I_LOAD_MIN_A) return false;

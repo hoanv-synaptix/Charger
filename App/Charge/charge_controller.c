@@ -1097,7 +1097,7 @@ static ChargeStageEval_t eval_temp_stage(const ChargeCycleConfig_t *cfg, const B
     if (g_ctrl.last_temp_band != CHARGE_STAGE_BAND_NONE) {
         if (new_band < g_ctrl.last_temp_band) {
             float lower_thresh = get_lower_threshold_for_band(cfg, CHARGE_LIMIT_SOURCE_TEMPERATURE, g_ctrl.last_temp_band);
-            if (temp_c >= (lower_thresh - cfg->temp_delta_c)) {
+            if (temp_c > (lower_thresh - cfg->temp_delta_c)) {
                 new_band = g_ctrl.last_temp_band; /* Keep current band */
             }
         }
