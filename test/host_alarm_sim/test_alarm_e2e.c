@@ -372,20 +372,12 @@ static bool test_module_specific_alarms_and_dwin_text(void)
            "fan fault must map to E016");
     ASSERT(strcmp(DWIN_Alarm_GetCodeString(ALARM_MOD_AC_OVER_VOLT), "E017") == 0,
            "AC input overvoltage must map to E017");
-    ASSERT(strcmp(DWIN_Alarm_GetCodeString(ALARM_MOD_OUTPUT_UNDER_VOLT), "W012") == 0,
-           "output undervoltage warning must map to W012");
-    ASSERT(strcmp(DWIN_Alarm_GetCodeString(ALARM_MOD_OUTPUT_OVER_VOLT_WARN), "W013") == 0,
-           "output overvoltage warning must map to W013");
 
     uint8_t desc_len = 0U;
     ASSERT(DWIN_Alarm_GetDescUtf16(ALARM_MOD_FAN_FAULT, &desc_len) != NULL && desc_len > 0U,
            "fan fault description must be available");
     ASSERT(DWIN_Alarm_GetDescUtf16(ALARM_MOD_AC_OVER_VOLT, &desc_len) != NULL && desc_len > 0U,
            "AC input overvoltage description must be available");
-    ASSERT(DWIN_Alarm_GetDescUtf16(ALARM_MOD_OUTPUT_UNDER_VOLT, &desc_len) != NULL && desc_len > 0U,
-           "output undervoltage warning description must be available");
-    ASSERT(DWIN_Alarm_GetDescUtf16(ALARM_MOD_OUTPUT_OVER_VOLT_WARN, &desc_len) != NULL && desc_len > 0U,
-           "output overvoltage warning description must be available");
 
     ASSERT(setup(NULL), "setup");
     healthy_bms(400.0f);
@@ -405,25 +397,15 @@ static bool test_module_specific_alarms_and_dwin_text(void)
     Alarm_GetView(&view);
     ASSERT(view.highest_action == ALARM_ACT_STOP, "new module alarms must request STOP");
 
+    /* TonHe bits 12 and 13 (previously W012/W013) must be ignored now */
     ASSERT(setup(NULL), "setup");
     healthy_bms(400.0f);
     ASSERT(start_running(), "controller never RUNNING");
-    g_sim_module.tonhe_fault_bits = (1U << 12);
-    drive_ms(3000U);
-    ASSERT(alarm_active(ALARM_MOD_OUTPUT_UNDER_VOLT), "W012 warning not active");
+    g_sim_module.tonhe_fault_bits = (1U << 12) | (1U << 13);
+    drive_ms(800U);
     Alarm_GetView(&view);
-    ASSERT(view.highest_action == ALARM_ACT_INFO, "W012 must remain INFO over time");
-    ASSERT(!alarm_active(ALARM_MOD_OVER_VOLT_OUT), "W012 must not become E012");
+    ASSERT(view.active_count == 0, "W012/W013 removal: bits 12/13 must not raise alarms");
 
-    ASSERT(setup(NULL), "setup");
-    healthy_bms(400.0f);
-    ASSERT(start_running(), "controller never RUNNING");
-    g_sim_module.tonhe_fault_bits = (1U << 13);
-    drive_ms(3000U);
-    ASSERT(alarm_active(ALARM_MOD_OUTPUT_OVER_VOLT_WARN), "W013 warning not active");
-    Alarm_GetView(&view);
-    ASSERT(view.highest_action == ALARM_ACT_INFO, "W013 must remain INFO over time");
-    ASSERT(!alarm_active(ALARM_MOD_OVER_VOLT_OUT), "W013 must not become E012");
     printf("[PASS] test_module_specific_alarms_and_dwin_text\n");
     return true;
 }

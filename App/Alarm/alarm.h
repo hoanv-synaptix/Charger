@@ -77,8 +77,6 @@ typedef enum {
     /* Appended to preserve existing active_mask bit positions. */
     ALARM_MOD_FAN_FAULT,
     ALARM_MOD_AC_OVER_VOLT,
-    ALARM_MOD_OUTPUT_UNDER_VOLT,
-    ALARM_MOD_OUTPUT_OVER_VOLT_WARN,
 
     ALARM_CODE_COUNT
 } AlarmCode_t;

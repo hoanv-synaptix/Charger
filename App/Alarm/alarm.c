@@ -191,8 +191,6 @@ static const AlarmSpec_t k_specs[] = {
     { ALARM_MOD_AC_UNDER_VOLT,   ALARM_ACT_INFO,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_AC_UNDER_VOLT,    "Module AC under-voltage" },
     { ALARM_MOD_OVER_CURR_OUT,   ALARM_ACT_STOP,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_OVER_CURR_OUT,    "Module output over-current" },
     { ALARM_MOD_PFC_FAULT,       ALARM_ACT_STOP,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod_pfc, 0,                          "Module PFC fault" },
-    { ALARM_MOD_OUTPUT_UNDER_VOLT, ALARM_ACT_INFO, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_OUTPUT_UNDER_VOLT, "Module output under-voltage warning" },
-    { ALARM_MOD_OUTPUT_OVER_VOLT_WARN, ALARM_ACT_INFO, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_OUTPUT_OVER_VOLT_WARN, "Module output over-voltage warning" },
 
     /* --- controller faults (mirror, report/log only -- controller already acts) --- */
     { ALARM_CTRL_NO_MODULE,       ALARM_ACT_INFO, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_ctrl, CHARGE_CTRL_FAULT_NO_MODULE,             "No charger module" },

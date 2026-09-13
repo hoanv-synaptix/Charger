@@ -22,137 +22,137 @@ static const DwinAlarmEntry_t s_alarm_entries[ALARM_CODE_COUNT] = {
     [ALARM_BMS_LOW_PACK_VOLT] = {
         ALARM_BMS_LOW_PACK_VOLT,
         "E001",
-        (const uint16_t *)u"Điện áp pack BMS thấp"
+        (const uint16_t *)u"Điện áp pin thấp"
     },
     [ALARM_BMS_LOW_CELL_VOLT] = {
         ALARM_BMS_LOW_CELL_VOLT,
         "E002",
-        (const uint16_t *)u"Điện áp cell BMS thấp"
+        (const uint16_t *)u"Điện áp cell pin thấp"
     },
     [ALARM_BMS_HIGH_PACK_VOLT] = {
         ALARM_BMS_HIGH_PACK_VOLT,
         "E003",
-        (const uint16_t *)u"Điện áp pack BMS cao"
+        (const uint16_t *)u"Điện áp pin cao"
     },
     [ALARM_BMS_HIGH_CELL_VOLT] = {
         ALARM_BMS_HIGH_CELL_VOLT,
         "E004",
-        (const uint16_t *)u"Quá áp cell pin BMS"
+        (const uint16_t *)u"Điện áp cell pin cao"
     },
     [ALARM_BMS_TEMP_HIGH_CHG] = {
         ALARM_BMS_TEMP_HIGH_CHG,
         "E005",
-        (const uint16_t *)u"Quá nhiệt khi sạc BMS"
+        (const uint16_t *)u"Pin quá nóng khi sạc"
     },
     [ALARM_BMS_TEMP_HIGH_DCHG] = {
         ALARM_BMS_TEMP_HIGH_DCHG,
         "W001",
-        (const uint16_t *)u"Quá nhiệt khi xả BMS"
+        (const uint16_t *)u"Pin quá nóng khi xả"
     },
     [ALARM_BMS_TEMP_LOW_CHG] = {
         ALARM_BMS_TEMP_LOW_CHG,
         "E006",
-        (const uint16_t *)u"Nhiệt độ sạc BMS thấp"
+        (const uint16_t *)u"Pin quá lạnh khi sạc"
     },
     [ALARM_BMS_TEMP_LOW_DCHG] = {
         ALARM_BMS_TEMP_LOW_DCHG,
         "W002",
-        (const uint16_t *)u"Nhiệt độ xả BMS thấp"
+        (const uint16_t *)u"Pin quá lạnh khi xả"
     },
     [ALARM_BMS_TEMP_RELAY_HIGH] = {
         ALARM_BMS_TEMP_RELAY_HIGH,
         "W003",
-        (const uint16_t *)u"Quá nhiệt rơ le BMS"
+        (const uint16_t *)u"Nhiệt độ MOS cao"
     },
     [ALARM_BMS_OVER_CHG_CURR] = {
         ALARM_BMS_OVER_CHG_CURR,
         "E007",
-        (const uint16_t *)u"Quá dòng sạc BMS"
+        (const uint16_t *)u"Quá dòng sạc pin"
     },
     [ALARM_BMS_OVER_DCHG_CURR] = {
         ALARM_BMS_OVER_DCHG_CURR,
         "W004",
-        (const uint16_t *)u"Quá dòng xả BMS"
+        (const uint16_t *)u"Quá dòng xả pin"
     },
     [ALARM_MOD_HW_FAULT] = {
         ALARM_MOD_HW_FAULT,
         "E010",
-        (const uint16_t *)u"Lỗi phần cứng module sạc"
+        (const uint16_t *)u"Lỗi phần cứng bộ sạc"
     },
     [ALARM_MOD_COMM_FAIL] = {
         ALARM_MOD_COMM_FAIL,
         "W010",
-        (const uint16_t *)u"Mất giao tiếp module sạc"
+        (const uint16_t *)u"Mất giao tiếp bộ sạc"
     },
     [ALARM_MOD_OVER_TEMP] = {
         ALARM_MOD_OVER_TEMP,
         "E011",
-        (const uint16_t *)u"Quá nhiệt module sạc"
+        (const uint16_t *)u"Nhiệt độ bộ sạc cao"
     },
     [ALARM_MOD_OVER_VOLT_OUT] = {
         ALARM_MOD_OVER_VOLT_OUT,
         "E012",
-        (const uint16_t *)u"Quá áp đầu ra module sạc"
+        (const uint16_t *)u"Điện áp DC đầu ra sạc cao"
     },
     [ALARM_MOD_SHORT_CIRCUIT] = {
         ALARM_MOD_SHORT_CIRCUIT,
         "E013",
-        (const uint16_t *)u"Ngắn mạch đầu ra module"
+        (const uint16_t *)u"Ngắn mạch đầu ra sạc"
     },
     [ALARM_MOD_AC_UNDER_VOLT] = {
         ALARM_MOD_AC_UNDER_VOLT,
         "W011",
-        (const uint16_t *)u"Điện áp AC vào module thấp"
+        (const uint16_t *)u"Điện lưới AC bị yếu"
     },
     [ALARM_MOD_OVER_CURR_OUT] = {
         ALARM_MOD_OVER_CURR_OUT,
         "E014",
-        (const uint16_t *)u"Quá dòng đầu ra module sạc"
+        (const uint16_t *)u"Quá dòng đầu ra bộ sạc"
     },
     [ALARM_MOD_PFC_FAULT] = {
         ALARM_MOD_PFC_FAULT,
         "E015",
-        (const uint16_t *)u"Lỗi mạch PFC module sạc"
+        (const uint16_t *)u"Lỗi khối nguồn bộ sạc"
     },
     [ALARM_CTRL_NO_MODULE] = {
         ALARM_CTRL_NO_MODULE,
         "E027",
-        (const uint16_t *)u"Không tìm thấy module sạc"
+        (const uint16_t *)u"Lỗi bộ sạc"
     },
     [ALARM_CTRL_MODULE_MISMATCH] = {
         ALARM_CTRL_MODULE_MISMATCH,
         "E028",
-        (const uint16_t *)u"Số lượng module không khớp"
+        (const uint16_t *)u"Số bộ sạc không khớp"
     },
     [ALARM_CTRL_INVALID_CONFIG] = {
         ALARM_CTRL_INVALID_CONFIG,
         "E029",
-        (const uint16_t *)u"Cấu hình sạc không hợp lệ"
+        (const uint16_t *)u"Lỗi cấu hình sạc"
     },
     [ALARM_CTRL_JACK_OVER_V] = {
         ALARM_CTRL_JACK_OVER_V,
         "E030",
-        (const uint16_t *)u"Bảo vệ quá áp jack cắm"
+        (const uint16_t *)u"Sụt áp jack sạc"
     },
     [ALARM_CTRL_JACK_OVER_TEMP] = {
         ALARM_CTRL_JACK_OVER_TEMP,
         "E031",
-        (const uint16_t *)u"Bảo vệ quá nhiệt jack cắm"
+        (const uint16_t *)u"Nhiệt độ jack sạc cao"
     },
     [ALARM_BMS_COMM_LOST] = {
         ALARM_BMS_COMM_LOST,
         "E021",
-        (const uint16_t *)u"Mất kết nối BMS khi sạc"
+        (const uint16_t *)u"Mất giao tiếp CAN pin"
     },
     [ALARM_BMS_NO_PACK_VOLTAGE] = {
         ALARM_BMS_NO_PACK_VOLTAGE,
         "E022",
-        (const uint16_t *)u"Không có điện áp pin"
+        (const uint16_t *)u"Không có PIN"
     },
     [ALARM_DC_LOAD_LOST] = {
         ALARM_DC_LOAD_LOST,
         "E023",
-        (const uint16_t *)u"Mất tải đầu ra DC"
+        (const uint16_t *)u"Mất tải đột ngột"
     },
     [ALARM_DC_OUT_NOT_ESTABLISHED] = {
         ALARM_DC_OUT_NOT_ESTABLISHED,
@@ -162,22 +162,12 @@ static const DwinAlarmEntry_t s_alarm_entries[ALARM_CODE_COUNT] = {
     [ALARM_MOD_FAN_FAULT] = {
         ALARM_MOD_FAN_FAULT,
         "E016",
-        (const uint16_t *)u"L\u1ed7i qu\u1ea1t module s\u1ea1c"
+        (const uint16_t *)u"Lỗi quạt tản nhiệt bộ sạc"
     },
     [ALARM_MOD_AC_OVER_VOLT] = {
         ALARM_MOD_AC_OVER_VOLT,
         "E017",
-        (const uint16_t *)u"Qu\u00e1 \u00e1p AC \u0111\u1ea7u v\u00e0o module"
-    },
-    [ALARM_MOD_OUTPUT_UNDER_VOLT] = {
-        ALARM_MOD_OUTPUT_UNDER_VOLT,
-        "W012",
-        (const uint16_t *)u"C\u1ea3nh b\u00e1o th\u1ea5p \u00e1p \u0111\u1ea7u ra module"
-    },
-    [ALARM_MOD_OUTPUT_OVER_VOLT_WARN] = {
-        ALARM_MOD_OUTPUT_OVER_VOLT_WARN,
-        "W013",
-        (const uint16_t *)u"C\u1ea3nh b\u00e1o qu\u00e1 \u00e1p \u0111\u1ea7u ra module"
+        (const uint16_t *)u"Điện áp AC đầu vào sạc cao"
     }
 };
 
