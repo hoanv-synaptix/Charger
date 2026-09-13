@@ -168,6 +168,11 @@ static const DwinAlarmEntry_t s_alarm_entries[ALARM_CODE_COUNT] = {
         ALARM_MOD_AC_OVER_VOLT,
         "E017",
         (const uint16_t *)u"Điện áp AC đầu vào sạc cao"
+    },
+    [ALARM_BMS_VOLT_MISMATCH] = {
+        ALARM_BMS_VOLT_MISMATCH,
+        "E032",
+        (const uint16_t *)u"Lỗi nhầm sạc"
     }
 };
 

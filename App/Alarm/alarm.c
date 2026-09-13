@@ -55,7 +55,8 @@
 #define ALARM_DB_COMM_CLEAR_MS        500U
 #define ALARM_DB_NO_PACK_SET_MS       500U
 #define ALARM_DB_NO_PACK_CLEAR_MS    1000U
-#define ALARM_DB_AC_MS               1000U
+#define ALARM_DB_AC_UNDERVOLT_SET_MS 5000U   /* 5s filter: suppress false alarm from cap discharge on AC turn-off */
+#define ALARM_DB_VOLT_MISMATCH_SET_MS 1000U   /* 1s filter: charger voltage vs BMS target mismatch (E032) */
 #define ALARM_DB_LOAD_LOST_CLEAR_MS   3000U  /* Keep code visible 3s after stop before returning to 0000 */
 
 /* Console (LOG) breadcrumb rate-limit. LOG() blocks up to 50 ms
@@ -156,6 +157,7 @@ static bool ev_bms_comm_lost(const AlarmInputs_t *in, uint32_t param);
 static bool ev_bms_no_pack_voltage(const AlarmInputs_t *in, uint32_t param);
 static bool ev_dc_load_lost(const AlarmInputs_t *in, uint32_t param);
 static bool ev_dc_out_not_established(const AlarmInputs_t *in, uint32_t param);
+static bool ev_bms_volt_mismatch(const AlarmInputs_t *in, uint32_t param);
 
 /* BMS severity: bits that gate the charge relay in bms_core.c
  * (bms_critical_alarm_mask). Keep this list in sync with that function --
@@ -188,7 +190,7 @@ static const AlarmSpec_t k_specs[] = {
     { ALARM_MOD_OVER_TEMP,       ALARM_ACT_STOP,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_OVER_TEMP,        "Module over-temp" },
     { ALARM_MOD_OVER_VOLT_OUT,   ALARM_ACT_ESTOP, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_OVER_VOLTAGE_OUT, "Module output over-voltage" },
     { ALARM_MOD_SHORT_CIRCUIT,   ALARM_ACT_ESTOP, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_SHORT_CIRCUIT,    "Module output short circuit" },
-    { ALARM_MOD_AC_UNDER_VOLT,   ALARM_ACT_INFO,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_AC_UNDER_VOLT,    "Module AC under-voltage" },
+    { ALARM_MOD_AC_UNDER_VOLT,   ALARM_ACT_INFO,  false, ALARM_DB_AC_UNDERVOLT_SET_MS, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_AC_UNDER_VOLT, "Module AC under-voltage" },
     { ALARM_MOD_OVER_CURR_OUT,   ALARM_ACT_STOP,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_OVER_CURR_OUT,    "Module output over-current" },
     { ALARM_MOD_PFC_FAULT,       ALARM_ACT_STOP,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod_pfc, 0,                          "Module PFC fault" },
 
@@ -206,6 +208,7 @@ static const AlarmSpec_t k_specs[] = {
     { ALARM_DC_OUT_NOT_ESTABLISHED, ALARM_ACT_STOP, false, 0,                       ALARM_DB_LOAD_LOST_CLEAR_MS, ev_dc_out_not_established, 0, "DC output not established" },
     { ALARM_MOD_FAN_FAULT,          ALARM_ACT_STOP, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_FAN_FAULT,    "Module fan fault" },
     { ALARM_MOD_AC_OVER_VOLT,       ALARM_ACT_STOP, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_AC_OVER_VOLT, "Module AC input over-voltage" },
+    { ALARM_BMS_VOLT_MISMATCH,      ALARM_ACT_STOP, false, ALARM_DB_VOLT_MISMATCH_SET_MS, ALARM_DB_COMM_CLEAR_MS, ev_bms_volt_mismatch, 0, "Charger voltage mismatch" },
 };
 
 #define ALARM_SPEC_COUNT ((uint8_t)(sizeof(k_specs) / sizeof(k_specs[0])))
@@ -316,6 +319,15 @@ static bool ev_dc_out_not_established(const AlarmInputs_t *in, uint32_t param) {
     if ((in->now - g_alarm.relay_close_since) < ALARM_DC_OUT_CONFIRM_MS) return false;
     if (in->cc.applied_current_per_module_a <= ALARM_I_LOAD_MIN_A) return false;
     return (in->mod_current_max >= 0.0f) && (in->mod_current_max < ALARM_I_LOAD_MIN_A);
+}
+
+static bool ev_bms_volt_mismatch(const AlarmInputs_t *in, uint32_t param) {
+    (void)param;
+    if (!in->bms.online) return false;
+    if (in->cfg_source_mode != CHARGE_SOURCE_BMS_CONTROLLED) return false;
+    if (in->bms.chg_volt_request <= 10.0f || in->cfg_vmax_v <= 10.0f) return false;
+    float diff = fabsf(in->bms.chg_volt_request - in->cfg_vmax_v);
+    return (diff > 2.0f);
 }
 
 /* ============== Inputs gather ============== */

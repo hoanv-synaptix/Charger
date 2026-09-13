@@ -689,11 +689,15 @@ static bool test_module_ac_undervolt_mirrored_and_derived(void)
     healthy_bms(400.0f);
     ASSERT(start_running(), "controller never RUNNING");
 
-    /* 1. AC input drops -> module AC_UNDER_VOLT mirror trips (W011, INFO only) */
+    /* 1. Transient AC undervoltage (e.g. capacitor discharge when AC is turned off, < 5000 ms)
+     * must NOT trip W011. */
     g_sim_module.tonhe_fault_bits = (1U << 0);   /* input undervoltage */
-    drive_ms(1500U);
+    drive_ms(2500U);
+    ASSERT(!alarm_active(ALARM_MOD_AC_UNDER_VOLT), "transient AC undervolt < 5s must NOT trip W011");
 
-    ASSERT(alarm_logged_raise(ALARM_MOD_AC_UNDER_VOLT), "module AC-undervolt mirror missing");
+    /* Continuing past 5000 ms debounce -> now trips W011 (INFO only) */
+    drive_ms(3000U); /* total 5500 ms */
+    ASSERT(alarm_logged_raise(ALARM_MOD_AC_UNDER_VOLT), "persistent AC undervolt >= 5s must trip W011");
     ASSERT(alarm_active(ALARM_MOD_AC_UNDER_VOLT), "module AC-undervolt mirror must be active");
 
     /* Controller must remain RUNNING since E026 was removed */
@@ -845,6 +849,65 @@ static bool test_bms_alarm_timeout_auto_recovers_to_0000(void)
     return true;
 }
 
+static void feed_chg_request(float volt_v, float curr_a)
+{
+    uint16_t volt_req = (uint16_t)(volt_v * 10.0f);
+    uint16_t curr_req = (uint16_t)(curr_a * 10.0f);
+    uint8_t d[8] = {0};
+    d[0] = (uint8_t)(volt_req >> 8);
+    d[1] = (uint8_t)volt_req;
+    d[2] = (uint8_t)(curr_req >> 8);
+    d[3] = (uint8_t)curr_req;
+    BMS_FeedFrame(0x1806E5F4UL, 0, d, 8);
+}
+
+static bool test_bms_volt_mismatch_e032(void)
+{
+    printf("Running test_bms_volt_mismatch_e032...\n");
+    ASSERT(strcmp(DWIN_Alarm_GetCodeString(ALARM_BMS_VOLT_MISMATCH), "E032") == 0,
+           "voltage mismatch must map to E032");
+
+    uint8_t desc_len = 0U;
+    ASSERT(DWIN_Alarm_GetDescUtf16(ALARM_BMS_VOLT_MISMATCH, &desc_len) != NULL && desc_len > 0U,
+           "voltage mismatch description must be available");
+
+    ASSERT(setup(NULL), "setup");
+    healthy_bms(400.0f);
+    /* By default healthy_bms sets chg_volt_request_v = 500.0f and cfg.vmax_v = 500.0f */
+    feed_chg_request(500.0f, 50.0f);
+    drive_ms(500U);
+    ASSERT(!alarm_active(ALARM_BMS_VOLT_MISMATCH), "matching voltage must not trip E032");
+
+    /* Difference <= 2.0V (e.g. 501.5V vs 500.0V -> 1.5V) must NOT trip E032 */
+    g_sim_bms.chg_volt_request_v = 501.5f;
+    feed_chg_request(501.5f, 50.0f);
+    drive_ms(1500U);
+    ASSERT(!alarm_active(ALARM_BMS_VOLT_MISMATCH), "voltage difference <= 2V must not trip E032");
+
+    /* Difference > 2.0V (e.g. 550.0V vs 500.0V -> 50V) */
+    g_sim_bms.chg_volt_request_v = 550.0f;
+    feed_chg_request(550.0f, 50.0f);
+    drive_ms(500U); /* < 1000ms debounce */
+    ASSERT(!alarm_active(ALARM_BMS_VOLT_MISMATCH), "debounce < 1000ms must not trip E032");
+
+    drive_ms(600U); /* total 1100ms > 1000ms debounce */
+    ASSERT(alarm_active(ALARM_BMS_VOLT_MISMATCH), "mismatch > 2V after 1000ms must trip E032");
+
+    AlarmView_t av;
+    Alarm_GetView(&av);
+    ASSERT(av.worst_code == ALARM_BMS_VOLT_MISMATCH, "worst_code must be E032");
+    ASSERT(av.highest_action == ALARM_ACT_STOP, "E032 action must be STOP");
+
+    /* Recovery: voltage matches again (< ALARM_DB_COMM_CLEAR_MS 500ms) */
+    g_sim_bms.chg_volt_request_v = 500.0f;
+    feed_chg_request(500.0f, 50.0f);
+    drive_ms(600U);
+    ASSERT(!alarm_active(ALARM_BMS_VOLT_MISMATCH), "E032 must clear after recovery");
+
+    printf("[PASS] test_bms_volt_mismatch_e032\n");
+    return true;
+}
+
 int main(void)
 {
     bool ok = true;
@@ -866,6 +929,7 @@ int main(void)
     ok &= test_acknowledge_clears_latched();
     ok &= test_start_with_no_module_or_bms_reports_fault_code();
     ok &= test_bms_alarm_timeout_auto_recovers_to_0000();
+    ok &= test_bms_volt_mismatch_e032();
 
     if (ok) { printf("\nALL TESTS PASSED.\n"); return 0; }
     printf("\nSOME TESTS FAILED.\n");
