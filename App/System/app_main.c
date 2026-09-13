@@ -1135,24 +1135,30 @@ void DWIN_OnKeyEvent(uint16_t vp, uint16_t keyval)
     static uint16_t s_cfg_hours = 2U;
     static uint16_t s_cfg_minutes = 30U;
 
+    LOG("DWIN: key event (vp=0x%04X keyval=0x%04X)\r\n", (unsigned)vp, (unsigned)keyval);
+
     if (vp == VP_TIME_MODE_KEY) {
         if (keyval == DWIN_SETTING_KEY_LOGIN) {
             dwin_open_login();
-        } else if (keyval == 0x0001U) {
-            /* Open Time & Mode config page */
+        } else {
+            /* Open Time & Mode config page for any keyval (e.g. 0x0001) */
             ChargeCycleConfig_t cfg;
             ChargeCycleConfig_Get(&cfg);
             s_cfg_hours = cfg.delay_hours;
             s_cfg_minutes = cfg.delay_minutes;
-            DWIN_SendWords(VP_CFG_HOURS, &s_cfg_hours, 1U);
-            DWIN_SendWords(VP_CFG_MINUTES, &s_cfg_minutes, 1U);
             uint16_t target_page = DWIN_PAGE_CONFIG_FAST_OFF;
             if (cfg.charge_mode == 0U) {
                 target_page = (cfg.delay_enabled != 0U) ? DWIN_PAGE_CONFIG_FAST_ON : DWIN_PAGE_CONFIG_FAST_OFF;
             } else {
                 target_page = (cfg.delay_enabled != 0U) ? DWIN_PAGE_CONFIG_NORM_ON : DWIN_PAGE_CONFIG_NORM_OFF;
             }
+            LOG("DWIN: Open Time & Mode page=%u (mode=%u delay=%u %02u:%02u)\r\n",
+                (unsigned)target_page, (unsigned)cfg.charge_mode, (unsigned)cfg.delay_enabled,
+                (unsigned)s_cfg_hours, (unsigned)s_cfg_minutes);
+            DWIN_InvalidateSyncState();
             DWIN_SetPage(target_page);
+            DWIN_SendWords(VP_CFG_HOURS, &s_cfg_hours, 1U);
+            DWIN_SendWords(VP_CFG_MINUTES, &s_cfg_minutes, 1U);
         }
         return;
     }

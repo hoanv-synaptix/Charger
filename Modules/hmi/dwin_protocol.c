@@ -517,6 +517,7 @@ void DWIN_ParseRX(const uint8_t *buf, uint16_t len)
                         uint16_t keyval =
                             (uint16_t)(((uint16_t)rx[7] << 8) | rx[8]);
                         if (vp == VP_SYS_BTN_KEY && keyval != 0U) {
+                            s_last_page = -1;
                             DWIN_OnActionButton(keyval);
                         } else if (vp == VP_CFG_HOURS || vp == VP_CFG_MINUTES) {
                             DWIN_OnKeyEvent(vp, keyval);
@@ -524,9 +525,11 @@ void DWIN_ParseRX(const uint8_t *buf, uint16_t len)
                                 uint16_t minval = (uint16_t)(((uint16_t)rx[9] << 8) | rx[10]);
                                 DWIN_OnKeyEvent(VP_CFG_MINUTES, minval);
                             }
-                        } else if ((vp == VP_SET_LOGIN_KEY || vp == VP_LOGIN_KEY ||
+                        } else if ((vp == VP_SET_LOGIN_KEY || vp == VP_TIME_MODE_KEY ||
+                                    vp == VP_LOGIN_KEY ||
                                     vp == VP_PRECHARGE_ACTION_KEY ||
                                     vp == VP_CFG_APPLY_KEY) && keyval != 0U) {
+                            s_last_page = -1;
                             DWIN_OnKeyEvent(vp, keyval);
                         }
                     }
