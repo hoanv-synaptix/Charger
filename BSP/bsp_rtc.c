@@ -93,6 +93,98 @@ void BSP_RTC_EpochToDateTime(uint32_t epoch, BSP_RTC_DateTime_t *dt)
     dt->second = (uint8_t)sec;
 }
 
+/* Calibration defines for STM32G0 internal LSI RTC:
+ * Measured LSI frequency: 32000 * (86400 - 1020) / 86400 ≈ 31622.22 Hz (-11805.6 ppm drift).
+ * Stage 1: Adjust prescaler from nominal (128 * 250 = 32000) to (128 * 247 = 31616).
+ *          AsynchPrediv = 127, SynchPrediv = 246.
+ *          Coarse frequency error = (31622.22 - 31616) / 31616 ≈ +196.805 ppm (+17.0 s/day fast).
+ * Stage 2: Smooth calibration in 32-second period (2^20 = 1048576 RTCCLK cycles).
+ *          Each CALM pulse masks 1 cycle out of 1048576 cycles (approx 0.953674 ppm).
+ *          CALM = 196.805 / 0.953674 ≈ 206 pulses.
+ *          Calibration effect: -196.457 ppm.
+ *          Residual error: +0.348 ppm (~ +0.03 s/day at room temperature).
+ */
+#define BSP_RTC_CALIB_ASYNCH_PREDIV  127U
+#define BSP_RTC_CALIB_SYNCH_PREDIV   246U
+#define BSP_RTC_CALIB_CALM_PULSES    206U
+
+static bool rtc_update_prescaler_if_needed(void)
+{
+    const uint32_t desired_prer = ((uint32_t)BSP_RTC_CALIB_ASYNCH_PREDIV << RTC_PRER_PREDIV_A_Pos) |
+                                  ((uint32_t)BSP_RTC_CALIB_SYNCH_PREDIV << RTC_PRER_PREDIV_S_Pos);
+    const uint32_t prer_mask = RTC_PRER_PREDIV_A | RTC_PRER_PREDIV_S;
+
+    if ((RTC->PRER & prer_mask) == desired_prer) {
+        return true;
+    }
+
+    LOG("BSP_RTC: Updating prescaler (current PRER=0x%08lX -> desired=0x%08lX)...\r\n",
+        (unsigned long)RTC->PRER, (unsigned long)desired_prer);
+
+    /* Note: Entering RTC initialization mode stops the calendar counter and discards
+     * sub-second fractional counters. This is a one-time operation during boot when
+     * prescaler adjustment is required. */
+    __HAL_RTC_WRITEPROTECTION_DISABLE(&s_hrtc);
+
+    if (RTC_EnterInitMode(&s_hrtc) != HAL_OK) {
+        __HAL_RTC_WRITEPROTECTION_ENABLE(&s_hrtc);
+        LOG("BSP_RTC: Failed to enter init mode for prescaler update\r\n");
+        return false;
+    }
+
+    RTC->PRER = desired_prer;
+
+    if (RTC_ExitInitMode(&s_hrtc) != HAL_OK) {
+        __HAL_RTC_WRITEPROTECTION_ENABLE(&s_hrtc);
+        LOG("BSP_RTC: Failed to exit init mode after prescaler update\r\n");
+        return false;
+    }
+
+    __HAL_RTC_WRITEPROTECTION_ENABLE(&s_hrtc);
+
+    if ((RTC->PRER & prer_mask) != desired_prer) {
+        LOG("BSP_RTC: Prescaler readback mismatch (PRER=0x%08lX expected=0x%08lX)\r\n",
+            (unsigned long)RTC->PRER, (unsigned long)desired_prer);
+        return false;
+    }
+
+    LOG("BSP_RTC: Prescaler successfully updated to PRER=0x%08lX\r\n", (unsigned long)RTC->PRER);
+    return true;
+}
+
+static bool rtc_update_smooth_calib_if_needed(void)
+{
+    const uint32_t desired_calr = (uint32_t)(RTC_SMOOTHCALIB_PERIOD_32SEC |
+                                             RTC_SMOOTHCALIB_PLUSPULSES_RESET |
+                                             BSP_RTC_CALIB_CALM_PULSES);
+    const uint32_t calr_mask = RTC_CALR_CALP | RTC_CALR_CALW8 | RTC_CALR_CALW16 | RTC_CALR_CALM;
+
+    if ((RTC->CALR & calr_mask) == desired_calr) {
+        return true;
+    }
+
+    LOG("BSP_RTC: Updating smooth calib (current CALR=0x%08lX -> desired=0x%08lX)...\r\n",
+        (unsigned long)RTC->CALR, (unsigned long)desired_calr);
+
+    HAL_StatusTypeDef status = HAL_RTCEx_SetSmoothCalib(&s_hrtc,
+                                                        RTC_SMOOTHCALIB_PERIOD_32SEC,
+                                                        RTC_SMOOTHCALIB_PLUSPULSES_RESET,
+                                                        BSP_RTC_CALIB_CALM_PULSES);
+    if (status != HAL_OK) {
+        LOG("BSP_RTC: HAL_RTCEx_SetSmoothCalib failed (status=%u)\r\n", (unsigned)status);
+        return false;
+    }
+
+    if ((RTC->CALR & calr_mask) != desired_calr) {
+        LOG("BSP_RTC: CALR readback mismatch (CALR=0x%08lX expected=0x%08lX)\r\n",
+            (unsigned long)RTC->CALR, (unsigned long)desired_calr);
+        return false;
+    }
+
+    LOG("BSP_RTC: Smooth calib successfully updated to CALR=0x%08lX\r\n", (unsigned long)RTC->CALR);
+    return true;
+}
+
 bool BSP_RTC_Init(void)
 {
     if (s_initialized) {
@@ -130,9 +222,10 @@ bool BSP_RTC_Init(void)
     /* 5. Initialize RTC handle */
     s_hrtc.Instance = RTC;
     s_hrtc.Init.HourFormat = RTC_HOURFORMAT_24;
-    /* LSI nominal 32 kHz: AsynchPrediv=127, SynchPrediv=249 -> (127+1)*(249+1) = 32000 */
-    s_hrtc.Init.AsynchPrediv = 127U;
-    s_hrtc.Init.SynchPrediv = 249U;
+    /* LSI nominal 32 kHz calibrated:
+     * AsynchPrediv=127, SynchPrediv=246 -> total division 128 * 247 = 31616. */
+    s_hrtc.Init.AsynchPrediv = BSP_RTC_CALIB_ASYNCH_PREDIV;
+    s_hrtc.Init.SynchPrediv = BSP_RTC_CALIB_SYNCH_PREDIV;
     s_hrtc.Init.OutPut = RTC_OUTPUT_DISABLE;
     s_hrtc.Init.OutPutRemap = RTC_OUTPUT_REMAP_NONE;
     s_hrtc.Init.OutPutPolarity = RTC_OUTPUT_POLARITY_HIGH;
@@ -148,6 +241,19 @@ bool BSP_RTC_Init(void)
     if (HAL_RTC_Init(&s_hrtc) != HAL_OK) {
         return false;
     }
+
+    /* 6. Ensure prescaler in hardware matches desired values even if calendar was already initialized */
+    if (!rtc_update_prescaler_if_needed()) {
+        return false;
+    }
+
+    /* 7. Ensure smooth digital calibration is configured */
+    if (!rtc_update_smooth_calib_if_needed()) {
+        return false;
+    }
+
+    LOG("BSP_RTC: Configured PRER=0x%08lX CALR=0x%08lX ICSR=0x%08lX\r\n",
+        (unsigned long)RTC->PRER, (unsigned long)RTC->CALR, (unsigned long)RTC->ICSR);
 
     /* Check if the calendar was previously synchronized. */
     uint32_t bkp = HAL_RTCEx_BKUPRead(&s_hrtc, RTC_BKP_DR0);
