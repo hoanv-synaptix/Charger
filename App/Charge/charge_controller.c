@@ -184,6 +184,12 @@ static struct {
      * BMS_SendCtrlInfo() -- see update_bms_charge_allow(). Lets that
      * function send only on change instead of every tick. */
     bool bms_charge_allow_sent;
+
+    /* Delay Start scheduled timer */
+    uint32_t delay_start_tick;
+    uint32_t delay_duration_s;
+    uint32_t delay_remaining_s;
+    bool is_delaying;
 } g_ctrl = {0};
 
 /* ============== Stage Evaluation Types ============== */
@@ -2073,6 +2079,23 @@ void ChargeController_Process(uint32_t now_tick) {
             break;
         }
 
+        case CHARGE_CTRL_STATE_DELAY: {
+            stop_charging();
+            uint32_t elapsed_s = (now_tick >= g_ctrl.delay_start_tick) ?
+                                 ((now_tick - g_ctrl.delay_start_tick) / 1000U) : 0U;
+            if (elapsed_s >= g_ctrl.delay_duration_s) {
+                g_ctrl.delay_remaining_s = 0U;
+                g_ctrl.is_delaying = false;
+                LOG("CC: Delay countdown complete (%lu s) -> starting charge\r\n",
+                    (unsigned long)g_ctrl.delay_duration_s);
+                transition_to(CHARGE_CTRL_STATE_READY, now_tick);
+            } else {
+                g_ctrl.delay_remaining_s = g_ctrl.delay_duration_s - elapsed_s;
+                g_ctrl.is_delaying = true;
+            }
+            break;
+        }
+
         case CHARGE_CTRL_STATE_STOPPING:
             stop_charging();
             /* Clear protection timers */
@@ -2174,6 +2197,22 @@ bool ChargeController_Start(ChargeCtrlOwner_t owner, bool manual_mode, uint32_t 
 
     clear_fault();
 
+    /* If Delay Start is enabled, enter DELAY state unless in manual mode */
+    uint32_t delay_total_s = (uint32_t)cfg.delay_hours * 3600U + (uint32_t)cfg.delay_minutes * 60U;
+    if (cfg.delay_enabled != 0U && delay_total_s > 0U && !manual_mode) {
+        g_ctrl.delay_start_tick = now_tick;
+        g_ctrl.delay_duration_s = delay_total_s;
+        g_ctrl.delay_remaining_s = delay_total_s;
+        g_ctrl.is_delaying = true;
+        LOG("CC: Delay start scheduled: %u h %u m (%lu s)\r\n",
+            (unsigned)cfg.delay_hours, (unsigned)cfg.delay_minutes, (unsigned long)delay_total_s);
+        transition_to(CHARGE_CTRL_STATE_DELAY, now_tick);
+        return true;
+    }
+
+    g_ctrl.delay_duration_s = 0U;
+    g_ctrl.delay_remaining_s = 0U;
+    g_ctrl.is_delaying = false;
     transition_to(CHARGE_CTRL_STATE_READY, now_tick);
     return true;
 }
@@ -2337,6 +2376,14 @@ void ChargeController_Stop(uint32_t now_tick) {
     LOG("CC: Stop requested\r\n");
     g_ctrl.stop_reason = CHARGE_STOP_USER_COMMAND;
 
+    if (g_ctrl.state == CHARGE_CTRL_STATE_DELAY) {
+        g_ctrl.delay_remaining_s = 0U;
+        g_ctrl.is_delaying = false;
+        transition_to(CHARGE_CTRL_STATE_IDLE, now_tick);
+        g_ctrl.owner = CHARGE_CTRL_OWNER_NONE;
+        return;
+    }
+
     if (g_ctrl.state == CHARGE_CTRL_STATE_FAULT) {
         /* Clear fault and go to IDLE */
         clear_fault();
@@ -2416,4 +2463,7 @@ void ChargeController_GetView(ChargeCtrlView_t *view) {
     view->stop_reason = g_ctrl.stop_reason;
     view->bms_temp_trip_count = g_ctrl.bms_temp_trip_count;
     view->relay_should_close = g_ctrl.relay_should_close ? 1U : 0U;
+    view->delay_remaining_s = g_ctrl.delay_remaining_s;
+    view->delay_duration_s = g_ctrl.delay_duration_s;
+    view->is_delaying = g_ctrl.is_delaying ? 1U : 0U;
 }

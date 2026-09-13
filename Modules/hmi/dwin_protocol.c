@@ -69,6 +69,19 @@ void DWIN_SendWords(uint16_t vp, const uint16_t *words, uint8_t n_words)
     dwin_write_frame(vp, payload, (uint8_t)(2U * n_words));
 }
 
+void DWIN_SendReadRequest(uint16_t vp, uint8_t n_words)
+{
+    uint8_t frame[7];
+    frame[0] = DWIN_HEADER_1;
+    frame[1] = DWIN_HEADER_2;
+    frame[2] = 4U;
+    frame[3] = DWIN_CMD_READ;
+    frame[4] = (uint8_t)(vp >> 8);
+    frame[5] = (uint8_t)(vp & 0xFFU);
+    frame[6] = n_words;
+    UART_Transmit_To_DWIN(frame, 7U);
+}
+
 void DWIN_SendString(uint16_t vp, const char *str, uint8_t field_words)
 {
     uint8_t payload[2U * DWIN_TX_MAX_WORDS];
@@ -505,8 +518,15 @@ void DWIN_ParseRX(const uint8_t *buf, uint16_t len)
                             (uint16_t)(((uint16_t)rx[7] << 8) | rx[8]);
                         if (vp == VP_SYS_BTN_KEY && keyval != 0U) {
                             DWIN_OnActionButton(keyval);
+                        } else if (vp == VP_CFG_HOURS || vp == VP_CFG_MINUTES) {
+                            DWIN_OnKeyEvent(vp, keyval);
+                            if (vp == VP_CFG_HOURS && nw >= 2U) {
+                                uint16_t minval = (uint16_t)(((uint16_t)rx[9] << 8) | rx[10]);
+                                DWIN_OnKeyEvent(VP_CFG_MINUTES, minval);
+                            }
                         } else if ((vp == VP_SET_LOGIN_KEY || vp == VP_LOGIN_KEY ||
-                                    vp == VP_PRECHARGE_ACTION_KEY) && keyval != 0U) {
+                                    vp == VP_PRECHARGE_ACTION_KEY ||
+                                    vp == VP_CFG_APPLY_KEY) && keyval != 0U) {
                             DWIN_OnKeyEvent(vp, keyval);
                         }
                     }

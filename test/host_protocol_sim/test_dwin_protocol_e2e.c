@@ -680,6 +680,53 @@ static bool test_dwin_precharge_touch_matrix(void)
     return true;
 }
 
+static bool test_dwin_config_page_keys(void)
+{
+    printf("Running test_dwin_config_page_keys...\n");
+    reset_capture();
+    uint8_t f[9];
+
+    /* TIME & MODE key: VP 0x1130 = 0x0001 */
+    build_touch_frame(f, VP_TIME_MODE_KEY, 0x0001);
+    DWIN_ParseRX(f, sizeof(f));
+    ASSERT(g_last_event_vp == VP_TIME_MODE_KEY, "VP matches time mode key VP");
+    ASSERT(g_last_event_key == 0x0001, "Keyval 0x0001 dispatched");
+
+    /* Config Hours: VP 0x1600 = 5 */
+    build_touch_frame(f, VP_CFG_HOURS, 5);
+    DWIN_ParseRX(f, sizeof(f));
+    ASSERT(g_last_event_vp == VP_CFG_HOURS, "VP matches config hours VP");
+    ASSERT(g_last_event_key == 5, "Hours value 5 dispatched");
+
+    /* Config Minutes: VP 0x1602 = 45 */
+    build_touch_frame(f, VP_CFG_MINUTES, 45);
+    DWIN_ParseRX(f, sizeof(f));
+    ASSERT(g_last_event_vp == VP_CFG_MINUTES, "VP matches config minutes VP");
+    ASSERT(g_last_event_key == 45, "Minutes value 45 dispatched");
+
+    /* SAVE & APPLY keys 1..4 */
+    for (uint16_t k = 1; k <= 4; k++) {
+        build_touch_frame(f, VP_CFG_APPLY_KEY, k);
+        DWIN_ParseRX(f, sizeof(f));
+        ASSERT(g_last_event_vp == VP_CFG_APPLY_KEY, "VP matches config apply key VP");
+        ASSERT(g_last_event_key == k, "Apply keycode dispatched");
+    }
+
+    /* DWIN_SendReadRequest framing check */
+    reset_capture();
+    DWIN_SendReadRequest(VP_CFG_HOURS, 2);
+    ASSERT(g_tx_count == 1, "SendReadRequest emitted 1 frame");
+    ASSERT(g_tx_len[0] == 7, "SendReadRequest frame length is 7 bytes");
+    ASSERT(g_tx[0][0] == DWIN_HEADER_1 && g_tx[0][1] == DWIN_HEADER_2, "DWIN header correct");
+    ASSERT(g_tx[0][2] == 0x04, "Length field is 4");
+    ASSERT(g_tx[0][3] == DWIN_CMD_READ, "Command is 0x83 (read)");
+    ASSERT(g_tx[0][4] == 0x16 && g_tx[0][5] == 0x00, "VP is 0x1600");
+    ASSERT(g_tx[0][6] == 0x02, "n_words is 2");
+
+    printf("[PASS] test_dwin_config_page_keys\n");
+    return true;
+}
+
 /* ================================================================== */
 
 int main(void)
@@ -705,6 +752,7 @@ int main(void)
     pass &= test_dwin_precharge_page_update_and_diff();
     pass &= test_dwin_login_keypad_full_matrix();
     pass &= test_dwin_precharge_touch_matrix();
+    pass &= test_dwin_config_page_keys();
 
     if (pass) {
         printf("ALL TESTS PASSED.\n");

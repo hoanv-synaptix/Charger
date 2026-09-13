@@ -53,6 +53,10 @@ void ChargeCycleConfig_GetDefaults(ChargeCycleConfig_t *config)
     config->protect_jack_temp_power_limit_pct = DEFAULT_JACK_TEMP_POWER_LIMIT_PCT;
     config->protect_jack_temp_trip_c = DEFAULT_JACK_TEMP_TRIP_C;
     config->admin_pin = DEFAULT_ADMIN_PIN;
+    config->charge_mode = DEFAULT_CHARGE_MODE;
+    config->delay_enabled = DEFAULT_DELAY_ENABLED;
+    config->delay_hours = DEFAULT_DELAY_HOURS;
+    config->delay_minutes = DEFAULT_DELAY_MINUTES;
 
     /* strncpy into a memset-0 buffer leaves the field NUL-terminated as long
      * as the literal is shorter than the field, which both are. */
@@ -82,7 +86,7 @@ bool ChargeCycleConfig_Set(const ChargeCycleConfig_t *config)
 
     if (config->version != CHARGE_CYCLE_CONFIG_VERSION &&
         config->version != 1U && config->version != 2U && config->version != 3U &&
-        config->version != 4U && config->version != 5U) {
+        config->version != 4U && config->version != 5U && config->version != 6U) {
         return false;
     }
 
@@ -135,7 +139,9 @@ bool ChargeCycleConfig_Set(const ChargeCycleConfig_t *config)
         !validate_non_negative(config->module_u_max_v) ||
         !validate_non_negative(config->module_i_min_a) ||
         !validate_non_negative(config->module_i_max_a) ||
-        config->admin_pin < 100000U || config->admin_pin > 999999U) {
+        config->admin_pin < 100000U || config->admin_pin > 999999U ||
+        config->charge_mode > 1U || config->delay_enabled > 1U ||
+        config->delay_hours > 99U || config->delay_minutes > 59U) {
         return false;
     }
 

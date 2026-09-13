@@ -2279,6 +2279,92 @@ static bool test_soc_stage_delta_t_debounce(void)
 
 /* ================================================================== */
 
+static bool test_delay_charge_countdown_and_start(void)
+{
+    printf("Running test_delay_charge_countdown_and_start...\n");
+    ChargeCycleConfig_t cfg;
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_MAXWELL, &cfg), "setup failed");
+    set_healthy_bms(400.0f, 50);
+
+    /* Configure 1-minute delay before warming up modules */
+    cfg.delay_enabled = 1U;
+    cfg.delay_hours = 0U;
+    cfg.delay_minutes = 1U;
+    ChargeCycleConfig_Set(&cfg);
+
+    /* Warm up module & BMS to online */
+    drive_ms(1500U);
+
+    ASSERT(ChargeController_Start(CHARGE_CTRL_OWNER_DWIN, false, mock_tick), "Start should succeed");
+
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_DELAY, "controller must enter DELAY state");
+    ASSERT(cv.is_delaying, "is_delaying must be true");
+    ASSERT(cv.delay_remaining_s == 60U, "delay_remaining_s must start at 60s");
+    ASSERT(cv.delay_duration_s == 60U, "delay_duration_s must be 60s");
+    ASSERT(cv.relay_should_close == 0, "contactor must stay open during delay");
+
+    /* Drive for 30 seconds */
+    drive_ms(30000U);
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_DELAY, "controller must still be in DELAY");
+    ASSERT(cv.delay_remaining_s == 30U, "delay_remaining_s should be 30s");
+    ASSERT(cv.relay_should_close == 0, "contactor must stay open during delay");
+
+    /* Drive past remaining 30s to trigger start */
+    drive_ms(31000U);
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state != CHARGE_CTRL_STATE_DELAY, "controller should have exited DELAY");
+    ASSERT(!cv.is_delaying, "is_delaying should be false");
+
+    /* Let it run and verify it reaches RUNNING */
+    for (uint32_t elapsed = 0; elapsed < 3000U; elapsed += 20U) {
+        drive_step(20U);
+        ChargeController_GetView(&cv);
+        if (cv.state == CHARGE_CTRL_STATE_RUNNING) {
+            break;
+        }
+    }
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "controller should transition to RUNNING after delay");
+
+    ChargeController_Stop(mock_tick);
+    printf("[PASS] test_delay_charge_countdown_and_start\n");
+    return true;
+}
+
+static bool test_delay_charge_stop_cancels_to_idle(void)
+{
+    printf("Running test_delay_charge_stop_cancels_to_idle...\n");
+    ChargeCycleConfig_t cfg;
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_MAXWELL, &cfg), "setup failed");
+    set_healthy_bms(400.0f, 50);
+
+    cfg.delay_enabled = 1U;
+    cfg.delay_hours = 2U;
+    cfg.delay_minutes = 30U;
+    ChargeCycleConfig_Set(&cfg);
+
+    drive_ms(1500U);
+
+    ASSERT(ChargeController_Start(CHARGE_CTRL_OWNER_DWIN, false, mock_tick), "Start should succeed");
+
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_DELAY, "must be in DELAY state");
+    ASSERT(cv.is_delaying, "is_delaying must be true");
+
+    ChargeController_Stop(mock_tick);
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_IDLE, "Stop from DELAY must immediately return to IDLE");
+    ASSERT(!cv.is_delaying, "is_delaying must be cleared");
+    ASSERT(cv.delay_remaining_s == 0U, "delay_remaining_s must be reset");
+
+    printf("[PASS] test_delay_charge_stop_cancels_to_idle\n");
+    return true;
+}
+
 int main(void)
 {
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -2341,6 +2427,8 @@ int main(void)
     pass &= test_precharge_module_can_loss();
 
     pass &= test_multi_module_timing_budget();
+    pass &= test_delay_charge_countdown_and_start();
+    pass &= test_delay_charge_stop_cancels_to_idle();
 
     if (pass) {
         printf("ALL TESTS PASSED.\n");

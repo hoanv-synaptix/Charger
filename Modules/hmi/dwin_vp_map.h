@@ -162,13 +162,28 @@ typedef enum {
 
 /* Page ids -- must match the DGUS project's picture order:
  * 00 logo, 01 dashboard, 02 setting, 03..05 alarm, 06 login, 07 pre-charge. */
+/* --- Charge Configuration (Pages 08..11) --- */
+#define VP_CFG_HOURS               0x1600U /* DataText / Inc: 0..99 */
+#define VP_CFG_MINUTES             0x1602U /* DataText / Inc: 0..59 */
+#define VP_CFG_APPLY_KEY           0x1604U /* Return Key: 1: Fast+On, 2: Fast+Off, 3: Norm+On, 4: Norm+Off */
+#define VP_TIME_MODE_KEY           0x1130U /* panel->MCU: Return Key on Page 02 -> Time & Mode config */
+
+#define DWIN_CFG_KEY_FAST_ON       0x0001U
+#define DWIN_CFG_KEY_FAST_OFF      0x0002U
+#define DWIN_CFG_KEY_NORM_ON       0x0003U
+#define DWIN_CFG_KEY_NORM_OFF      0x0004U
+
 typedef enum {
-    DWIN_PAGE_LOGO    = 0,
-    DWIN_PAGE_DASH    = 1,
-    DWIN_PAGE_SETTING = 2,
-    DWIN_PAGE_ALARM   = 3,
-    DWIN_PAGE_LOGIN   = 6,
-    DWIN_PAGE_PRECHARGE = 7,
+    DWIN_PAGE_LOGO         = 0,
+    DWIN_PAGE_DASH         = 1,
+    DWIN_PAGE_SETTING      = 2,
+    DWIN_PAGE_ALARM        = 3,
+    DWIN_PAGE_LOGIN        = 6,
+    DWIN_PAGE_PRECHARGE    = 7,
+    DWIN_PAGE_CONFIG_FAST_ON  = 8,
+    DWIN_PAGE_CONFIG_FAST_OFF = 9,
+    DWIN_PAGE_CONFIG_NORM_ON  = 10,
+    DWIN_PAGE_CONFIG_NORM_OFF = 11,
 } DwinPageId_e;
 
 /* VP_SYS_STATUS_ICON values (status-box Variable Icon on the dashboard).

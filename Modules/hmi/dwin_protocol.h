@@ -77,6 +77,11 @@ void DWIN_Init(void);
 void DWIN_SendWords(uint16_t vp, const uint16_t *words, uint8_t n_words);
 
 /**
+ * @brief Send 0x83 read request to DWIN RAM for n_words at vp.
+ */
+void DWIN_SendReadRequest(uint16_t vp, uint8_t n_words);
+
+/**
  * @brief Write an ASCII/GBK string into a fixed @p field_words VP field, padded
  *        with 0x00 so the whole field is overwritten (no stale characters).
  */

@@ -79,10 +79,50 @@ int main(void)
     memcpy(g_charge_config_test_flash, record, sizeof(record));
 
     ok &= expect(ChargeCycleStorage_Load(&loaded), "v5 record loads");
-    ok &= expect(loaded.version == CHARGE_CYCLE_CONFIG_VERSION, "migration upgrades version");
-    ok &= expect(loaded.admin_pin == DEFAULT_ADMIN_PIN, "migration installs default PIN");
+    ok &= expect(loaded.version == CHARGE_CYCLE_CONFIG_VERSION, "v5 migration upgrades version to v7");
+    ok &= expect(loaded.admin_pin == DEFAULT_ADMIN_PIN, "v5 migration installs default PIN");
     ok &= expect(loaded.vlow_v == old_cfg.vlow_v && loaded.ilow_c == old_cfg.ilow_c,
-                 "migration preserves v5 configuration fields");
+                 "v5 migration preserves v5 configuration fields");
+    ok &= expect(loaded.charge_mode == 0U && loaded.delay_enabled == 0U &&
+                 loaded.delay_hours == 2U && loaded.delay_minutes == 30U,
+                 "v5 migration installs v7 defaults (FAST, DELAY OFF, 02:30)");
+
+    /* Test v6 -> v7 migration (v6 payload = 243 bytes, includes custom admin_pin) */
+    ChargeCycleConfig_GetDefaults(&old_cfg);
+    old_cfg.version = 6U;
+    old_cfg.admin_pin = 9999U;
+    memset(record, 0xFF, sizeof(record));
+    payload_length = 243U;
+    memcpy(&record[0], &magic, sizeof(magic));
+    memcpy(&record[4], &record_version, sizeof(record_version));
+    memcpy(&record[6], &payload_length, sizeof(payload_length));
+    memcpy(&record[12], &old_cfg, 243U);
+    payload_crc = crc32(&record[12], 243U);
+    memcpy(&record[8], &payload_crc, sizeof(payload_crc));
+    memcpy(g_charge_config_test_flash, record, sizeof(record));
+
+    ok &= expect(ChargeCycleStorage_Load(&loaded), "v6 record loads");
+    ok &= expect(loaded.version == CHARGE_CYCLE_CONFIG_VERSION, "v6 migration upgrades version to v7");
+    ok &= expect(loaded.admin_pin == 9999U, "v6 migration preserves custom admin PIN");
+    ok &= expect(loaded.charge_mode == 0U && loaded.delay_enabled == 0U &&
+                 loaded.delay_hours == 2U && loaded.delay_minutes == 30U,
+                 "v6 migration installs v7 defaults (FAST, DELAY OFF, 02:30)");
+
+    /* Test native v7 save and load roundtrip */
+    ChargeCycleConfig_GetDefaults(&loaded);
+    loaded.charge_mode = 1U;
+    loaded.delay_enabled = 1U;
+    loaded.delay_hours = 5U;
+    loaded.delay_minutes = 45U;
+    ok &= expect(ChargeCycleStorage_Save(&loaded), "v7 native save succeeds");
+
+    ChargeCycleConfig_t reloaded;
+    memset(&reloaded, 0, sizeof(reloaded));
+    ok &= expect(ChargeCycleStorage_Load(&reloaded), "v7 native load succeeds");
+    ok &= expect(reloaded.version == CHARGE_CYCLE_CONFIG_VERSION, "v7 native load version matches");
+    ok &= expect(reloaded.charge_mode == 1U && reloaded.delay_enabled == 1U &&
+                 reloaded.delay_hours == 5U && reloaded.delay_minutes == 45U,
+                 "v7 native fields roundtrip intact");
 
     printf(ok ? "ALL CONFIG STORAGE TESTS PASSED.\n"
               : "CONFIG STORAGE TESTS FAILED.\n");

@@ -410,6 +410,7 @@ static uint16_t dwin_status_from_state(const ChargeCtrlView_t *cc,
             return cc->relay_should_close ? DWIN_STATUS_CHARGING
                                           : DWIN_STATUS_STARTING;
         case CHARGE_CTRL_STATE_READY:
+        case CHARGE_CTRL_STATE_DELAY:
             return DWIN_STATUS_STARTING;
         case CHARGE_CTRL_STATE_STOPPING:
             return DWIN_STATUS_CHARGING; /* transient, keep showing activity */
@@ -980,7 +981,11 @@ void App_Loop(void)
         static bool     s_hold_last_duration = false;
         bool is_charging = (dd.status_icon == DWIN_STATUS_CHARGING ||
                             dd.status_icon == DWIN_STATUS_STARTING);
-        if (is_charging) {
+        if (cc_view.state == CHARGE_CTRL_STATE_DELAY) {
+            dd.charge_duration_s = cc_view.delay_remaining_s;
+            dd.footer_time_str[0] = '\0';
+            s_was_charging = false;
+        } else if (is_charging) {
             if (!s_was_charging) {
                 s_charge_start_tick = now;
                 s_charge_duration_s = 0U;
@@ -1127,11 +1132,83 @@ void DWIN_OnActionButton(uint16_t keyval)
 void DWIN_OnKeyEvent(uint16_t vp, uint16_t keyval)
 {
     uint32_t now = BSP_GetTick();
+    static uint16_t s_cfg_hours = 2U;
+    static uint16_t s_cfg_minutes = 30U;
 
-    if (vp == VP_SET_LOGIN_KEY) {
+    if (vp == VP_TIME_MODE_KEY) {
         if (keyval == DWIN_SETTING_KEY_LOGIN) {
             dwin_open_login();
+        } else if (keyval == 0x0001U) {
+            /* Open Time & Mode config page */
+            ChargeCycleConfig_t cfg;
+            ChargeCycleConfig_Get(&cfg);
+            s_cfg_hours = cfg.delay_hours;
+            s_cfg_minutes = cfg.delay_minutes;
+            DWIN_SendWords(VP_CFG_HOURS, &s_cfg_hours, 1U);
+            DWIN_SendWords(VP_CFG_MINUTES, &s_cfg_minutes, 1U);
+            uint16_t target_page = DWIN_PAGE_CONFIG_FAST_OFF;
+            if (cfg.charge_mode == 0U) {
+                target_page = (cfg.delay_enabled != 0U) ? DWIN_PAGE_CONFIG_FAST_ON : DWIN_PAGE_CONFIG_FAST_OFF;
+            } else {
+                target_page = (cfg.delay_enabled != 0U) ? DWIN_PAGE_CONFIG_NORM_ON : DWIN_PAGE_CONFIG_NORM_OFF;
+            }
+            DWIN_SetPage(target_page);
         }
+        return;
+    }
+
+    if (vp == VP_CFG_HOURS) {
+        if (keyval <= 99U) {
+            s_cfg_hours = keyval;
+            ChargeCycleConfig_t cfg;
+            ChargeCycleConfig_Get(&cfg);
+            if (cfg.delay_hours != s_cfg_hours) {
+                cfg.delay_hours = s_cfg_hours;
+                ChargeCycleConfig_Set(&cfg);
+                (void)ChargeCycleStorage_Save(&cfg);
+            }
+        }
+        return;
+    }
+
+    if (vp == VP_CFG_MINUTES) {
+        if (keyval <= 59U) {
+            s_cfg_minutes = keyval;
+            ChargeCycleConfig_t cfg;
+            ChargeCycleConfig_Get(&cfg);
+            if (cfg.delay_minutes != s_cfg_minutes) {
+                cfg.delay_minutes = s_cfg_minutes;
+                ChargeCycleConfig_Set(&cfg);
+                (void)ChargeCycleStorage_Save(&cfg);
+            }
+        }
+        return;
+    }
+
+    if (vp == VP_CFG_APPLY_KEY) {
+        ChargeCycleConfig_t cfg;
+        ChargeCycleConfig_Get(&cfg);
+        if (keyval == DWIN_CFG_KEY_FAST_ON) {
+            cfg.charge_mode = 0U;
+            cfg.delay_enabled = 1U;
+        } else if (keyval == DWIN_CFG_KEY_FAST_OFF) {
+            cfg.charge_mode = 0U;
+            cfg.delay_enabled = 0U;
+        } else if (keyval == DWIN_CFG_KEY_NORM_ON) {
+            cfg.charge_mode = 1U;
+            cfg.delay_enabled = 1U;
+        } else if (keyval == DWIN_CFG_KEY_NORM_OFF) {
+            cfg.charge_mode = 1U;
+            cfg.delay_enabled = 0U;
+        }
+        cfg.delay_hours = s_cfg_hours;
+        cfg.delay_minutes = s_cfg_minutes;
+        ChargeCycleConfig_Set(&cfg);
+        (void)ChargeCycleStorage_Save(&cfg);
+        LOG("DWIN: Charge config saved (mode=%u delay=%u %02u:%02u)\r\n",
+            (unsigned)cfg.charge_mode, (unsigned)cfg.delay_enabled,
+            (unsigned)cfg.delay_hours, (unsigned)cfg.delay_minutes);
+        DWIN_SendReadRequest(VP_CFG_HOURS, 2U);
         return;
     }
 

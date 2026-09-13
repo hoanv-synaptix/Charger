@@ -13,6 +13,7 @@
 #define CONFIG_RECORD_VERSION 1U
 #define FLASH_BLANK_BYTE      0xFFU
 #define CONFIG_V5_PAYLOAD_SIZE 239U
+#define CONFIG_V6_PAYLOAD_SIZE 243U
 
 #ifdef CHARGE_CYCLE_STORAGE_HOST_TEST
 extern uint8_t g_charge_config_test_flash[];
@@ -31,6 +32,8 @@ typedef struct __attribute__((packed)) {
 
 _Static_assert(offsetof(ChargeCycleConfig_t, admin_pin) == CONFIG_V5_PAYLOAD_SIZE,
                "v6 must append admin_pin after the v5 payload");
+_Static_assert(offsetof(ChargeCycleConfig_t, charge_mode) == CONFIG_V6_PAYLOAD_SIZE,
+               "v7 must append charge_mode after the v6 payload");
 
 static const uint8_t *config_flash_at(uint32_t address)
 {
@@ -66,6 +69,10 @@ static bool validate_record(const ChargeCycleConfigRecord_t *rec) {
     return validate_record_length(rec, sizeof(ChargeCycleConfig_t));
 }
 
+static bool validate_v6_record(const ChargeCycleConfigRecord_t *rec) {
+    return validate_record_length(rec, CONFIG_V6_PAYLOAD_SIZE);
+}
+
 static bool validate_v5_record(const ChargeCycleConfigRecord_t *rec) {
     return validate_record_length(rec, CONFIG_V5_PAYLOAD_SIZE);
 }
@@ -94,32 +101,45 @@ static void read_record_at(ChargeCycleConfigRecord_t *rec, uint32_t offset) {
 }
 
 static bool load_latest_config(ChargeCycleConfig_t *config, uint32_t *latest_offset_out,
-                               bool *migrated_v5_out) {
+                               bool *migrated_out) {
     ChargeCycleConfigRecord_t record;
     int32_t latest_valid_offset = -1;
-    bool latest_is_v5 = false;
+    uint8_t latest_version = 7U;
 
     for (uint32_t offset = 0; offset <= (BSP_FLASH_PAGE_SIZE - ALIGNED_RECORD_SIZE); offset += ALIGNED_RECORD_SIZE) {
         read_record_at(&record, offset);
         if (validate_record(&record)) {
             latest_valid_offset = (int32_t)offset;
-            latest_is_v5 = false;
+            latest_version = 7U;
+        } else if (validate_v6_record(&record)) {
+            latest_valid_offset = (int32_t)offset;
+            latest_version = 6U;
         } else if (validate_v5_record(&record)) {
             latest_valid_offset = (int32_t)offset;
-            latest_is_v5 = true;
+            latest_version = 5U;
         }
     }
 
     if (latest_valid_offset < 0) return false;
 
     read_record_at(&record, (uint32_t)latest_valid_offset);
-    if (latest_is_v5) {
-        /* v6 only appends admin_pin. Start from defaults, copy the exact v5
-         * prefix, then install the default PIN before normal validation. */
+    if (latest_version == 6U) {
+        ChargeCycleConfig_GetDefaults(config);
+        memcpy(config, &record.payload, CONFIG_V6_PAYLOAD_SIZE);
+        config->version = CHARGE_CYCLE_CONFIG_VERSION;
+        config->charge_mode = DEFAULT_CHARGE_MODE;
+        config->delay_enabled = DEFAULT_DELAY_ENABLED;
+        config->delay_hours = DEFAULT_DELAY_HOURS;
+        config->delay_minutes = DEFAULT_DELAY_MINUTES;
+    } else if (latest_version == 5U) {
         ChargeCycleConfig_GetDefaults(config);
         memcpy(config, &record.payload, CONFIG_V5_PAYLOAD_SIZE);
         config->version = CHARGE_CYCLE_CONFIG_VERSION;
         config->admin_pin = DEFAULT_ADMIN_PIN;
+        config->charge_mode = DEFAULT_CHARGE_MODE;
+        config->delay_enabled = DEFAULT_DELAY_ENABLED;
+        config->delay_hours = DEFAULT_DELAY_HOURS;
+        config->delay_minutes = DEFAULT_DELAY_MINUTES;
     } else {
         *config = record.payload;
     }
@@ -127,8 +147,8 @@ static bool load_latest_config(ChargeCycleConfig_t *config, uint32_t *latest_off
     if (latest_offset_out != NULL) {
         *latest_offset_out = (uint32_t)latest_valid_offset;
     }
-    if (migrated_v5_out != NULL) {
-        *migrated_v5_out = latest_is_v5;
+    if (migrated_out != NULL) {
+        *migrated_out = (latest_version < 7U);
     }
     return true;
 }
@@ -136,15 +156,15 @@ static bool load_latest_config(ChargeCycleConfig_t *config, uint32_t *latest_off
 void ChargeCycleStorage_Init(void) {
     ChargeCycleConfig_t config;
     uint32_t offset = 0;
-    bool migrated_v5 = false;
+    bool migrated = false;
 
-    if (load_latest_config(&config, &offset, &migrated_v5)) {
+    if (load_latest_config(&config, &offset, &migrated)) {
         LOG("ChargeCycleStorage: Loaded from flash offset %u\r\n", (unsigned)offset);
         ChargeCycleConfig_Set(&config);
-        if (migrated_v5) {
-            LOG("ChargeCycleStorage: Migrated v5 config to v6\r\n");
+        if (migrated) {
+            LOG("ChargeCycleStorage: Migrated config to v%u\r\n", (unsigned)CHARGE_CYCLE_CONFIG_VERSION);
             if (!ChargeCycleStorage_Save(&config)) {
-                LOG("ChargeCycleStorage: v6 migration save failed\r\n");
+                LOG("ChargeCycleStorage: v%u migration save failed\r\n", (unsigned)CHARGE_CYCLE_CONFIG_VERSION);
             }
         }
     } else {

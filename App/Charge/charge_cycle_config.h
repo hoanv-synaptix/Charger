@@ -9,7 +9,7 @@
 extern "C" {
 #endif
 
-#define CHARGE_CYCLE_CONFIG_VERSION 6U
+#define CHARGE_CYCLE_CONFIG_VERSION 7U
 
 /* Fixed-width identity strings shown on the DWIN "Setting" screen
  * (VP_SET_HW_VER / VP_SET_DEVICE_ID). Always NUL-terminated on load. */
@@ -38,6 +38,10 @@ extern "C" {
 #define DEFAULT_JACK_TEMP_POWER_LIMIT_PCT     80.0f
 #define DEFAULT_JACK_TEMP_TRIP_C              75.0f
 #define DEFAULT_ADMIN_PIN                     123456U
+#define DEFAULT_CHARGE_MODE                   0U /* 0: FAST, 1: NORMAL */
+#define DEFAULT_DELAY_ENABLED                 0U /* 0: OFF, 1: ON */
+#define DEFAULT_DELAY_HOURS                   2U
+#define DEFAULT_DELAY_MINUTES                 30U
 
 typedef enum {
     CHARGE_MODULE_TYPE_UNKNOWN = 0,
@@ -133,9 +137,15 @@ typedef struct __attribute__((packed)) {
     char device_id[CHARGE_CYCLE_DEVICE_ID_LEN];
     char hw_rev[CHARGE_CYCLE_HW_REV_LEN];
     uint32_t admin_pin;
+
+    /* v7: DWIN Charge Mode & Delay Start configuration */
+    uint8_t  charge_mode;     /* 0: FAST (default), 1: NORMAL */
+    uint8_t  delay_enabled;   /* 0: OFF (default), 1: ON */
+    uint16_t delay_hours;     /* 0..99 (default: 2) */
+    uint16_t delay_minutes;   /* 0..59 (default: 30) */
 } ChargeCycleConfig_t;
 
-_Static_assert(sizeof(ChargeCycleConfig_t) == 243, "ChargeCycleConfig_t must stay 243 bytes");
+_Static_assert(sizeof(ChargeCycleConfig_t) == 249, "ChargeCycleConfig_t must stay 249 bytes");
 
 void ChargeCycleConfig_Init(void);
 void ChargeCycleConfig_Get(ChargeCycleConfig_t *config);

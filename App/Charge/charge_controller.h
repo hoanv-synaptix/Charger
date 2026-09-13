@@ -22,6 +22,7 @@ typedef enum {
     CHARGE_CTRL_STATE_STOPPING,
     CHARGE_CTRL_STATE_FAULT,
     CHARGE_CTRL_STATE_PRECHARGE,
+    CHARGE_CTRL_STATE_DELAY,
 } ChargeCtrlState_t;
 
 typedef enum {
@@ -116,6 +117,9 @@ typedef struct {
     float active_limit_current_c;
     ChargeStopReason_t stop_reason;
     uint8_t bms_temp_trip_count;
+    uint32_t delay_remaining_s;
+    uint32_t delay_duration_s;
+    uint8_t is_delaying;
     /** True when the battery relay should be closed. This is a latch, not
      * a continuous voltage gate: it closes once state is RUNNING and the
      * worst-case (minimum) online module output voltage reaches

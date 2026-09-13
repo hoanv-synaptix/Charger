@@ -29,52 +29,52 @@
 
         /* Header */
         .header {
-            background-color: #ffffff;
+            background-color: #ffffff; 
             height: 28px;
             display: flex;
             justify-content: space-between;
             align-items: center;
             padding: 0 12px 0 10px;
             border-bottom: 2px solid #cbd5e1;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.08);
+            box-shadow: 0 2px 5px rgba(0,0,0,0.08); 
             position: relative;
             z-index: 10;
         }
-        .logo {
-            display: flex;
-            align-items: center;
+        .logo { 
+            display: flex; 
+            align-items: center; 
             height: 100%;
         }
         .logo-icon-wrapper {
-            height: 16px;
+            height: 16px; 
             overflow: hidden;
             display: flex;
         }
         .logo-icon-wrapper img {
-            height: 22px;
+            height: 22px; 
             object-fit: cover;
             object-position: left top;
         }
         .logo-battery {
-            color: #000000;
-            font-size: 14px;
+            color: #000000; 
+            font-size: 14px; 
             font-weight: bold;
             margin-left: 6px;
             letter-spacing: 0.5px;
             font-family: Arial, sans-serif;
         }
-        .device-id { width: 95px; color: #444444;
-            font-size: 12px;
-            font-weight: bold;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            letter-spacing: 0.5px;
+        .device-id { width: 95px; color: #444444; 
+            font-size: 12px; 
+            font-weight: bold; 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            letter-spacing: 0.5px; 
         }
 
         /* Main Content */
         .main-content {
             display: flex;
             justify-content: space-between;
-            padding: 6px 6px 4px 6px;
+            padding: 6px 6px 4px 6px; 
             height: 216px;
         }
         .col { width: 135px; display: flex; flex-direction: column; justify-content: space-between; }
@@ -101,7 +101,7 @@
             gap: 6px;
         }
         .panel-header i { font-size: 13px; }
-
+        
         .bg-blue { background-color: #1a51a1; }
         .bg-green { background-color: #179344; }
         .bg-orange { background-color: #ea851c; }
@@ -119,20 +119,20 @@
             display: flex;
             justify-content: space-between;
             align-items: baseline;
-            font-size: 11px;
+            font-size: 11px; 
             font-weight: bold;
             font-family: Arial, sans-serif;
         }
         .data-label { color: #334155; text-transform: uppercase; white-space: nowrap; }
-        .data-value {
-            display: grid;
-            grid-template-columns: 1fr 18px;
-            gap: 4px;
-            align-items: baseline;
-            width: 72px;
+        .data-value { 
+            display: grid; 
+            grid-template-columns: 1fr 18px; 
+            gap: 4px; 
+            align-items: baseline; 
+            width: 72px; 
         }
-        .data-num { font-size: 17px; color: #000; text-align: right; }
-        .data-unit { font-size: 13px; color: #333; text-align: right; }
+        .data-num { font-size: 17px; color: #000; text-align: right; } 
+        .data-unit { font-size: 13px; color: #333; text-align: right; } 
         .text-red { color: #e12b18; }
 
         /* SOC Panel */
@@ -140,7 +140,7 @@
             background-color: white;
             border: 1px solid #d0d7e0;
             border-radius: 6px;
-            height: 206px;
+            height: 206px; 
             display: flex;
             flex-direction: column;
             align-items: center;
@@ -155,16 +155,16 @@
             padding: 3px 12px;
             border-radius: 12px;
             position: absolute;
-            top: -5px;
+            top: -5px; 
             letter-spacing: 0.5px;
-            box-shadow: 0 2px 4px rgba(26,81,161,0.2);
+            box-shadow: 0 2px 4px rgba(26,81,161,0.2); 
             cursor: pointer; /* Thêm con trỏ để báo hiệu click được */
         }
         .soc-value {
-            font-size: 68px;
+            font-size: 68px; 
             font-weight: bold;
             color: #1a51a1;
-            margin-top: 28px;
+            margin-top: 28px; 
             line-height: 1;
             font-family: Arial, sans-serif;
             letter-spacing: -2px;
@@ -174,22 +174,22 @@
             width: 85%;
             height: 1px;
             background-color: #1a51a1;
-            margin: 8px 0 14px;
+            margin: 8px 0 14px; 
             transition: background-color 0.3s ease;
         }
-
+        
         /* Status Box & Action Button Base Styles */
         .status-box {
             border: 1.5px solid #94b5e2; /* Default Blue */
             color: #1a51a1;
-            font-size: 18px;
+            font-size: 18px; 
             font-weight: bold;
             width: 85%;
             height: 32px;
             display: flex;
             align-items: center;
             justify-content: center;
-            border-radius: 16px;
+            border-radius: 16px; 
             margin-bottom: 12px;
             letter-spacing: 0.5px;
             background-color: #f7fbff;
@@ -204,8 +204,8 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            border-radius: 15px;
-            font-size: 16px;
+            border-radius: 15px; 
+            font-size: 16px; 
             font-weight: bold;
             cursor: pointer;
             letter-spacing: 0.5px;
@@ -217,7 +217,7 @@
         }
 
         /* --- STATE MODIFIERS (Dynamic Colors) --- */
-
+        
         /* GREEN: CHARGING, COMPLETE */
         .status-green { border-color: #179344; color: #179344; background-color: #f0fdf4; }
         .btn-green { background-color: #179344; box-shadow: 0 3px 6px rgba(23,147,68,0.3); }
@@ -236,9 +236,9 @@
 
         /* Footer */
         .footer {
-            height: 28px;
+            height: 28px; 
             display: flex;
-            padding: 0 8px 4px 8px;
+            padding: 0 8px 4px 8px; 
             gap: 6px;
         }
         .footer-btn {
@@ -257,7 +257,7 @@
         }
         .footer-btn.active { color: #1a51a1; }
         .footer-btn i { font-size: 13px; }
-
+        
         .footer-time {
             flex: 1.2;
             background-color: white;
@@ -272,11 +272,11 @@
             color: #000;
         }
         .footer-time i { font-size: 14px; }
-
+    
 /* SETTING CSS */
 
-
-
+        
+        
         .dashboard-container {
             width: 480px;
             height: 272px;
@@ -289,46 +289,46 @@
 
         /* --- TÁI SỬ DỤNG HEADER TRẮNG TỪ DASHBOARD --- */
         .header {
-            background-color: #ffffff;
+            background-color: #ffffff; 
             height: 28px;
             display: flex;
             justify-content: space-between;
             align-items: center;
             padding: 0 12px 0 10px;
             border-bottom: 2px solid #cbd5e1;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.08);
+            box-shadow: 0 2px 5px rgba(0,0,0,0.08); 
             position: relative;
             z-index: 10;
             flex-shrink: 0;
         }
-
-
-
+        
+        
+        
         .logo-battery {
-            color: #000000;
-            font-size: 14px;
+            color: #000000; 
+            font-size: 14px; 
             font-weight: bold;
             margin-left: 6px;
             letter-spacing: 0.5px;
             font-family: Arial, sans-serif;
         }
-
+        
 
         /* --- GIAO DIỆN SETTING CHÍNH --- */
         .setting-content {
             /* Kế thừa font Segoe UI từ body để các Tiêu đề mềm mại, sang trọng hơn */
             flex: 1;
-            padding: 6px 12px;
+            padding: 6px 12px; 
             display: flex;
             flex-direction: column;
-            gap: 6px;
+            gap: 6px; 
         }
 
         /* Box chung */
         .box-panel {
             background-color: white;
-            border: 1px solid #cbd5e1;
-            border-radius: 8px;
+            border: 1px solid #cbd5e1; 
+            border-radius: 8px; 
             box-shadow: 0 1px 3px rgba(0,0,0,0.03);
             display: flex;
         }
@@ -337,14 +337,14 @@
         .info-panel {
             flex-direction: column;
             align-items: center;
-            padding: 8px 12px;
+            padding: 8px 12px; 
         }
         .company-title {
             color: #1a51a1;
             font-size: 24px; /* Phóng to hẳn lên vì font Segoe UI thanh mảnh hơn */
             font-weight: 800; /* Độ đậm vừa phải, không bị thô như 900 */
             letter-spacing: 0.5px;
-            margin-bottom: 6px;
+            margin-bottom: 6px; 
             text-transform: uppercase;
         }
         .contact-row {
@@ -355,7 +355,7 @@
         .contact-box {
             flex: 1;
             border: 1px solid #cbd5e1;
-            border-radius: 12px;
+            border-radius: 12px; 
             padding: 4px 0;
             text-align: center;
             font-size: 11px;
@@ -367,50 +367,50 @@
         .specs-row {
             display: flex;
             gap: 10px;
-            flex: 1;
+            flex: 1; 
         }
         .spec-panel {
             flex-direction: column;
             flex: 1;
-            padding: 0;
-            overflow: hidden;
+            padding: 0; 
+            overflow: hidden; 
         }
         .spec-header {
-            background-color: #f4f7fb;
+            background-color: #f4f7fb; 
             color: #1a51a1;
             font-size: 17px; /* Tăng size để nổi bật làm tiêu đề cột */
             font-weight: 800;
             text-align: center;
             padding: 6px 0;
-            border-bottom: 1px solid #cbd5e1;
+            border-bottom: 1px solid #cbd5e1; 
             letter-spacing: 0.5px;
         }
         .spec-body {
             display: flex;
             flex-direction: column;
             flex: 1;
-            padding: 0;
+            padding: 0; 
         }
         .spec-item {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            flex: 1;
-            padding: 0 12px;
-            font-size: 11px;
+            flex: 1; 
+            padding: 0 12px; 
+            font-size: 11px; 
             font-family: Arial, sans-serif; /* Riêng Data vẫn giữ Arial kỹ thuật */
-            border-bottom: 1px solid #cbd5e1;
+            border-bottom: 1px solid #cbd5e1; 
         }
         .spec-item:last-child {
-            border-bottom: none;
+            border-bottom: none; 
         }
         .spec-label {
-            color: #666;
+            color: #666; 
             font-weight: bold;
             text-transform: uppercase;
         }
         .spec-value {
-            color: #000;
+            color: #000; 
             font-weight: bold;
         }
 
@@ -436,7 +436,7 @@
             width: 90px;
             height: 26px;
             border: 1px solid #cbd5e1;
-            border-radius: 13px;
+            border-radius: 13px; 
             text-align: center;
             font-size: 24px; /* Dấu chấm to và rõ ràng hơn */
             line-height: 24px; /* Căn giữa dọc dấu chấm */
@@ -446,44 +446,69 @@
             outline: none;
             background-color: #fff;
         }
-        .btn-login {
-            background-color: #1a51a1;
-            color: white;
-            border: none;
+        .admin-nav-btn {
+            height: 25px;
             border-radius: 13px;
-            width: 75px;
-            height: 26px;
+            font-family: Arial, sans-serif;
+            font-size: 11px;
+            font-weight: bold;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-family: Arial, sans-serif;
-            font-size: 14px;
+            cursor: pointer;
+            padding: 0 12px;
+            letter-spacing: 0.3px;
+            transition: transform 0.15s ease, background 0.15s ease;
+        }
+        .admin-nav-btn:active { transform: scale(0.96); }
+        .admin-nav-primary {
+            background-color: #1a51a1;
+            color: #ffffff;
+            border: 1px solid #1a51a1;
+        }
+        .admin-nav-secondary {
+            background-color: #ffffff;
+            color: #334155;
+            border: 1px solid #cbd5e1;
+        }
+        .btn-login {
+            background-color: #1a51a1;
+            color: white;
+            border: 1px solid #1a51a1;
+            border-radius: 13px; 
+            height: 25px;
+            padding: 0 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: Arial, sans-serif; 
+            font-size: 11px; 
             font-weight: bold;
             cursor: pointer;
         }
         .btn-login:active { transform: scale(0.95); }
-
+        
         .btn-back {
             background-color: white;
-            color: #333;
+            color: #334155;
             border: 1px solid #cbd5e1;
-            border-radius: 13px;
-            width: 65px;
-            height: 26px;
+            border-radius: 13px; 
+            height: 25px;
+            padding: 0 12px;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-family: Arial, sans-serif;
-            font-size: 14px;
+            font-family: Arial, sans-serif; 
+            font-size: 11px; 
             font-weight: bold;
             cursor: pointer;
         }
         .btn-back:hover { background-color: #f1f5f9; }
         .btn-back:active { transform: scale(0.95); }
 
+    
 
-
-
+        
         /* --- LOGIN & PRE-CHARGE ADDITIONS --- */
         .num-btn {
             background: #fff;
@@ -503,11 +528,171 @@
             padding-bottom: 2px;
         }
         .num-btn:active { background: #f0f3f6; }
+
+        /* --- CHARGE CONFIGURATION (TIMER & MODE) CSS --- */
+        .mode-btn {
+            border-radius: 6px;
+            padding: 7px 10px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            cursor: pointer;
+            border: 1.5px solid #d0d7e0;
+            background: #f8fafc;
+            transition: all 0.2s;
+        }
+        .mode-btn:active { transform: scale(0.98); }
+        .mode-btn.active {
+            border-color: #1a51a1;
+            background: #eef4ff;
+        }
+        .mode-btn.active .radio-circle {
+            border-color: #1a51a1;
+            background: #1a51a1;
+        }
+        .mode-btn.active .radio-circle::after {
+            content: '';
+            width: 6px;
+            height: 6px;
+            background: #ffffff;
+            border-radius: 50%;
+            display: block;
+        }
+        .radio-circle {
+            width: 14px;
+            height: 14px;
+            border: 1.5px solid #cbd5e1;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #ffffff;
+        }
+        .btn-step {
+            width: 36px;
+            height: 22px;
+            background: #f1f5f9;
+            border: 1px solid #cbd5e1;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            color: #1e293b;
+            cursor: pointer;
+        }
+        .btn-step:active { background: #e2e8f0; }
+        .time-val {
+            width: 48px;
+            height: 30px;
+            background: #181d26;
+            color: #f59e0b;
+            border: 1.5px solid #334155;
+            border-radius: 4px;
+            font-family: 'Consolas', monospace;
+            font-size: 20px;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            letter-spacing: 1px;
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.5);
+        }
+        .time-colon {
+            font-size: 22px;
+            font-weight: 800;
+            color: #f59e0b;
+            height: 30px;
+            width: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            line-height: 1;
+            transform: translateY(-2px);
+        }
+
+        /* Industrial Toggle Switch */
+        .toggle-switch {
+            display: inline-flex;
+            align-items: center;
+            cursor: pointer;
+            user-select: none;
+        }
+        .toggle-track {
+            width: 50px;
+            height: 24px;
+            background: #cbd5e1;
+            border-radius: 12px;
+            position: relative;
+            transition: all 0.25s ease;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 6px;
+            box-shadow: inset 0 1px 3px rgba(0,0,0,0.25);
+        }
+        .toggle-thumb {
+            width: 18px;
+            height: 18px;
+            background: #ffffff;
+            border-radius: 50%;
+            position: absolute;
+            top: 3px;
+            left: 3px;
+            transition: transform 0.25s ease, background 0.25s ease;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.35);
+        }
+        .toggle-label-on {
+            font-size: 10px;
+            font-weight: 800;
+            color: #ffffff;
+            display: none;
+            margin-left: 2px;
+            letter-spacing: 0.5px;
+        }
+        .toggle-label-off {
+            font-size: 10px;
+            font-weight: 800;
+            color: #64748b;
+            display: block;
+            margin-left: auto;
+            margin-right: 2px;
+            letter-spacing: 0.5px;
+        }
+        .toggle-switch.active .toggle-track {
+            background: #10b981;
+        }
+        .toggle-switch.active .toggle-thumb {
+            transform: translateX(26px);
+        }
+        .toggle-switch.active .toggle-label-on {
+            display: block;
+        }
+        .toggle-switch.active .toggle-label-off {
+            display: none;
+        }
+        .btn-confirm {
+            background: #1a51a1;
+            color: #ffffff;
+            border: none;
+            border-radius: 5px;
+            height: 30px;
+            font-size: 11px;
+            font-weight: 800;
+            letter-spacing: 0.5px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            cursor: pointer;
+        }
+        .btn-confirm:active { background: #143e7d; }
+
         /* ALARM CSS */
 
 
-
-
+        
+        
         .dashboard-container {
             width: 480px;
             height: 272px;
@@ -520,29 +705,29 @@
 
         /* --- TÁI SỬ DỤNG HEADER TRẮNG ĐỒNG BỘ --- */
         .header {
-            background-color: #ffffff;
+            background-color: #ffffff; 
             height: 28px;
             display: flex;
             justify-content: space-between;
             align-items: center;
             padding: 0 12px 0 10px;
             border-bottom: 2px solid #cbd5e1;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.08);
+            box-shadow: 0 2px 5px rgba(0,0,0,0.08); 
             position: relative;
             z-index: 10;
         }
-
-
-
+        
+        
+        
         .logo-battery {
-            color: #000000;
-            font-size: 14px;
+            color: #000000; 
+            font-size: 14px; 
             font-weight: bold;
             margin-left: 6px;
             letter-spacing: 0.5px;
             font-family: Arial, sans-serif;
         }
-
+        
 
         /* --- GIAO DIỆN ALARMS --- */
         .alarm-content {
@@ -559,7 +744,7 @@
             align-items: center;
             justify-content: center; /* Dùng flexbox căn giữa tiêu đề tự nhiên nhất */
             height: 28px;
-            position: relative;
+            position: relative; 
         }
         .btn-back-square {
             position: absolute; /* Đưa nút back ra khỏi luồng căn giữa */
@@ -568,7 +753,7 @@
             height: 28px;
             background-color: white;
             border: 1px solid #cbd5e1;
-            border-radius: 6px;
+            border-radius: 6px; 
             display: flex;
             justify-content: center;
             align-items: center;
@@ -577,7 +762,7 @@
             font-weight: bold; /* Làm icon đậm đà hơn */
             cursor: pointer;
             box-shadow: 0 1px 3px rgba(0,0,0,0.03);
-            text-decoration: none;
+            text-decoration: none; 
             transition: background-color 0.1s;
         }
         .btn-back-square:active { transform: scale(0.95); }
@@ -585,7 +770,7 @@
             color: #1a51a1;
             /* Đã xóa dòng ép font Arial để kế thừa font Segoe UI của hệ thống */
             font-size: 20px; /* Tăng từ 17px lên 20px để ra dáng Tiêu đề trang */
-            font-weight: 800;
+            font-weight: 800; 
             letter-spacing: 0.5px;
             text-transform: uppercase;
         }
@@ -596,7 +781,7 @@
             gap: 10px;
             flex: 1; /* Chiếm hết chiều cao còn lại */
         }
-
+        
         /* Bảng log */
         .table-container {
             flex: 1;
@@ -611,22 +796,22 @@
         .table-row {
             display: flex;
             align-items: center;
-            flex: 1;
+            flex: 1; 
             border-bottom: 1px solid #cbd5e1;
             padding: 0 14px; /* Tăng padding ngang để rộng rãi hơn */
-            font-family: Arial, sans-serif;
+            font-family: Arial, sans-serif; 
             font-size: 11px;
             font-weight: bold;
             color: #000; /* Mặc định chữ đen cho toàn bộ data */
         }
         .table-row:last-child { border-bottom: none; }
-
+        
         .table-header {
             background-color: #f4f7fb;
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             font-weight: 900;
             color: #1a51a1; /* Đảm bảo cả hàng tiêu đề màu xanh đồng bộ */
-            font-size: 11px;
+            font-size: 11px; 
             text-transform: uppercase;
         }
 
@@ -635,16 +820,16 @@
         .table-row:not(.table-header) .col-code {
             color: #444;
         }
-
+        
         /* Độ rộng các cột (Đã thu hẹp để nhường chỗ cho Desc) */
         .col-time { width: 60px; color: #444; }
         .col-code { width: 45px; }
         .col-desc { flex: 1; }
 
         /* Màu sắc báo động */
-        .level-fault { color: #dc2626 !important; }
-        .level-warn { color: #ea851c !important; }
-        .level-info { color: #1a51a1 !important; }
+        .level-fault { color: #dc2626 !important; } 
+        .level-warn { color: #ea851c !important; } 
+        .level-info { color: #1a51a1 !important; } 
 
         /* Nút cuộn dọc */
         .scroll-container {
@@ -654,7 +839,7 @@
             gap: 6px; /* Giảm gap */
         }
         .btn-scroll {
-            flex: 1;
+            flex: 1; 
             background-color: white;
             border: 1px solid #cbd5e1;
             border-radius: 6px;
@@ -668,7 +853,7 @@
         }
         .btn-scroll:active { background-color: #f1f5f9; transform: scale(0.95); }
 
-
+    
         /* SPA specific styles */
         .screen-view {
             display: none;
@@ -692,7 +877,7 @@
         </div>
     </div>
 
-
+        
     <!-- DASHBOARD SCREEN -->
     <div id="screen-dashboard" class="screen-view" style="display: flex;">
 <div class="main-content">
@@ -706,27 +891,27 @@
                     <div class="data-row">
                         <span class="data-label">VOLTAGE</span>
                         <div class="data-value">
-                            <span class="data-num">0.0</span>
+                            <span class="data-num" id="dc-voltage">0.0</span>
                             <span class="data-unit">V</span>
                         </div>
                     </div>
                     <div class="data-row">
                         <span class="data-label">CURRENT</span>
                         <div class="data-value">
-                            <span class="data-num">0.0</span>
+                            <span class="data-num" id="dc-current">0.0</span>
                             <span class="data-unit">A</span>
                         </div>
                     </div>
                     <div class="data-row">
                         <span class="data-label">POWER</span>
                         <div class="data-value">
-                            <span class="data-num">0.0</span>
+                            <span class="data-num" id="dc-power">0.0</span>
                             <span class="data-unit">kW</span>
                         </div>
                     </div>
                 </div>
             </div>
-
+            
             <div class="panel">
                 <div class="panel-header bg-green">
                     <i class="fa-solid fa-battery-half"></i> BATTERY
@@ -800,7 +985,7 @@
                     </div>
                 </div>
             </div>
-
+            
             <div class="panel">
                 <div class="panel-header bg-orange">
                     <i class="fa-solid fa-temperature-half"></i> TEMP
@@ -849,7 +1034,7 @@
     </div>
 
     </div>
-
+    
     <!-- SETTING SCREEN -->
     <div id="screen-setting" class="screen-view">
 <div class="setting-content">
@@ -881,7 +1066,7 @@
                     </div>
                 </div>
             </div>
-
+            
             <div class="box-panel spec-panel">
                 <div class="spec-header">SYSTEM</div>
                 <div class="spec-body">
@@ -903,19 +1088,19 @@
 
         <!-- Panel 3: Admin -->
         <div class="box-panel admin-panel">
-            <div class="admin-label">ADMIN ACCESS</div>
+            <div class="admin-label">SETUP & ACCESS</div>
             <div class="admin-actions">
-                <button class="btn-login" onclick="switchScreen('login')">LOGIN</button>
-                <!-- Nút Back link về dashboard -->
-                <button class="btn-back" onclick="switchScreen('dashboard')">BACK</button>
+                <button class="admin-nav-btn admin-nav-primary" onclick="switchScreen('config')">TIME & MODE</button>
+                <button class="admin-nav-btn admin-nav-primary" onclick="switchScreen('login')">LOGIN</button>
+                <button class="admin-nav-btn admin-nav-secondary" onclick="switchScreen('dashboard')">BACK</button>
             </div>
         </div>
     </div>
 
     </div>
-
-
-
+    
+    
+    
     <!-- LOGIN SCREEN -->
     <div id="screen-login" class="screen-view" style="display: none;">
         <div style="flex: 1; display: flex; align-items: center; justify-content: center; position: relative;">
@@ -956,7 +1141,7 @@
                 </a>
                 <div class="page-title">BATTERY PRE-CHARGE</div>
             </div>
-
+            
             <div style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;">
                 <!-- Khung: State & Dòng/Áp -->
                 <div class="box-panel" style="width: 280px; padding: 12px 16px; display: flex; flex-direction: column; align-items: center;">
@@ -965,12 +1150,7 @@
                         <i id="precharge-status-icon" class="fa-solid fa-circle-check"></i>
                         <span id="precharge-status-text">READY</span>
                     </div>
-
-                    <div id="precharge-error-row" class="data-row" style="display: none; color: #dc2626;">
-                        <span class="data-label">ERROR CODE</span>
-                        <span class="data-num" id="precharge-error-code">----</span>
-                    </div>
-
+                    
                     <!-- 3. Dòng và Áp -->
                     <div style="width: 100%; display: flex; flex-direction: column; gap: 8px;">
                         <div class="data-row">
@@ -989,7 +1169,7 @@
                         </div>
                     </div>
                 </div>
-
+                
                 <!-- 1. Nút bấm duy nhất tại 1 vị trí cố định -->
                 <button class="action-btn btn-green" id="precharge-action-btn" style="width: 280px; height: 34px; border-radius: 6px; font-size: 13px; font-weight: bold; letter-spacing: 0.5px;" onclick="handlePrechargeAction()">
                     START
@@ -998,11 +1178,108 @@
         </div>
     </div>
 
+    <!-- CHARGE CONFIG SCREEN (Timer & Speed Mode) -->
+    <div id="screen-config" class="screen-view" style="display: none;">
+        <div style="flex: 1; display: flex; flex-direction: column; padding: 6px 12px 8px 12px; gap: 6px;">
+            <div class="alarm-sub-header" style="height: 28px;">
+                <a href="javascript:void(0)" onclick="switchScreen('setting')" class="btn-back-square">
+                    <i class="fa-solid fa-angle-left"></i>
+                </a>
+                <div class="page-title" style="font-size: 18px;">CHARGE CONFIGURATION</div>
+            </div>
+
+            <div style="flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                <!-- Left Card: Charge Mode -->
+                <div class="box-panel" style="padding: 8px 10px; display: flex; flex-direction: column; justify-content: space-between;">
+                    <div style="font-size: 11px; font-weight: 800; color: #1a51a1; display: flex; align-items: center; gap: 5px; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid #f1f5f9; padding-bottom: 4px;">
+                        <i class="fa-solid fa-gauge-high"></i> CHARGE SPEED
+                    </div>
+                    
+                    <div style="flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 6px; margin: 2px 0;">
+                        <!-- Fast Mode -->
+                        <div id="mode-fast" class="mode-btn active" style="min-height: 44px; padding: 5px 8px;" onclick="selectChargeMode('FAST')">
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <div style="width: 26px; height: 26px; border-radius: 5px; background: #fee2e2; color: #e12b18; display: flex; align-items: center; justify-content: center; font-size: 13px;">
+                                    <i class="fa-solid fa-bolt"></i>
+                                </div>
+                                <div>
+                                    <div style="font-size: 11px; font-weight: 800; color: #1e293b;">FAST CHARGE</div>
+                                    <div style="font-size: 9px; color: #64748b; font-weight: 600;">High current (100A / Max)</div>
+                                </div>
+                            </div>
+                            <div class="radio-circle"></div>
+                        </div>
+
+                        <!-- Normal Mode -->
+                        <div id="mode-normal" class="mode-btn" style="min-height: 44px; padding: 5px 8px;" onclick="selectChargeMode('NORMAL')">
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <div style="width: 26px; height: 26px; border-radius: 5px; background: #e0f2fe; color: #0284c7; display: flex; align-items: center; justify-content: center; font-size: 13px;">
+                                    <i class="fa-solid fa-battery-half"></i>
+                                </div>
+                                <div>
+                                    <div style="font-size: 11px; font-weight: 800; color: #1e293b;">NORMAL CHARGE</div>
+                                    <div style="font-size: 9px; color: #64748b; font-weight: 600;">Standard current (40A)</div>
+                                </div>
+                            </div>
+                            <div class="radio-circle"></div>
+                        </div>
+                    </div>
+
+                </div>
+
+                <!-- Right Card: Timer Schedule -->
+                <div class="box-panel" style="padding: 8px 10px; display: flex; flex-direction: column; justify-content: space-between;">
+                    <div style="font-size: 11px; font-weight: 800; color: #1a51a1; display: flex; align-items: center; gap: 5px; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid #f1f5f9; padding-bottom: 4px;">
+                        <i class="fa-solid fa-clock"></i> CHARGE TIMER
+                    </div>
+                    
+                    <div style="display: flex; align-items: center; justify-content: space-between; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 5px; padding: 3px 8px;">
+                        <span style="font-size: 11px; font-weight: 700; color: #334155;">DELAY START:</span>
+                        <div class="toggle-switch active" id="timer-switch" onclick="toggleTimer()">
+                            <div class="toggle-track">
+                                <span class="toggle-label-on">ON</span>
+                                <div class="toggle-thumb"></div>
+                                <span class="toggle-label-off">OFF</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="timer-picker-area" style="display: flex; align-items: center; justify-content: center; gap: 6px; margin: 4px 0;">
+                        <div style="display: flex; flex-direction: column; align-items: center; gap: 2px;">
+                            <button class="btn-step" onclick="stepTimerHour(1)"><i class="fa-solid fa-chevron-up"></i></button>
+                            <div class="time-val" id="timer-hours">02</div>
+                            <button class="btn-step" onclick="stepTimerHour(-1)"><i class="fa-solid fa-chevron-down"></i></button>
+                            <span style="font-size: 9px; font-weight: 700; color: #94a3b8; text-transform: uppercase;">HOURS</span>
+                        </div>
+
+                        <div style="display: flex; flex-direction: column; align-items: center; gap: 2px;">
+                            <div style="height: 22px;"></div>
+                            <div class="time-colon">:</div>
+                            <div style="height: 22px;"></div>
+                            <div style="height: 12px;"></div>
+                        </div>
+
+                        <div style="display: flex; flex-direction: column; align-items: center; gap: 2px;">
+                            <button class="btn-step" onclick="stepTimerMin(15)"><i class="fa-solid fa-chevron-up"></i></button>
+                            <div class="time-val" id="timer-mins">30</div>
+                            <button class="btn-step" onclick="stepTimerMin(-15)"><i class="fa-solid fa-chevron-down"></i></button>
+                            <span style="font-size: 9px; font-weight: 700; color: #94a3b8; text-transform: uppercase;">MINS</span>
+                        </div>
+                    </div>
+
+                    <button id="btn-save-config" class="btn-confirm" onclick="saveChargeConfig()">
+                        <i class="fa-solid fa-floppy-disk"></i> SAVE & APPLY
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- ALARM SCREEN -->
 
     <div id="screen-alarm" class="screen-view">
 <div class="alarm-content">
-
+            
             <div class="alarm-sub-header">
                 <!-- Nút BACK gắn link về setting -->
                 <a href="javascript:void(0)" onclick="switchScreen('dashboard')" class="btn-back-square">
@@ -1012,7 +1289,7 @@
             </div>
 
             <div class="alarm-body">
-
+                
                 <!-- Bảng danh sách cảnh báo -->
                 <div class="table-container">
                     <div class="table-row table-header">
@@ -1020,13 +1297,13 @@
                         <div class="col-code">CODE</div>
                         <div class="col-desc">DESCRIPTION</div>
                     </div>
-
+                    
                     <div class="table-row">
                         <div class="col-time">10:30:21</div>
                         <div class="col-code level-fault">E006</div>
                         <div class="col-desc level-fault">CELL 6 OVER VOLTAGE</div>
                     </div>
-
+                    
                     <div class="table-row">
                         <div class="col-time">10:28:45</div>
                         <div class="col-code level-warn">W002</div>
@@ -1061,7 +1338,7 @@
 
         </div>
 
-
+    
     </div>
 </div>
 
@@ -1072,7 +1349,7 @@
     const actionBtn = document.getElementById('sys-action');
     const socText = document.getElementById('soc-text');
     const socDiv = document.getElementById('soc-div');
-
+    
     const STATE = {
         READY: { name: "READY", btnText: "START", statusClass: "", btnClass: "", color: "#1a51a1" },
         STARTING: { name: "STARTING", btnText: "STOP", statusClass: "status-orange", btnClass: "btn-red", color: "#ea851c" },
@@ -1086,33 +1363,50 @@
     let simTimer = null;
     let chargeTimer = null;
     let socValue = 65;
+    var chargeMode = "FAST";
+    var timerEnabled = true;
+    var timerHours = 2;
+    var timerMins = 30;
 
     function applyState(stateKey) {
         currentState = stateKey;
         const s = STATE[stateKey];
-
+        
         statusBox.innerText = s.name;
         actionBtn.innerText = s.btnText;
         statusBox.className = "status-box " + s.statusClass;
         actionBtn.className = "action-btn " + s.btnClass;
         socText.style.color = s.color;
         socDiv.style.backgroundColor = s.color;
-
+        
         // Reset timers
         clearTimeout(simTimer);
         clearInterval(chargeTimer);
-
+        
         // Logic mô phỏng tự động
         if (stateKey === "STARTING") {
             // Sau 2s tự động chuyển sang CHARGING
             simTimer = setTimeout(() => applyState("CHARGING"), 2000);
         } else if (stateKey === "CHARGING") {
+            // Cập nhật dòng và công suất tương ứng chế độ sạc đã chọn
+            const dcVolt = document.getElementById('dc-voltage');
+            const dcCurr = document.getElementById('dc-current');
+            const dcPow = document.getElementById('dc-power');
+            if (chargeMode === "FAST") {
+                if (dcCurr) dcCurr.innerText = "100.0";
+                if (dcVolt) dcVolt.innerText = "52.8";
+                if (dcPow) dcPow.innerText = "5.3";
+            } else {
+                if (dcCurr) dcCurr.innerText = "40.0";
+                if (dcVolt) dcVolt.innerText = "52.4";
+                if (dcPow) dcPow.innerText = "2.1";
+            }
             // Nhảy % mỗi 0.5s để mô phỏng đang sạc
             chargeTimer = setInterval(() => {
                 socValue += 1;
                 socText.innerText = socValue + "%";
                 if (socValue >= 100) applyState("COMPLETE");
-            }, 500);
+            }, 500); 
         } else if (stateKey === "COMPLETE") {
             socValue = 100;
             socText.innerText = "100%";
@@ -1121,6 +1415,12 @@
         } else if (stateKey === "READY") {
             socValue = 65; // Đặt lại mức pin ban đầu
             socText.innerText = "65%";
+            const dcVolt = document.getElementById('dc-voltage');
+            const dcCurr = document.getElementById('dc-current');
+            const dcPow = document.getElementById('dc-power');
+            if (dcCurr) dcCurr.innerText = "0.0";
+            if (dcVolt) dcVolt.innerText = "0.0";
+            if (dcPow) dcPow.innerText = "0.0";
         }
     }
 
@@ -1140,7 +1440,7 @@
         if (currentState === "ERROR") applyState("OFFLINE");
         else applyState("ERROR");
     });
-
+    
     // Khởi tạo ban đầu
     applyState("READY");
 
@@ -1159,14 +1459,15 @@
     // --- SINGLE PAGE APPLICATION LOGIC ---
     function switchScreen(screenId) {
         // Hide all screens
-
+        
         document.getElementById('screen-dashboard').style.display = 'none';
         document.getElementById('screen-setting').style.display = 'none';
         document.getElementById('screen-alarm').style.display = 'none';
         if(document.getElementById('screen-login')) document.getElementById('screen-login').style.display = 'none';
         if(document.getElementById('screen-precharge')) document.getElementById('screen-precharge').style.display = 'none';
+        if(document.getElementById('screen-config')) document.getElementById('screen-config').style.display = 'none';
 
-
+        
         // Show target screen
         const target = document.getElementById('screen-' + screenId);
         if (target) {
@@ -1177,11 +1478,11 @@
         const fHome = document.getElementById('f-home');
         const fSet = document.getElementById('f-set');
         const fAlarm = document.getElementById('f-alarm');
-
+        
         if (fHome) fHome.classList.remove('active');
         if (fSet) fSet.classList.remove('active');
         if (fAlarm) fAlarm.classList.remove('active');
-
+        
         if (screenId === 'dashboard' && fHome) fHome.classList.add('active');
         if (screenId === 'setting' && fSet) fSet.classList.add('active');
         if (screenId === 'alarm' && fAlarm) fAlarm.classList.add('active');
@@ -1201,7 +1502,6 @@
     let prechargeState = "READY";
     let prechargeTimer = null;
     let prechargeVoltVal = 2.40;
-    let prechargeErrorCode = "E021"; // Representative existing system alarm code.
 
     const PRE_STATES = {
         READY: { text: "READY", icon: "fa-solid fa-circle-check", statusClass: "status-green", btnText: "START", btnClass: "btn-green", volt: "2.40", curr: "0.00" },
@@ -1218,8 +1518,6 @@
         const btn = document.getElementById('precharge-action-btn');
         const voltEl = document.getElementById('precharge-volt');
         const currEl = document.getElementById('precharge-curr');
-        const errorRow = document.getElementById('precharge-error-row');
-        const errorCode = document.getElementById('precharge-error-code');
 
         clearInterval(prechargeTimer);
 
@@ -1248,9 +1546,6 @@
             btn.style.letterSpacing = "0.5px";
             btn.innerText = s.btnText;
         }
-
-        if (errorRow) errorRow.style.display = stateKey === "ERROR" ? "flex" : "none";
-        if (errorCode && stateKey === "ERROR") errorCode.innerText = prechargeErrorCode;
 
         if (stateKey === "READY") {
             prechargeVoltVal = 2.40;
@@ -1282,9 +1577,7 @@
         } else if (prechargeState === "CHARGING") {
             applyPrechargeState("READY");
         } else if (prechargeState === "ERROR") {
-            /* RESET is safe and idempotent: the firmware keeps ERROR until
-             * the root cause has cleared; this simulator must not fake READY. */
-            applyPrechargeState("ERROR");
+            applyPrechargeState("READY");
         }
     }
 
@@ -1305,6 +1598,76 @@
             starEl.innerText = enteredPin.length > 0 ? "*".repeat(enteredPin.length) : "****";
         }
     }
+
+    // --- CHARGE CONFIGURATION (TIMER & SPEED MODE) SCRIPT ---
+    function selectChargeMode(mode) {
+        chargeMode = mode;
+        const btnFast = document.getElementById('mode-fast');
+        const btnNormal = document.getElementById('mode-normal') || document.getElementById('mode-eco');
+        if (mode === 'FAST') {
+            if (btnFast) btnFast.classList.add('active');
+            if (btnNormal) btnNormal.classList.remove('active');
+        } else {
+            if (btnFast) btnFast.classList.remove('active');
+            if (btnNormal) btnNormal.classList.add('active');
+        }
+    }
+
+    function toggleTimer() {
+        timerEnabled = !timerEnabled;
+        const sw = document.getElementById('timer-switch');
+        const picker = document.getElementById('timer-picker-area');
+        if (sw) {
+            if (timerEnabled) {
+                sw.classList.add('active');
+                if (picker) {
+                    picker.style.opacity = "1";
+                    picker.style.pointerEvents = "auto";
+                    picker.style.filter = "none";
+                }
+            } else {
+                sw.classList.remove('active');
+                if (picker) {
+                    picker.style.opacity = "0.25";
+                    picker.style.pointerEvents = "none";
+                    picker.style.filter = "grayscale(1)";
+                }
+            }
+        }
+    }
+
+    function stepTimerHour(delta) {
+        if (!timerEnabled) return;
+        timerHours = (timerHours + delta + 24) % 24;
+        const el = document.getElementById('timer-hours');
+        if (el) el.innerText = timerHours.toString().padStart(2, '0');
+    }
+
+    function stepTimerMin(delta) {
+        if (!timerEnabled) return;
+        timerMins = (timerMins + delta + 60) % 60;
+        const el = document.getElementById('timer-mins');
+        if (el) el.innerText = timerMins.toString().padStart(2, '0');
+    }
+
+    function saveChargeConfig() {
+        const btn = document.getElementById('btn-save-config');
+        if (btn) {
+            const oldHtml = btn.innerHTML;
+            btn.innerHTML = '<i class="fa-solid fa-check"></i> SAVED!';
+            btn.style.background = '#10b981';
+            setTimeout(() => {
+                btn.innerHTML = oldHtml;
+                btn.style.background = '#1a51a1';
+            }, 1000);
+        }
+    }
 </script>
 </body>
 </html>
+
+
+
+
+
+
