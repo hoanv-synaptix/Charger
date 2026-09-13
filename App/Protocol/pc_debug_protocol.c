@@ -602,7 +602,10 @@ bool DebugProtocol_HandleCommand(uint8_t cmd, const uint8_t *payload, uint16_t l
         bool ok = false;
         switch (reg) {
         case 0x0021: ok = CHG_LIB_SetVoltage(idx, val); break;
-        case 0x0012: ok = CHG_LIB_SetCurrentLimit(idx, val); break;
+        case 0x0012:
+            ok = CHG_LIB_SetCurrentLimitEx(idx, val,
+                                           CHG_LIB_TX_SOURCE_PC_SET_CURRENT);
+            break;
         case 0x0030:
             if (val > 0.0f) ok = CHG_LIB_Start(idx);
             else            ok = CHG_LIB_Stop(idx);
@@ -628,6 +631,8 @@ bool DebugProtocol_HandleCommand(uint8_t cmd, const uint8_t *payload, uint16_t l
             return true;
         }
         BSP_CAN_Frame_t frame;
+        frame.tx_source = 0U;
+        frame.tx_reason = 0U;
         uint8_t bus = payload[0];
         memcpy(&frame.ext_id, &payload[1], 4);
         frame.dlc = payload[5];

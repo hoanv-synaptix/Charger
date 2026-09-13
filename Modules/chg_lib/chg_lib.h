@@ -46,6 +46,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include "chg_lib_can_backend.h"
 
 #define CHG_LIB_MAX_DRV   8
 
@@ -205,11 +206,17 @@ int8_t CHG_LIB_AddModule(uint8_t addr, uint8_t group);
 bool CHG_LIB_SetModuleConfig(uint8_t idx, float rated_current_a);
 void CHG_LIB_RemoveModule(uint8_t idx);
 bool CHG_LIB_SetVoltage(uint8_t idx, float voltage_v);
+void CHG_LIB_SetVoltageAllEx(float voltage_v, CHG_LIB_TxSource_t source);
 bool CHG_LIB_SetCurrentLimit(uint8_t idx, float current_a);
+bool CHG_LIB_SetCurrentLimitEx(uint8_t idx, float current_a, CHG_LIB_TxSource_t source);
 bool CHG_LIB_Start(uint8_t idx);
 bool CHG_LIB_Stop(uint8_t idx);
 void CHG_LIB_SetVoltageAll(float voltage_v);
 void CHG_LIB_SetCurrentLimitAll(float current_a);
+bool CHG_LIB_SetCurrentLimitAllEx(float current_a, CHG_LIB_TxSource_t source);
+CHG_LIB_TxSource_t CHG_LIB_GetCommandSource(void);
+uint32_t CHG_LIB_GetCurrentZeroRejectCount(void);
+void CHG_LIB_RecordRejectedZero(CHG_LIB_TxSource_t source, CHG_LIB_CurrentPath_t path);
 void CHG_LIB_StartAll(void);
 void CHG_LIB_StopAll(void);
 void CHG_LIB_EmergencyStop(void);

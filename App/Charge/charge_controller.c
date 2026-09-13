@@ -60,6 +60,7 @@
 #define CHARGE_CTRL_VOLTAGE_PRECLOSE_RAMP_V_PER_S    10.0f  /* pre-relay-close: bring the module up to the pack voltage FAST relative to the post-close ramp. Module is unloaded here, but this still delays relay arming by ~(0.9 * pack_V) / rate (e.g. 400V pack -> ~36s). */
 #define CHARGE_CTRL_CURRENT_RAMP_A_PER_S             5.0f   /* per module; e.g. 0->100A -> 20s */
 #define CHARGE_CTRL_BELOW_MIN_CONFIRM_MS             500U   /* In-flight glitch debounce: confirm cell below min for 500ms before inhibit */
+#define CHARGE_CTRL_CURRENT_TARGET_EPSILON_A         0.0001f
 
 /* ============== Private State ============== */
 
@@ -78,6 +79,12 @@ static struct {
     float target_voltage_v;
     float target_current_total_a;
     float target_current_per_module_a;
+    /* Last valid per-module target. During the module-count mismatch
+     * debounce window, do not turn a transient count of zero (or a partial
+     * count) into a zero/larger current command. */
+    float last_valid_target_current_per_module_a;
+    bool module_target_hold_active;
+    bool zero_target_hold_logged;
 
     /* Applied values */
     float applied_voltage_v;
@@ -134,6 +141,7 @@ static struct {
 
     /* Setpoint ramp: last tick a ramp step was taken (see apply_charge_targets). */
     uint32_t ramp_tick;
+    bool current_ramp_ready;
 
     /* Pre-charge recovery state. This is private context for reset validation,
      * not a public fault or UI state. */
@@ -200,6 +208,7 @@ static bool check_preconditions_set_fault(uint32_t now);
 static uint32_t check_precharge_faults(void);
 static void apply_charge_targets(uint32_t now_tick);
 static void stop_charging(void);
+static float get_existing_current_baseline(uint32_t now_tick, bool *active_out);
 
 /* Stage evaluation */
 static ChargeStageEval_t eval_cell_stage(const ChargeCycleConfig_t *cfg, const BMS_View_t *bms, uint32_t now_tick);
@@ -277,6 +286,44 @@ static uint8_t get_active_module_count(void) {
         }
     }
     return count;
+}
+
+static float get_existing_current_baseline(uint32_t now_tick, bool *active_out)
+{
+    float baseline = 0.0f;
+    bool active = false;
+    CHG_LIB_ModuleView_t view;
+
+    if (isfinite(g_ctrl.applied_current_per_module_a) &&
+        g_ctrl.applied_current_per_module_a > RELAY_OPEN_CURRENT_THRESHOLD_A) {
+        baseline = g_ctrl.applied_current_per_module_a;
+        active = true;
+    }
+
+    for (uint8_t i = 0U; i < CHG_LIB_GetModuleCount(); i++) {
+        if (!CHG_LIB_GetModuleView(i, &view) || !view.enabled) continue;
+
+        bool fresh = (view.last_rx_tick != 0U) &&
+                     ((uint32_t)(now_tick - view.last_rx_tick) <=
+                      CHARGE_CTRL_MODULE_VOLTAGE_MAX_AGE_MS);
+        bool active_state = (view.state == CHG_LIB_STATE_RUNNING ||
+                             view.state == CHG_LIB_STATE_STARTING ||
+                             view.state == CHG_LIB_STATE_STOPPING);
+
+        if (active_state && isfinite(view.current_limit) &&
+            view.current_limit > baseline) {
+            baseline = view.current_limit;
+            active = true;
+        }
+        if (fresh && isfinite(view.current) &&
+            view.current > RELAY_OPEN_CURRENT_THRESHOLD_A) {
+            if (view.current > baseline) baseline = view.current;
+            active = true;
+        }
+    }
+
+    if (active_out != NULL) *active_out = active;
+    return baseline;
 }
 
 /**
@@ -656,36 +703,99 @@ static void apply_charge_targets(uint32_t now_tick) {
          * CHARGE_CTRL_CURRENT_RAMP_A_PER_S; while the relay is open no
          * current flows regardless, so that ramp is "pre-charged" and
          * softens the onset once the relay latches. */
-        g_ctrl.applied_voltage_v = 0.0f;
-        g_ctrl.applied_current_per_module_a = 0.0f;
-        g_ctrl.ramp_tick = now_tick;
+        bool existing_current = false;
+        bool resumed_start = false;
+        float current_baseline = get_existing_current_baseline(now_tick, &existing_current);
 
-        LOG("CC: APPLY_START_ZERO state=%d last_run=%u inhibit=%u target=%.3fA/mod applied=%.3fA/mod V=%.3fV src=%u band=%u\r\n",
-            (int)g_ctrl.state, (unsigned)g_ctrl.last_running, (unsigned)g_ctrl.inhibit,
-            (double)g_ctrl.target_current_per_module_a,
-            (double)g_ctrl.applied_current_per_module_a,
-            (double)g_ctrl.target_voltage_v,
-            (unsigned)g_ctrl.active_limit_source, (unsigned)g_ctrl.active_stage_band);
-        CHG_LIB_SetVoltageAll(0.0f);
-        CHG_LIB_SetCurrentLimitAll(0.0f);
-        CHG_LIB_StartAll();
+        if (existing_current) {
+            /* The module is already energized. Resume from its current
+             * setpoint instead of forcing a new zero-to-target ramp. */
+            if (current_baseline > g_ctrl.applied_current_per_module_a) {
+                g_ctrl.applied_current_per_module_a = current_baseline;
+            }
+            g_ctrl.current_ramp_ready = true;
+            g_ctrl.ramp_tick = now_tick;
+            resumed_start = true;
+            LOG("CC: START_RESUME baseline=%.3fA/mod target=%.3fA/mod\r\n",
+                (double)g_ctrl.applied_current_per_module_a,
+                (double)g_ctrl.target_current_per_module_a);
+            CHG_LIB_StartAll();
+        } else {
+            g_ctrl.applied_voltage_v = 0.0f;
+            LOG("CC: APPLY_START_ZERO state=%d last_run=%u inhibit=%u target=%.3fA/mod applied=0.000A/mod V=%.3fV src=%u band=%u\r\n",
+                (int)g_ctrl.state, (unsigned)g_ctrl.last_running, (unsigned)g_ctrl.inhibit,
+                (double)g_ctrl.target_current_per_module_a,
+                (double)g_ctrl.target_voltage_v,
+                (unsigned)g_ctrl.active_limit_source, (unsigned)g_ctrl.active_stage_band);
+            CHG_LIB_SetVoltageAllEx(0.0f, CHG_LIB_TX_SOURCE_CC_START);
+            g_ctrl.current_ramp_ready =
+                CHG_LIB_SetCurrentLimitAllEx(0.0f, CHG_LIB_TX_SOURCE_CC_START);
+            if (g_ctrl.current_ramp_ready) {
+                g_ctrl.applied_current_per_module_a = 0.0f;
+                g_ctrl.ramp_tick = now_tick;
+            } else {
+                /* A rejected zero request must not manufacture a lower
+                 * ramp baseline. Preserve the pre-existing value. */
+                g_ctrl.applied_current_per_module_a = current_baseline;
+                g_ctrl.ramp_tick = now_tick;
+                LOG("CC: START_RESET_REJECTED keep=%.3fA/mod\r\n",
+                    (double)g_ctrl.applied_current_per_module_a);
+            }
+            CHG_LIB_StartAll();
+        }
 
         int v_int = (int)(g_ctrl.target_voltage_v * 10.0f);
         int i_int = (int)(g_ctrl.target_current_per_module_a * 10.0f);
-        LOG("CC: Start V=%d.%dV I=%d.%dA/mod (ramping)\r\n",
-            v_int / 10, v_int % 10, i_int / 10, i_int % 10);
+        LOG("CC: Start V=%d.%dV I=%d.%dA/mod (%s)\r\n",
+            v_int / 10, v_int % 10, i_int / 10, i_int % 10,
+            resumed_start ? "resuming" : "ramping");
     } else if (should_run) {
+        if (!g_ctrl.current_ramp_ready) {
+            /* Stay put after a failed start reset. Retry only the valid
+             * CC_START zero request; never emit a ramp command from an
+             * untrusted zero baseline. */
+            if (CHG_LIB_SetCurrentLimitAllEx(0.0f, CHG_LIB_TX_SOURCE_CC_START)) {
+                g_ctrl.current_ramp_ready = true;
+                g_ctrl.applied_current_per_module_a = 0.0f;
+                g_ctrl.ramp_tick = now_tick;
+            } else {
+                g_ctrl.last_running = should_run;
+                return;
+            }
+        }
         /* A DROP in target (soft derating / protective clamp) takes effect
          * immediately -- must not wait up to RAMP_STEP_MS. Hard faults use a
          * separate path (stop_charging). */
         if (g_ctrl.target_voltage_v < g_ctrl.applied_voltage_v) {
             g_ctrl.applied_voltage_v = g_ctrl.target_voltage_v;
-            CHG_LIB_SetVoltageAll(g_ctrl.applied_voltage_v);
+            CHG_LIB_SetVoltageAllEx(g_ctrl.applied_voltage_v, CHG_LIB_TX_SOURCE_CC_RAMP);
         }
-        if (g_ctrl.target_current_per_module_a < g_ctrl.applied_current_per_module_a) {
-            g_ctrl.applied_current_per_module_a = g_ctrl.target_current_per_module_a;
-            CHG_LIB_SetCurrentLimitAll(g_ctrl.applied_current_per_module_a);
+        if (g_ctrl.target_current_per_module_a > CHARGE_CTRL_CURRENT_TARGET_EPSILON_A &&
+            g_ctrl.target_current_per_module_a < g_ctrl.applied_current_per_module_a) {
+            /* Update the controller's applied state only after the driver
+             * accepted the command. A rejected command must not create a
+             * lower software baseline for the next ramp step. */
+            if (CHG_LIB_SetCurrentLimitAllEx(g_ctrl.target_current_per_module_a,
+                                             CHG_LIB_TX_SOURCE_CC_RAMP)) {
+                g_ctrl.applied_current_per_module_a = g_ctrl.target_current_per_module_a;
+            }
         }
+
+        /* A positive total target with no valid per-module split is an
+         * internal transient (normally a module-count mismatch). Never turn
+         * it into CC_RAMP=0: an explicit inhibit/completion/stop owns zero. */
+        if (g_ctrl.target_current_per_module_a <= CHARGE_CTRL_CURRENT_TARGET_EPSILON_A) {
+            if (!g_ctrl.zero_target_hold_logged) {
+                LOG("CC: HOLD_CURRENT target_per=0 applied=%.3fA/mod modules=%u/%u\r\n",
+                    (double)g_ctrl.applied_current_per_module_a,
+                    (unsigned)g_ctrl.actual_module_count,
+                    (unsigned)g_ctrl.source_module_count);
+                g_ctrl.zero_target_hold_logged = true;
+            }
+            g_ctrl.last_running = should_run;
+            return;
+        }
+        g_ctrl.zero_target_hold_logged = false;
 
         /* Rate-limited RISE, one step per RAMP_STEP_MS (bounds CAN traffic). */
         if ((now_tick - g_ctrl.ramp_tick) >= CHARGE_CTRL_RAMP_STEP_MS) {
@@ -705,11 +815,12 @@ static void apply_charge_targets(uint32_t now_tick) {
 
             if (new_v != g_ctrl.applied_voltage_v) {
                 g_ctrl.applied_voltage_v = new_v;
-                CHG_LIB_SetVoltageAll(new_v);
+                CHG_LIB_SetVoltageAllEx(new_v, CHG_LIB_TX_SOURCE_CC_RAMP);
             }
             if (new_i != g_ctrl.applied_current_per_module_a) {
-                g_ctrl.applied_current_per_module_a = new_i;
-                CHG_LIB_SetCurrentLimitAll(new_i);
+                if (CHG_LIB_SetCurrentLimitAllEx(new_i, CHG_LIB_TX_SOURCE_CC_RAMP)) {
+                    g_ctrl.applied_current_per_module_a = new_i;
+                }
             }
         }
     } else if (!should_run && g_ctrl.last_running) {
@@ -723,6 +834,10 @@ static void apply_charge_targets(uint32_t now_tick) {
         CHG_LIB_StopAll();
         g_ctrl.applied_voltage_v = 0.0f;
         g_ctrl.applied_current_per_module_a = 0.0f;
+        g_ctrl.current_ramp_ready = false;
+        g_ctrl.last_valid_target_current_per_module_a = 0.0f;
+        g_ctrl.module_target_hold_active = false;
+        g_ctrl.zero_target_hold_logged = false;
         if (g_ctrl.inhibit) {
             g_ctrl.stop_reason = CHARGE_STOP_STAGE_INHIBIT;
         }
@@ -740,6 +855,10 @@ static void stop_charging(void) {
     g_ctrl.target_current_per_module_a = 0.0f;
     g_ctrl.applied_voltage_v = 0.0f;
     g_ctrl.applied_current_per_module_a = 0.0f;
+    g_ctrl.current_ramp_ready = false;
+    g_ctrl.last_valid_target_current_per_module_a = 0.0f;
+    g_ctrl.module_target_hold_active = false;
+    g_ctrl.zero_target_hold_logged = false;
     g_ctrl.standalone_vmax_reached_tick = 0;
     g_ctrl.protect_jack_temp_trip_timer_tick = 0;
     g_ctrl.ramp_tick = 0;
@@ -1622,19 +1741,58 @@ static void run_bms_controlled_mode(uint32_t now_tick) {
         }
     }
 
-    /* Per-module split (strict: must match configured count) */
-    if (g_ctrl.actual_module_count > 0) {
-        g_ctrl.target_current_per_module_a = g_ctrl.target_current_total_a / (float)g_ctrl.actual_module_count;
+    /* Per-module split. A module-count mismatch is debounced separately in
+     * ChargeController_Process(). Keep the last valid per-module target
+     * during that window; dividing by a transient count (especially zero)
+     * would manufacture a lower command and desynchronise the controller
+     * from the driver's retained setpoint. An inhibit remains an explicit
+     * zero-current condition and is therefore never held here. */
+    bool module_count_mismatch =
+        (g_ctrl.source_module_count > 0U &&
+         g_ctrl.actual_module_count != g_ctrl.source_module_count);
+    if (g_ctrl.target_current_total_a <= CHARGE_CTRL_CURRENT_TARGET_EPSILON_A) {
+        g_ctrl.target_current_per_module_a = 0.0f;
+        g_ctrl.module_target_hold_active = false;
+    } else if (module_count_mismatch &&
+               isfinite(g_ctrl.last_valid_target_current_per_module_a) &&
+               g_ctrl.last_valid_target_current_per_module_a >
+                   CHARGE_CTRL_CURRENT_TARGET_EPSILON_A) {
+        g_ctrl.target_current_per_module_a =
+            g_ctrl.last_valid_target_current_per_module_a;
+        if (!g_ctrl.module_target_hold_active) {
+            LOG("CC: HOLD_TARGET_MODULE_MISMATCH src=%u act=%u keep=%.3fA/mod\r\n",
+                (unsigned)g_ctrl.source_module_count,
+                (unsigned)g_ctrl.actual_module_count,
+                (double)g_ctrl.target_current_per_module_a);
+            g_ctrl.module_target_hold_active = true;
+        }
+    } else if (g_ctrl.actual_module_count > 0U) {
+        g_ctrl.target_current_per_module_a =
+            g_ctrl.target_current_total_a / (float)g_ctrl.actual_module_count;
+        g_ctrl.module_target_hold_active = false;
     } else {
         g_ctrl.target_current_per_module_a = 0.0f;
+        g_ctrl.module_target_hold_active = false;
     }
 
     /* Clamp to module_i_max_a (downward only) */
     if (g_ctrl.target_current_per_module_a > cfg.module_i_max_a) {
         g_ctrl.target_current_per_module_a = cfg.module_i_max_a;
-        /* Recalculate total current to match clamped per-module value */
-        g_ctrl.target_current_total_a = g_ctrl.target_current_per_module_a * (float)g_ctrl.actual_module_count;
+        /* Recalculate only with a valid module count. During a mismatch,
+         * target_current_total_a must remain positive so the controller does
+         * not enter its stop path merely because actual count is transiently
+         * zero. */
+        if (g_ctrl.actual_module_count > 0U) {
+            g_ctrl.target_current_total_a =
+                g_ctrl.target_current_per_module_a * (float)g_ctrl.actual_module_count;
+        }
         g_ctrl.derating = 1;
+    }
+
+    if (!module_count_mismatch &&
+        g_ctrl.target_current_per_module_a > CHARGE_CTRL_CURRENT_TARGET_EPSILON_A) {
+        g_ctrl.last_valid_target_current_per_module_a =
+            g_ctrl.target_current_per_module_a;
     }
 
     /* Note: No upward clamp to module_i_min_a */

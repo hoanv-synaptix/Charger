@@ -311,7 +311,10 @@ static bool test_driver_module_fault(uint8_t module_type, const char *name)
      * charging via CHG_LIB module state (module no longer counted active),
      * which the next Start()/precondition check would catch. Assert what
      * the app would actually see: module view reporting the fault. */
-    (void)cv;
+    ASSERT(cv.target_current_per_module_a > 0.0f,
+           "transient module loss must retain the last valid current target");
+    ASSERT(cv.applied_current_per_module_a > 0.0f,
+           "transient module loss must not reset applied current before stop/fault");
 
     printf("[PASS] test_%s_module_fault\n", name);
     return true;
@@ -971,6 +974,73 @@ static bool test_min_current_and_bms_capacity(void)
            "Imin must floor an allowed stage target: 0.2C * 100Ah");
 
     printf("[PASS] test_min_current_and_bms_capacity\n");
+    return true;
+}
+
+static bool test_current_zero_source_policy(void)
+{
+    printf("Running test_current_zero_source_policy...\n");
+
+    const uint8_t module_types[] = {
+        CHARGE_MODULE_TYPE_TONHE,
+        CHARGE_MODULE_TYPE_MAXWELL,
+        CHARGE_MODULE_TYPE_LIANMING
+    };
+
+    for (uint8_t i = 0; i < (uint8_t)(sizeof(module_types) / sizeof(module_types[0])); i++) {
+        CHG_LIB_ModuleView_t view;
+        ASSERT(setup_scenario(module_types[i], NULL), "setup failed");
+        ASSERT(CHG_LIB_SetCurrentLimitAllEx(20.0f, CHG_LIB_TX_SOURCE_PC_SET_CURRENT),
+               "positive current must be accepted");
+        ASSERT(!CHG_LIB_SetCurrentLimitAllEx(0.0f, CHG_LIB_TX_SOURCE_PC_SET_CURRENT),
+               "PC zero current must be rejected");
+        ASSERT(CHG_LIB_GetModuleView(0, &view), "module view unavailable");
+        ASSERT(fabsf(view.current_limit - 20.0f) < 0.01f,
+               "rejected zero must retain the previous setpoint");
+        ASSERT(CHG_LIB_SetCurrentLimitAllEx(0.0f, CHG_LIB_TX_SOURCE_CC_START),
+               "start zero current must be accepted");
+        ASSERT(CHG_LIB_GetModuleView(0, &view), "module view unavailable after zero");
+        ASSERT(fabsf(view.current_limit) < 0.01f,
+               "valid zero source must update the setpoint");
+    }
+
+    printf("[PASS] test_current_zero_source_policy\n");
+    return true;
+}
+
+static bool test_start_resume_does_not_restart_current_ramp(void)
+{
+    printf("Running test_start_resume_does_not_restart_current_ramp...\n");
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_TONHE, NULL), "setup failed");
+    set_healthy_bms(400.0f, 50);
+    ASSERT(warmup_and_start(1500U, 4000U), "module never reached RUNNING");
+
+    /* Leave the module energized at a known setpoint, then reset only the
+     * controller state to reproduce a controller-side start edge while the
+     * driver still owns a valid output. */
+    ASSERT(CHG_LIB_SetCurrentLimitAllEx(20.0f, CHG_LIB_TX_SOURCE_CC_RAMP),
+           "failed to seed active current setpoint");
+    g_sim_module.current_override = true;
+    g_sim_module.current = 20.0f;
+    g_sim_module.actually_on = true;
+    ChargeController_Init();
+    ChargeController_SetManualTarget(570.0f, 40.0f);
+    ASSERT(ChargeController_Start(CHARGE_CTRL_OWNER_PC, true, mock_tick),
+           "resume start refused");
+
+    drive_step(20U); /* READY -> RUNNING */
+    drive_step(20U); /* start edge: must resume at 20A, not 0A */
+
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.applied_current_per_module_a >= 19.0f,
+           "resume must not reset applied current to zero");
+    drive_ms(200U);
+    ChargeController_GetView(&cv);
+    ASSERT(cv.applied_current_per_module_a >= 19.0f,
+           "first resume ramp command must not be below active baseline");
+
+    printf("[PASS] test_start_resume_does_not_restart_current_ramp\n");
     return true;
 }
 
@@ -2191,6 +2261,8 @@ int main(void)
     pass &= test_acknowledge_completion();
     pass &= test_current_ramp_up();
     pass &= test_min_current_and_bms_capacity();
+    pass &= test_current_zero_source_policy();
+    pass &= test_start_resume_does_not_restart_current_ramp();
     pass &= test_voltage_ramp_up();
     pass &= test_ramp_down_immediate();
     pass &= test_jack_temp_derating_and_trip();

@@ -26,6 +26,41 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+typedef enum {
+    CHG_LIB_TX_SOURCE_UNKNOWN = 0,
+    CHG_LIB_TX_SOURCE_CC_START,
+    CHG_LIB_TX_SOURCE_CC_INHIBIT,
+    CHG_LIB_TX_SOURCE_CC_COMPLETION,
+    CHG_LIB_TX_SOURCE_CC_STOP,
+    CHG_LIB_TX_SOURCE_PC_SET_CURRENT,
+    CHG_LIB_TX_SOURCE_PC_PROFILE,
+    CHG_LIB_TX_SOURCE_DRIVER_RECOVERY,
+    CHG_LIB_TX_SOURCE_CC_RAMP,
+    CHG_LIB_TX_SOURCE_COUNT
+} CHG_LIB_TxSource_t;
+
+typedef enum {
+    CHG_LIB_TX_REASON_UNKNOWN = 0,
+    CHG_LIB_TX_REASON_NORMAL,
+    CHG_LIB_TX_REASON_HEARTBEAT,
+    CHG_LIB_TX_REASON_START_RESET,
+    CHG_LIB_TX_REASON_CURRENT_ZERO,
+    CHG_LIB_TX_REASON_STOP,
+    CHG_LIB_TX_REASON_COUNT
+} CHG_LIB_TxReason_t;
+
+typedef enum {
+    CHG_LIB_CURRENT_PATH_UNKNOWN = 0,
+    CHG_LIB_CURRENT_PATH_ALL_EX,
+    CHG_LIB_CURRENT_PATH_MODULE_EX,
+    CHG_LIB_CURRENT_PATH_LEGACY_ALL,
+    CHG_LIB_CURRENT_PATH_LEGACY_MODULE,
+    CHG_LIB_CURRENT_PATH_PC_SET_CURRENT,
+    CHG_LIB_CURRENT_PATH_PC_PROFILE,
+    CHG_LIB_CURRENT_PATH_CONTROLLER,
+    CHG_LIB_CURRENT_PATH_COUNT
+} CHG_LIB_CurrentPath_t;
+
 /**
  * @brief CAN backend interface for charger drivers
  * @note Drivers call CHG_CanTransmit() which delegates to the registered backend
@@ -59,5 +94,10 @@ uint32_t CHG_LIB_CanBackend_NowTick(void);
  * @retval true if frame was queued for transmission
  */
 bool CHG_LIB_CanBackend_Transmit(uint32_t ext_id, const uint8_t *data, uint8_t dlc);
+bool CHG_LIB_CanBackend_TransmitEx(uint32_t ext_id, const uint8_t *data, uint8_t dlc,
+                                   CHG_LIB_TxSource_t source);
+bool CHG_LIB_CanBackend_TransmitMeta(uint32_t ext_id, const uint8_t *data, uint8_t dlc,
+                                     CHG_LIB_TxSource_t source,
+                                     CHG_LIB_TxReason_t reason);
 
 #endif /* CHG_CAN_BACKEND_H */

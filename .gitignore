@@ -18,6 +18,7 @@ __pycache__/
 # Editor / OS noise
 .vscode/
 *.swp
+~$*
 Thumbs.db
 .DS_Store
 

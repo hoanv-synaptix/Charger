@@ -142,6 +142,8 @@ typedef struct {
     uint8_t start_attempts;
     bool should_run;
     float voltage_setpoint;
+    CHG_LIB_TxSource_t voltage_source;
+    CHG_LIB_TxSource_t current_source;
     float rated_current_a;
     uint8_t diag_counter;        /* Counts cycles, triggers AC/temp read */
     uint8_t diag_step;           /* 0=idle, 1=AC read sent, 2=temp read sent */
@@ -318,6 +320,14 @@ static void lm_set_output(uint8_t idx, float voltage_v, float current_a)
     uint32_t voltage_mv = (uint32_t)(voltage_v * 1000.0f);  /* V -> mV */
     uint32_t current_ma = (uint32_t)(current_a * 1000.0f);  /* A -> mA */
     LM_Module_t *mod = &g_modules[idx];
+    CHG_LIB_TxSource_t source = mod->current_source != CHG_LIB_TX_SOURCE_UNKNOWN
+                                    ? mod->current_source
+                                    : mod->voltage_source;
+    CHG_LIB_TxReason_t reason =
+        (source == CHG_LIB_TX_SOURCE_CC_START && current_a <= 0.0001f)
+            ? CHG_LIB_TX_REASON_START_RESET
+            : (current_a <= 0.0001f) ? CHG_LIB_TX_REASON_CURRENT_ZERO
+                                     : CHG_LIB_TX_REASON_NORMAL;
 
     uint8_t data[8];
     data[0] = LM_CMD_SET_OUTPUT;    /* CMD = 0 */
@@ -330,9 +340,11 @@ static void lm_set_output(uint8_t idx, float voltage_v, float current_a)
     data[7] = (uint8_t)(voltage_mv);        /* Voltage byte 0 */
 
     uint32_t ext_id = lm_build_can_id(mod->view.addr, false);
-    if (CHG_LIB_CanBackend_Transmit(ext_id, data, 8)) {
+    if (CHG_LIB_CanBackend_TransmitMeta(ext_id, data, 8, source, reason)) {
         mod->view.stats.tx_count++;
         mod->view.last_tx_tick = CHG_LIB_NowTick(); /* BUGFIX B-17 */
+        mod->voltage_source = CHG_LIB_TX_SOURCE_UNKNOWN;
+        mod->current_source = CHG_LIB_TX_SOURCE_UNKNOWN;
     }
 }
 
@@ -685,6 +697,7 @@ static bool lm_set_voltage(uint8_t idx, float voltage_v)
     if (idx >= g_module_count || !g_modules[idx].view.enabled) return false;
     if (!isfinite(voltage_v)) return false; /* BUGFIX B-09: reject NaN/Inf setpoint */
     g_modules[idx].voltage_setpoint = voltage_v;
+    g_modules[idx].voltage_source = CHG_LIB_GetCommandSource();
     /* Lianming: send voltage+current together when running */
     if (g_modules[idx].view.state == CHG_LIB_STATE_RUNNING) {
         lm_set_output(idx, voltage_v, g_modules[idx].view.current_limit);
@@ -702,6 +715,7 @@ static bool lm_set_current_limit(uint8_t idx, float current_a)
         current_a = g_modules[idx].rated_current_a;
     }
     g_modules[idx].view.current_limit = current_a;
+    g_modules[idx].current_source = CHG_LIB_GetCommandSource();
     /* Lianming: send voltage+current together when running */
     if (g_modules[idx].view.state == CHG_LIB_STATE_RUNNING) {
         lm_set_output(idx, g_modules[idx].voltage_setpoint, current_a);

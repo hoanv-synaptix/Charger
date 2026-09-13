@@ -1,0 +1,12 @@
+================================================================================
+  BÁO CÁO TỔNG KẾT AUTOMATION TEST LOGIC SẠC (CHARGING LOGIC SUITE)
+================================================================================
+  [PASS]  | CL-01: Soft-Start & Gia tốc tăng dòng 5A/s (35s)
+  [PASS]  | CL-02: Phân tầng giảm dòng theo áp Cell & Đơn điệu (40s)
+  [PASS]  | CL-03: Nhiệt độ Pin: Giảm dòng, Inhibit & Tự hồi phục (45s)
+  [PASS]  | CL-04: Điều khiển áp 2 giai đoạn & Chốt Contactor (35s)
+  [PASS]  | CL-05: Dập dòng về 0 trước khi nhả Contactor (35s)
+  [PASS]  | CL-06: Đồng bộ tín hiệu Cho phép Sạc tới BMS (35s)
+--------------------------------------------------------------------------------
+  KẾT QUẢ: ALL PASS 100%
+================================================================================

@@ -55,19 +55,26 @@ static volatile uint32_t g_rx_overflow_count = 0U;
 /* Forward declarations */
 /* log_fixed helpers: kept but NOT called from ISR path (no LOG in ISR) */
 
-static void apply_active_charge_profile(void)
+static bool apply_active_charge_profile(void)
 {
     ChargeCycleConfig_t config;
+    float profile_voltage = last_set_voltage;
+    float profile_current = last_set_current;
 
     ChargeCycleConfig_Get(&config);
     if (config.charge_source_mode == CHARGE_SOURCE_STANDALONE_NO_BMS) {
-        last_set_voltage = config.module_u_max_v;
-        last_set_current = config.module_i_max_a;
+        profile_voltage = config.module_u_max_v;
+        profile_current = config.module_i_max_a;
         /* No LOG in ISR path — profile applied silently; main loop may log */
     }
 
-    CHG_LIB_SetVoltageAll(last_set_voltage);
-    CHG_LIB_SetCurrentLimitAll(last_set_current);
+    if (!CHG_LIB_SetCurrentLimitAllEx(profile_current, CHG_LIB_TX_SOURCE_PC_PROFILE)) {
+        return false;
+    }
+    last_set_voltage = profile_voltage;
+    last_set_current = profile_current;
+    CHG_LIB_SetVoltageAllEx(profile_voltage, CHG_LIB_TX_SOURCE_PC_PROFILE);
+    return true;
 }
 
 /* RX state machine */
@@ -443,14 +450,17 @@ static void process_frame(uint8_t cmd, const uint8_t *payload, uint8_t len)
         {
             float c = payload_float(payload);
             if (!isfinite(c)) { send_nack(cmd, PC_ERR_BAD_PARAM); return; }
-            last_set_current = c;
             LOG("PC: SET_CURRENT %.3fA manual=%u running=%u\r\n",
-                (double)last_set_current,
+                (double)c,
                 (unsigned)ChargeController_IsManualMode(),
                 (unsigned)ChargeController_IsRunning());
+            if (!CHG_LIB_SetCurrentLimitAllEx(c, CHG_LIB_TX_SOURCE_PC_SET_CURRENT)) {
+                send_nack(cmd, PC_ERR_BAD_PARAM);
+                return;
+            }
+            last_set_current = c;
         }
         ChargeController_SetManualTarget(last_set_voltage, last_set_current);
-        CHG_LIB_SetCurrentLimitAll(last_set_current);
         ok = true;
         break;
 
@@ -550,7 +560,10 @@ static void process_frame(uint8_t cmd, const uint8_t *payload, uint8_t len)
             }
         }
         /* Apply profile for manual mode; controller will override when started */
-        apply_active_charge_profile();
+        if (!apply_active_charge_profile()) {
+            send_nack(cmd, PC_ERR_BAD_PARAM);
+            return;
+        }
         ok = true;
         break;
     }
@@ -733,6 +746,3 @@ bool PC_Protocol_PeekTxFrame(uint8_t index, uint8_t *cmd, uint8_t *payload, uint
     }
     return true;
 }
-
-
-

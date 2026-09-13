@@ -83,6 +83,8 @@ typedef struct {
     bool waiting_confirm;
     float target_voltage;
     float target_current;
+    CHG_LIB_TxSource_t voltage_source;
+    CHG_LIB_TxSource_t current_source;
     CHG_LIB_AlarmFlag_t ext_alarm_flags;  /* Track extended alarm separately for proper clearing */
     uint32_t state_enter_tick;
     uint32_t last_poll_tick;      /* For IDLE polling */
@@ -247,6 +249,7 @@ static void send_specific_start_stop(TONHE_Internal_t *mod, bool start)
 static void send_param_set(TONHE_Internal_t *mod)
 {
     uint8_t data[8];
+    CHG_LIB_TxReason_t reason;
     if (mod == NULL) {
         return;
     }
@@ -262,11 +265,29 @@ static void send_param_set(TONHE_Internal_t *mod)
     data[6] = (uint8_t)(current_raw & 0xFFU);
     data[7] = (uint8_t)((current_raw >> 8) & 0xFFU);
 
-    if (CHG_LIB_CanBackend_Transmit(tonhe_param_set_id(), data, 8U)) {
+    CHG_LIB_TxSource_t source = mod->current_source != CHG_LIB_TX_SOURCE_UNKNOWN
+                                    ? mod->current_source
+                                    : mod->voltage_source;
+    if (!mod->pending_param) {
+        source = CHG_LIB_TX_SOURCE_UNKNOWN;
+        reason = CHG_LIB_TX_REASON_HEARTBEAT;
+    } else if (mod->current_source == CHG_LIB_TX_SOURCE_CC_START &&
+               mod->target_current <= 0.0001f) {
+        reason = CHG_LIB_TX_REASON_START_RESET;
+    } else if (mod->target_current <= 0.0001f) {
+        reason = CHG_LIB_TX_REASON_CURRENT_ZERO;
+    } else {
+        reason = CHG_LIB_TX_REASON_NORMAL;
+    }
+
+    if (CHG_LIB_CanBackend_TransmitMeta(tonhe_param_set_id(), data, 8U,
+                                         source, reason)) {
         mod->view.stats.tx_count++;
         mod->last_tx_tick = CHG_LIB_NowTick();
         mod->last_poll_tick = mod->last_tx_tick;
         mod->pending_param = false;
+        mod->voltage_source = CHG_LIB_TX_SOURCE_UNKNOWN;
+        mod->current_source = CHG_LIB_TX_SOURCE_UNKNOWN;
     }
 }
 
@@ -746,6 +767,7 @@ static bool tonhe_set_voltage(uint8_t idx, float voltage_v)
     /* Only send if changed */
     if (g_modules[idx].target_voltage != voltage_v) {
         g_modules[idx].target_voltage = voltage_v;
+        g_modules[idx].voltage_source = CHG_LIB_GetCommandSource();
         g_modules[idx].pending_param = true;
 
         if (g_modules[idx].view.state == CHG_LIB_STATE_RUNNING) {
@@ -766,6 +788,7 @@ static bool tonhe_set_current_limit(uint8_t idx, float current_a)
     if (g_modules[idx].target_current != current_a) {
         g_modules[idx].target_current = current_a;
         g_modules[idx].view.current_limit = current_a;
+        g_modules[idx].current_source = CHG_LIB_GetCommandSource();
         g_modules[idx].pending_param = true;
 
         if (g_modules[idx].view.state == CHG_LIB_STATE_RUNNING) {

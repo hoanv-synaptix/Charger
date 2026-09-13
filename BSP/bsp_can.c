@@ -34,11 +34,14 @@ static BSP_CAN_BmsRxHandler_t     g_bms_rx_handler = 0;
 
 #if defined(CHG_DEBUG_CAN_TX_TRACE)
 #define BSP_CAN_TX_TRACE_CAPACITY 32U
+#define BSP_CAN_TX_TRACE_REASON_HEARTBEAT 2U
 
 typedef struct {
     uint32_t id;
     uint8_t dlc;
     uint8_t data[8];
+    uint8_t source;
+    uint8_t reason;
 } BSP_CAN_TxTraceFrame_t;
 
 static BSP_CAN_TxTraceFrame_t g_tx_trace[BSP_CAN_TX_TRACE_CAPACITY];
@@ -79,6 +82,10 @@ static void tx_trace_push(const BSP_CAN_Frame_t *frame)
     g_tx_trace[g_tx_trace_head].id = frame->ext_id;
     g_tx_trace[g_tx_trace_head].dlc = (frame->dlc > 8U) ? 8U : frame->dlc;
     memcpy(g_tx_trace[g_tx_trace_head].data, frame->data, 8U);
+    g_tx_trace[g_tx_trace_head].source =
+        (frame->tx_source < 9U) ? frame->tx_source : 0U;
+    g_tx_trace[g_tx_trace_head].reason =
+        (frame->tx_reason < 6U) ? frame->tx_reason : 0U;
     g_tx_trace_head = next;
 }
 
@@ -380,6 +387,14 @@ void BSP_CAN_ProcessTxTrace(void)
     uint8_t budget = 2U;
 
     while (budget-- > 0U && tx_trace_pop(&frame)) {
+        /* Heartbeat frames are still transmitted and remain available in
+         * CAN counters, but are intentionally omitted from the UART trace:
+         * they repeat the current setpoint and obscure real command changes
+         * and rejects. */
+        if (frame.reason == BSP_CAN_TX_TRACE_REASON_HEARTBEAT) {
+            continue;
+        }
+
         uint8_t pf = (uint8_t)((frame.id >> 16) & 0xFFU);
 
         if (pf == 0x04U) {
@@ -387,11 +402,23 @@ void BSP_CAN_ProcessTxTrace(void)
                                     ((uint16_t)frame.data[5] << 8);
             uint16_t current_raw = (uint16_t)frame.data[6] |
                                     ((uint16_t)frame.data[7] << 8);
-            const char *setpoint_reason =
-                (voltage_raw == 0U && current_raw == 0U) ? "START_RESET" :
-                (current_raw == 0U) ? "CURRENT_ZERO" : "NORMAL";
-            LOG("[CAN1 TX] C_M_2 reason=%s id=%08lX dlc=%u Vraw=%u Iraw=%u "
+            const char *setpoint_reason = (frame.reason == 2U) ? "HEARTBEAT" :
+                                          (frame.reason == 3U) ? "START_RESET" :
+                                          (frame.reason == 4U) ? "CURRENT_ZERO" :
+                                          (frame.reason == 5U) ? "STOP" :
+                                          (voltage_raw == 0U && current_raw == 0U) ? "START_RESET" :
+                                          (current_raw == 0U) ? "CURRENT_ZERO" : "NORMAL";
+            const char *source = (frame.source == 1U) ? "CC_START" :
+                                 (frame.source == 2U) ? "CC_INHIBIT" :
+                                 (frame.source == 3U) ? "CC_COMPLETION" :
+                                 (frame.source == 4U) ? "CC_STOP" :
+                                 (frame.source == 5U) ? "PC_SET_CURRENT" :
+                                 (frame.source == 6U) ? "PC_PROFILE" :
+                                 (frame.source == 7U) ? "DRIVER_RECOVERY" :
+                                 (frame.source == 8U) ? "CC_RAMP" : "UNKNOWN";
+            LOG("[CAN1 TX] C_M_2 source=%s reason=%s id=%08lX dlc=%u Vraw=%u Iraw=%u "
                 "data=%02X %02X %02X %02X %02X %02X %02X %02X\r\n",
+                source,
                 setpoint_reason,
                 (unsigned long)frame.id, (unsigned)frame.dlc,
                 (unsigned)voltage_raw, (unsigned)current_raw,
@@ -410,6 +437,36 @@ void BSP_CAN_ProcessTxTrace(void)
     }
 #else
     /* Keep the call site stable between normal and diagnostic builds. */
+#endif
+}
+
+void BSP_CAN_RecordTxTraceReject(uint8_t source, uint8_t path)
+{
+#if defined(CHG_DEBUG_CAN_TX_TRACE)
+    const char *name;
+    switch (source) {
+        case 1U: name = "CC_START"; break;
+        case 2U: name = "CC_INHIBIT"; break;
+        case 3U: name = "CC_COMPLETION"; break;
+        case 4U: name = "CC_STOP"; break;
+        case 5U: name = "PC_SET_CURRENT"; break;
+        case 6U: name = "PC_PROFILE"; break;
+        case 7U: name = "DRIVER_RECOVERY"; break;
+        case 8U: name = "CC_RAMP"; break;
+        default: name = "UNKNOWN"; break;
+    }
+    const char *path_name = (path == 1U) ? "ALL_EX" :
+                            (path == 2U) ? "MODULE_EX" :
+                            (path == 3U) ? "LEGACY_ALL" :
+                            (path == 4U) ? "LEGACY_MODULE" :
+                            (path == 5U) ? "PC_SET_CURRENT" :
+                            (path == 6U) ? "PC_PROFILE" :
+                            (path == 7U) ? "CONTROLLER" : "UNKNOWN";
+    LOG("[CAN1 TX] REJECT C_M_2 source=%s path=%s current=0 tick=%lu\r\n",
+        name, path_name, (unsigned long)HAL_GetTick());
+#else
+    (void)source;
+    (void)path;
 #endif
 }
 

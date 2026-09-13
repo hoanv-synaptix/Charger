@@ -7,6 +7,8 @@ bool BMS_CAN_Init(void) {
 
 bool BMS_CAN_Transmit(uint32_t ext_id, const uint8_t *data, uint8_t len) {
     BSP_CAN_Frame_t frame;
+    frame.tx_source = 0U;
+    frame.tx_reason = 0U;
     frame.ext_id = ext_id;
     frame.dlc = len;
     for (int i=0; i<8; i++) frame.data[i] = (i < len) ? data[i] : 0;

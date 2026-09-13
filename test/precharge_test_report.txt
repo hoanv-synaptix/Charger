@@ -1,0 +1,12 @@
+================================================================================
+  BÁO CÁO TỔNG KẾT AUTOMATION TEST PRE-CHARGE (HARDWARE CLOSED-LOOP)
+================================================================================
+  [PASS]  | PC-01: Kích hoạt Pre-charge khi Pin kiệt & Mất kết nối BMS (35s)
+  [PASS]  | PC-02: Chu trình hoàn chỉnh BMS thức tỉnh & Giữ 60s hoàn tất (75s)
+  [PASS]  | PC-03: Ngắt tiền kích an toàn khi bấm BACK (35s)
+  [PASS]  | PC-04: Dừng tiền kích bằng nút STOP trên màn hình (35s)
+  [PASS]  | PC-05: Bắt lỗi báo động nguy hiểm từ BMS khi thức tỉnh (35s)
+  [PASS]  | PC-06: Mất kết nối Module sạc khi tiền kích (35s)
+--------------------------------------------------------------------------------
+  KẾT QUẢ: ALL PASS 100%
+================================================================================

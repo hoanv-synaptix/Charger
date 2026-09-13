@@ -2,10 +2,47 @@
 #include "debug_log.h"
 #include "bsp_sys.h"
 #include <string.h>
+#include <math.h>
 
 static const CHG_LIB_DriverOps_t *s_driver_table[CHG_LIB_MAX_DRV];
 static const CHG_LIB_DriverOps_t *s_active_driver = 0;
 static CHG_LIB_DriverId_t s_active_driver_id = CHG_LIB_DRV_NONE;
+static CHG_LIB_TxSource_t s_command_source = CHG_LIB_TX_SOURCE_UNKNOWN;
+static volatile uint32_t s_current_zero_reject_count = 0U;
+
+#define CHG_LIB_CURRENT_ZERO_EPSILON_A 0.0001f
+
+static bool set_current_limit_all_ex(float current_a,
+                                     CHG_LIB_TxSource_t source,
+                                     CHG_LIB_CurrentPath_t path);
+static bool set_current_limit_ex(uint8_t idx, float current_a,
+                                 CHG_LIB_TxSource_t source,
+                                 CHG_LIB_CurrentPath_t path);
+
+static CHG_LIB_CurrentPath_t path_for_source(CHG_LIB_CurrentPath_t default_path,
+                                             CHG_LIB_TxSource_t source)
+{
+    if (source == CHG_LIB_TX_SOURCE_PC_SET_CURRENT) {
+        return CHG_LIB_CURRENT_PATH_PC_SET_CURRENT;
+    }
+    if (source == CHG_LIB_TX_SOURCE_PC_PROFILE) {
+        return CHG_LIB_CURRENT_PATH_PC_PROFILE;
+    }
+    if (source == CHG_LIB_TX_SOURCE_CC_START ||
+        source == CHG_LIB_TX_SOURCE_CC_RAMP ||
+        source == CHG_LIB_TX_SOURCE_CC_INHIBIT ||
+        source == CHG_LIB_TX_SOURCE_CC_COMPLETION) {
+        return CHG_LIB_CURRENT_PATH_CONTROLLER;
+    }
+    return default_path;
+}
+
+__attribute__((weak)) void CHG_LIB_RecordRejectedZero(CHG_LIB_TxSource_t source,
+                                                      CHG_LIB_CurrentPath_t path)
+{
+    (void)source;
+    (void)path;
+}
 
 static const CHG_LIB_DriverOps_t *get_active(void)
 {
@@ -88,8 +125,38 @@ bool CHG_LIB_SetVoltage(uint8_t idx, float voltage_v)
 
 bool CHG_LIB_SetCurrentLimit(uint8_t idx, float current_a)
 {
+    return set_current_limit_ex(idx, current_a, CHG_LIB_TX_SOURCE_UNKNOWN,
+                                CHG_LIB_CURRENT_PATH_LEGACY_MODULE);
+}
+
+static bool set_current_limit_ex(uint8_t idx, float current_a,
+                                 CHG_LIB_TxSource_t source,
+                                 CHG_LIB_CurrentPath_t path)
+{
     const CHG_LIB_DriverOps_t *driver = get_active();
-    return (driver != 0 && driver->set_current_limit != 0) ? driver->set_current_limit(idx, current_a) : false;
+    if (!isfinite(current_a) || current_a < 0.0f) return false;
+    if (current_a <= CHG_LIB_CURRENT_ZERO_EPSILON_A &&
+        source != CHG_LIB_TX_SOURCE_CC_START &&
+        source != CHG_LIB_TX_SOURCE_CC_INHIBIT &&
+        source != CHG_LIB_TX_SOURCE_CC_COMPLETION) {
+        s_current_zero_reject_count++;
+        CHG_LIB_RecordRejectedZero(source, path);
+        return false;
+    }
+    if (current_a <= CHG_LIB_CURRENT_ZERO_EPSILON_A) current_a = 0.0f;
+    if (driver == 0 || driver->set_current_limit == 0) return false;
+    s_command_source = source;
+    bool result = driver->set_current_limit(idx, current_a);
+    s_command_source = CHG_LIB_TX_SOURCE_UNKNOWN;
+    return result;
+}
+
+bool CHG_LIB_SetCurrentLimitEx(uint8_t idx, float current_a,
+                               CHG_LIB_TxSource_t source)
+{
+    return set_current_limit_ex(idx, current_a, source,
+                                path_for_source(CHG_LIB_CURRENT_PATH_MODULE_EX,
+                                                source));
 }
 
 bool CHG_LIB_Start(uint8_t idx)
@@ -106,14 +173,60 @@ bool CHG_LIB_Stop(uint8_t idx)
 
 void CHG_LIB_SetVoltageAll(float voltage_v)
 {
+    CHG_LIB_SetVoltageAllEx(voltage_v, CHG_LIB_TX_SOURCE_UNKNOWN);
+}
+
+void CHG_LIB_SetVoltageAllEx(float voltage_v, CHG_LIB_TxSource_t source)
+{
     const CHG_LIB_DriverOps_t *driver = get_active();
-    if (driver != 0 && driver->set_voltage_all != 0) driver->set_voltage_all(voltage_v);
+    if (!isfinite(voltage_v) || driver == 0 || driver->set_voltage_all == 0) return;
+    s_command_source = source;
+    driver->set_voltage_all(voltage_v);
+    s_command_source = CHG_LIB_TX_SOURCE_UNKNOWN;
 }
 
 void CHG_LIB_SetCurrentLimitAll(float current_a)
 {
+    (void)set_current_limit_all_ex(current_a, CHG_LIB_TX_SOURCE_UNKNOWN,
+                                   CHG_LIB_CURRENT_PATH_LEGACY_ALL);
+}
+
+static bool set_current_limit_all_ex(float current_a, CHG_LIB_TxSource_t source,
+                                     CHG_LIB_CurrentPath_t path)
+{
     const CHG_LIB_DriverOps_t *driver = get_active();
-    if (driver != 0 && driver->set_current_limit_all != 0) driver->set_current_limit_all(current_a);
+    if (!isfinite(current_a) || current_a < 0.0f) return false;
+    if (current_a <= CHG_LIB_CURRENT_ZERO_EPSILON_A &&
+        source != CHG_LIB_TX_SOURCE_CC_START &&
+        source != CHG_LIB_TX_SOURCE_CC_INHIBIT &&
+        source != CHG_LIB_TX_SOURCE_CC_COMPLETION) {
+        s_current_zero_reject_count++;
+        CHG_LIB_RecordRejectedZero(source, path);
+        return false;
+    }
+    if (current_a <= CHG_LIB_CURRENT_ZERO_EPSILON_A) current_a = 0.0f;
+    if (driver == 0 || driver->set_current_limit_all == 0) return false;
+    s_command_source = source;
+    driver->set_current_limit_all(current_a);
+    s_command_source = CHG_LIB_TX_SOURCE_UNKNOWN;
+    return true;
+}
+
+bool CHG_LIB_SetCurrentLimitAllEx(float current_a, CHG_LIB_TxSource_t source)
+{
+    return set_current_limit_all_ex(current_a, source,
+                                    path_for_source(CHG_LIB_CURRENT_PATH_ALL_EX,
+                                                    source));
+}
+
+CHG_LIB_TxSource_t CHG_LIB_GetCommandSource(void)
+{
+    return s_command_source;
+}
+
+uint32_t CHG_LIB_GetCurrentZeroRejectCount(void)
+{
+    return s_current_zero_reject_count;
 }
 
 void CHG_LIB_StartAll(void)

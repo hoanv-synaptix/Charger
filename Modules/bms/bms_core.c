@@ -223,6 +223,8 @@ static void update_alarm_flags(void)
 static void transmit_ctrl_info(void)
 {
     BSP_CAN_Frame_t frame;
+    frame.tx_source = 0U;
+    frame.tx_reason = 0U;
     BMS_CtrlInfo_t  ctrl;
 
     frame.ext_id = BMS_ID_CTRL_INFO;

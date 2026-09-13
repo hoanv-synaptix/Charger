@@ -119,6 +119,8 @@
 typedef struct {
  float voltage_v;
  float current_limit;
+ CHG_LIB_TxSource_t voltage_source;
+ CHG_LIB_TxSource_t current_source;
  bool should_run;
 } MXR_Setpoint_t;
 
@@ -197,7 +199,9 @@ static uint32_t mxr_build_frame_id(uint8_t dst_addr, uint8_t src_addr,
 /* ============== Helpers ============== */
 /* now_tick() removed — use CHG_LIB_NowTick() from shared helpers */
 
-static bool send_frame(MXR_Internal_t *m, uint8_t func, uint16_t reg, const uint8_t *payload4)
+static bool send_frame_meta(MXR_Internal_t *m, uint8_t func, uint16_t reg,
+                            const uint8_t *payload4, CHG_LIB_TxSource_t source,
+                            CHG_LIB_TxReason_t reason)
 {
     uint8_t frame_data[8];
     frame_data[0] = func;
@@ -210,7 +214,7 @@ static bool send_frame(MXR_Internal_t *m, uint8_t func, uint16_t reg, const uint
     frame_data[7] = payload4[3];
     uint32_t ext_id = mxr_build_frame_id(m->view.addr, MXR_ADDR_CONTROLLER,
                                           MXR_PTP_POINT, m->view.group);
-    if (CHG_LIB_CanBackend_Transmit(ext_id, frame_data, 8)) {
+    if (CHG_LIB_CanBackend_TransmitMeta(ext_id, frame_data, 8, source, reason)) {
         m->view.stats.tx_count++;
         m->view.last_tx_tick = CHG_LIB_NowTick();
         return true;
@@ -218,11 +222,22 @@ static bool send_frame(MXR_Internal_t *m, uint8_t func, uint16_t reg, const uint
     return false;
 }
 
+static bool send_frame(MXR_Internal_t *m, uint8_t func, uint16_t reg, const uint8_t *payload4)
+{
+    return send_frame_meta(m, func, reg, payload4,
+                           CHG_LIB_TX_SOURCE_UNKNOWN,
+                           CHG_LIB_TX_REASON_UNKNOWN);
+}
+
 static bool send_set_float(MXR_Internal_t *m, uint16_t reg, float val)
 {
  uint8_t payload[4];
  CHG_LIB_ProtocolFloatToBE(val, payload);
- return send_frame(m, MXR_FUNC_SET, reg, payload);
+ CHG_LIB_TxSource_t source = m->setpoint.voltage_source;
+ bool sent = send_frame_meta(m, MXR_FUNC_SET, reg, payload, source,
+                             CHG_LIB_TX_REASON_NORMAL);
+ if (sent) m->setpoint.voltage_source = CHG_LIB_TX_SOURCE_UNKNOWN;
+ return sent;
 }
 
 static bool send_set_u32(MXR_Internal_t *m, uint16_t reg, uint32_t val)
@@ -256,7 +271,17 @@ static float current_limit_to_ratio(const MXR_Internal_t *m)
 
 static bool send_set_current_limit(MXR_Internal_t *m)
 {
- return send_set_float(m, CHG_LIB_REG_SET_CURR_LIMIT, current_limit_to_ratio(m));
+ uint8_t payload[4];
+ CHG_LIB_ProtocolFloatToBE(current_limit_to_ratio(m), payload);
+ CHG_LIB_TxReason_t reason =
+     (m->setpoint.current_source == CHG_LIB_TX_SOURCE_CC_START &&
+      m->setpoint.current_limit <= 0.0001f) ? CHG_LIB_TX_REASON_START_RESET :
+     (m->setpoint.current_limit <= 0.0001f) ? CHG_LIB_TX_REASON_CURRENT_ZERO :
+     CHG_LIB_TX_REASON_NORMAL;
+ bool sent = send_frame_meta(m, MXR_FUNC_SET, CHG_LIB_REG_SET_CURR_LIMIT, payload,
+                             m->setpoint.current_source, reason);
+ if (sent) m->setpoint.current_source = CHG_LIB_TX_SOURCE_UNKNOWN;
+ return sent;
 }
 
 static void set_state(MXR_Internal_t *m, CHG_LIB_State_t new_state, uint32_t now)
@@ -676,6 +701,7 @@ static bool mx_set_voltage(uint8_t idx, float voltage_v)
  if (idx >= g_module_count || !g_modules[idx].view.enabled) return false;
  if (!isfinite(voltage_v)) return false; /* BUGFIX B-09: reject NaN/Inf setpoint */
  g_modules[idx].setpoint.voltage_v = voltage_v;
+ g_modules[idx].setpoint.voltage_source = CHG_LIB_GetCommandSource();
  /* Keep view.voltage as measured telemetry only; do not replace it with the
   * requested setpoint. The controller uses this field for No-BMS completion. */
  if (g_modules[idx].view.state == CHG_LIB_STATE_RUNNING) {
@@ -691,6 +717,7 @@ static bool mx_set_current_limit(uint8_t idx, float current_a)
  if (current_a < 0.0f) current_a = 0.0f;
 
  g_modules[idx].setpoint.current_limit = current_a;
+ g_modules[idx].setpoint.current_source = CHG_LIB_GetCommandSource();
  g_modules[idx].view.current_limit = current_a;
  if (g_modules[idx].view.state == CHG_LIB_STATE_RUNNING) {
      return send_set_current_limit(&g_modules[idx]);

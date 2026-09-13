@@ -8,6 +8,8 @@ typedef struct {
     uint32_t ext_id;
     uint8_t  data[8];
     uint8_t  dlc;
+    uint8_t  tx_source;
+    uint8_t  tx_reason;
 } BSP_CAN_Frame_t;
 
 /* Raw frame captured from one FDCAN RX FIFO.  This type deliberately carries
@@ -60,6 +62,7 @@ void BSP_CAN_ProcessRx(void);
 /* Bench-only diagnostic: drain successful MCU -> charger-module control
  * frames to UART1. No-op unless CHG_DEBUG_CAN_TX_TRACE is enabled. */
 void BSP_CAN_ProcessTxTrace(void);
+void BSP_CAN_RecordTxTraceReject(uint8_t source, uint8_t path);
 
 /* Read transport diagnostics.  bus is 1 for FDCAN1 or 2 for FDCAN2. */
 void BSP_CAN_GetRxStats(uint8_t bus, BSP_CAN_RxStats_t *stats);

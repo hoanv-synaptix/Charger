@@ -57,6 +57,12 @@ bool BSP_CAN_Transmit(uint8_t bus, const BSP_CAN_Frame_t *frame)
     return true; /* spy table full -- silently drop tracking, TX still "succeeds" */
 }
 
+void BSP_CAN_RecordTxTraceReject(uint8_t source, uint8_t path)
+{
+    (void)source;
+    (void)path;
+}
+
 /* Returns true and fills *data_out (8 bytes) if a frame with this ext_id
  * has been transmitted at least once via BSP_CAN_Transmit(); false if
  * never seen. */
