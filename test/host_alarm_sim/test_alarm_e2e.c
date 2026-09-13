@@ -530,6 +530,75 @@ static bool test_bms_thermal_fault_recovers_without_e023(void)
     return true;
 }
 
+static bool test_bms_thermal_trip_limit_halts_on_4th(void)
+{
+    printf("Running test_bms_thermal_trip_limit_halts_on_4th...\n");
+    ASSERT(setup(NULL), "setup");
+    healthy_bms(400.0f);
+    ASSERT(start_running(), "controller never RUNNING");
+    establish_load(400.0f, 40.0f);
+
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.bms_temp_trip_count == 0U, "initial trip count must be 0");
+
+    /* Trip 1, 2, 3: Must inhibit (0A) and auto-recover */
+    for (uint8_t trip = 1U; trip <= 3U; trip++) {
+        /* Over-temperature trips */
+        set_bms_alarm_severity(4U, 2U);
+        drive_ms(1000U);
+
+        ChargeController_GetView(&cv);
+        ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "controller must stay RUNNING during recoverable trip");
+        ASSERT(cv.inhibit != 0U && cv.applied_current_per_module_a == 0.0f, "current must be clamped to 0A");
+        ASSERT(cv.bms_temp_trip_count == trip, "trip count mismatch");
+
+        /* Cool down and auto-recover */
+        set_bms_alarm_severity(4U, 0U);
+        drive_ms(3500U);
+
+        ChargeController_GetView(&cv);
+        ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "controller must recover to RUNNING");
+        ASSERT(cv.inhibit == 0U, "inhibit must clear on recovery");
+        ASSERT(cv.bms_temp_trip_count == trip, "trip count must persist across recoveries");
+
+        /* Re-establish load for next cycle */
+        establish_load(400.0f, 40.0f);
+    }
+
+    /* Trip 4: Must halt charge completely (STATE_FAULT), not auto-recover */
+    set_bms_alarm_severity(4U, 2U);
+    drive_ms(1000U);
+
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_FAULT, "controller must enter FAULT state on 4th trip");
+    ASSERT(cv.bms_temp_trip_count == 4U, "trip count must be 4 on 4th trip");
+    ASSERT(cv.stop_reason == CHARGE_STOP_BMS_ALARM, "stop_reason must be BMS_ALARM");
+
+    /* Module stops and current settles to 0A -> contactor opens safely */
+    g_sim_module.current = 0.0f;
+    g_sim_bms.pack_current_a = 0.0f;
+    drive_ms(200U);
+    ChargeController_GetView(&cv);
+    ASSERT(!cv.relay_should_close, "contactor must open once current settles");
+
+    /* Even if BMS cools down, controller must NOT auto-recover from FAULT */
+    set_bms_alarm_severity(4U, 0U);
+    drive_ms(5000U);
+
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_FAULT, "controller must remain in FAULT even after cooling down");
+
+    /* Reset clears fault and resets trip count to 0 */
+    ASSERT(ChargeController_ResetFaultIfSafe(mock_tick), "reset fault should succeed once BMS is healthy");
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_IDLE, "controller must return to IDLE after reset");
+    ASSERT(cv.bms_temp_trip_count == 0U, "trip count must reset to 0 after fault clear");
+
+    printf("[PASS] test_bms_thermal_trip_limit_halts_on_4th\n");
+    return true;
+}
+
 static bool test_controller_temperature_inhibit_suppresses_load_lost(void)
 {
     printf("Running test_controller_temperature_inhibit_suppresses_load_lost...\n");
@@ -920,6 +989,7 @@ int main(void)
     ok &= test_dc_load_lost_hot_unplug();
     ok &= test_bms_thermal_warning_suppresses_load_lost();
     ok &= test_bms_thermal_fault_recovers_without_e023();
+    ok &= test_bms_thermal_trip_limit_halts_on_4th();
     ok &= test_controller_temperature_inhibit_suppresses_load_lost();
     ok &= test_dc_out_not_established();
     ok &= test_bms_comm_lost_mid_charge();

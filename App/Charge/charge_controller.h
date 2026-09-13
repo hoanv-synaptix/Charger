@@ -72,6 +72,7 @@ typedef enum {
 /* Intentionally zero: pre-charge waits for an exhausted BMS to wake until
  * the operator stops it or another protection path stops it. */
 #define PRECHARGE_BMS_WAKE_TIMEOUT_MS  0U
+#define CHARGE_CTRL_BMS_TEMP_MAX_TRIPS 3U  /* Max auto-recoveries per session before hard stop */
 
 /* ============== Fault Flags ============== */
 
@@ -114,6 +115,7 @@ typedef struct {
     uint8_t active_stage_band;
     float active_limit_current_c;
     ChargeStopReason_t stop_reason;
+    uint8_t bms_temp_trip_count;
     /** True when the battery relay should be closed. This is a latch, not
      * a continuous voltage gate: it closes once state is RUNNING and the
      * worst-case (minimum) online module output voltage reaches

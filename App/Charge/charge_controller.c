@@ -142,6 +142,7 @@ static struct {
      * but a clean, fresh BMS report may resume the same charging session. */
     bool bms_temp_inhibit_active;
     uint32_t bms_temp_recovery_start_tick;
+    uint8_t bms_temp_trip_count;
 
     /* Standalone voltage-completion confirmation timer */
     uint32_t standalone_vmax_reached_tick;
@@ -264,6 +265,7 @@ static void set_fault(uint32_t flags, uint32_t now) {
 
 static void clear_fault(void) {
     g_ctrl.fault_flags = CHARGE_CTRL_FAULT_NONE;
+    g_ctrl.bms_temp_trip_count = 0U;
 }
 
 static bool handle_bms_temperature_inhibit(const BMS_View_t *bms, uint32_t now_tick)
@@ -272,8 +274,18 @@ static bool handle_bms_temperature_inhibit(const BMS_View_t *bms, uint32_t now_t
 
     if (temp_alarm) {
         if (!g_ctrl.bms_temp_inhibit_active) {
-            LOG("CC: BMS temperature inhibit active alarm=0x%08lX\r\n",
+            g_ctrl.bms_temp_trip_count++;
+            LOG("CC: BMS temperature trip #%u active alarm=0x%08lX\r\n",
+                (unsigned)g_ctrl.bms_temp_trip_count,
                 (unsigned long)bms->alarm_flags);
+
+            if (g_ctrl.bms_temp_trip_count > CHARGE_CTRL_BMS_TEMP_MAX_TRIPS) {
+                LOG("CC: BMS over-temperature trip limit reached (%u > %u), terminating charge\r\n",
+                    (unsigned)g_ctrl.bms_temp_trip_count,
+                    (unsigned)CHARGE_CTRL_BMS_TEMP_MAX_TRIPS);
+                set_fault(CHARGE_CTRL_FAULT_BMS_ALARM, now_tick);
+                return true;
+            }
         }
         g_ctrl.bms_temp_inhibit_active = true;
         g_ctrl.bms_temp_recovery_start_tick = 0U;
@@ -2402,5 +2414,6 @@ void ChargeController_GetView(ChargeCtrlView_t *view) {
     view->active_stage_band = g_ctrl.active_stage_band;
     view->active_limit_current_c = g_ctrl.active_limit_current_c;
     view->stop_reason = g_ctrl.stop_reason;
+    view->bms_temp_trip_count = g_ctrl.bms_temp_trip_count;
     view->relay_should_close = g_ctrl.relay_should_close ? 1U : 0U;
 }
