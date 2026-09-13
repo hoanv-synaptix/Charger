@@ -115,20 +115,20 @@ typedef struct {
 /* ---- ALM_INFO (0x07F4) ---- */
 typedef struct {
     BMS_ParseResult_t valid;
-    /* Each alarm: 0=none, 1=warning, 2=fault, 3=severe */
-    uint8_t low_pack_volt;          /* bit 0-1 */
-    uint8_t low_cell_volt;          /* bit 2-3 */
-    uint8_t high_pack_volt;         /* bit 4-5 */
-    uint8_t high_cell_volt;         /* bit 6-7 */
-    uint8_t temp_cell_high_chg;     /* bit 8-9 */
-    uint8_t temp_cell_high_dchg;    /* bit 10-11 */
-    uint8_t temp_cell_low_chg;      /* bit 12-13 */
-    uint8_t temp_cell_low_dchg;     /* bit 14-15 */
-    uint8_t temp_relay_high;        /* bit 16-17 */
-    uint8_t over_chg_curr;          /* bit 18-19 */
-    uint8_t over_dchg_curr;         /* bit 20-21 */
-    uint8_t cell_volt_diff;         /* bit 22-23 */
-    uint8_t low_soc;                /* bit 24-25 */
+    /* Each alarm: 0=none, 1=warning, 2=fault, 3=severe (Motorola MSB-first per byte) */
+    uint8_t low_pack_volt;          /* Byte 0 bits 7-6 */
+    uint8_t low_cell_volt;          /* Byte 0 bits 5-4 */
+    uint8_t high_pack_volt;         /* Byte 0 bits 3-2 */
+    uint8_t high_cell_volt;         /* Byte 0 bits 1-0 */
+    uint8_t temp_cell_high_chg;     /* Byte 1 bits 7-6 */
+    uint8_t temp_cell_high_dchg;    /* Byte 1 bits 5-4 */
+    uint8_t temp_cell_low_chg;      /* Byte 1 bits 3-2 */
+    uint8_t temp_cell_low_dchg;     /* Byte 1 bits 1-0 */
+    uint8_t temp_relay_high;        /* Byte 2 bits 7-6 */
+    uint8_t over_chg_curr;          /* Byte 2 bits 5-4 */
+    uint8_t over_dchg_curr;         /* Byte 2 bits 3-2 */
+    uint8_t cell_volt_diff;         /* Byte 2 bits 1-0 */
+    uint8_t low_soc;                /* Byte 3 bits 7-6 */
 } BMS_AlmInfo_t;
 
 /* ---- BATT_ST2 (0x18F128F4) ---- */

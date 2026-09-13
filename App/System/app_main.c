@@ -176,8 +176,7 @@ static uint32_t s_last_energy_tick;
 
 static void led_run_on(void)   { BSP_LED_On(BSP_LED_RUN); }
 static void led_run_off(void)  { BSP_LED_Off(BSP_LED_RUN); }
-static void led_fault_on(void) { BSP_LED_On(BSP_LED_FAULT); }
-static void led_fault_off(void){ BSP_LED_Off(BSP_LED_FAULT); }
+static void led_power_on(void) { BSP_LED_On(BSP_LED_POWER); }
 
 static void dwin_set_unavailable(char *text, size_t text_size)
 {
@@ -503,7 +502,7 @@ void App_Init(void)
     HAL_Delay(50);
 
     led_run_off();
-    led_fault_off();
+    led_power_on();
 
     /* Real-Time Clock (internal LSI / VBAT domain) */
     if (BSP_RTC_Init()) {
@@ -543,7 +542,6 @@ void App_Init(void)
     LOG("App_Init: Starting CAN bus...\r\n");
     if (!BSP_CAN_Start()) {
         LOG("App_Init: ERROR - Could not start CAN bus!\r\n");
-        led_fault_on();
     } else {
         LOG("App_Init: CAN bus started successfully.\r\n");
     }
@@ -676,6 +674,7 @@ void App_Loop(void)
     }
 
     PC_Protocol_ProcessTx();
+    BSP_CAN_ProcessTxTrace();
     
     /* DWIN HMI: drain RX + parse; pump any queued bench-debug frame first
      * (no-op unless CHG_DEBUG_DWIN). */
@@ -734,16 +733,8 @@ void App_Loop(void)
             led_run_off();
         }
 
-        /* LED_FAULT: co loi hoac mat ket noi module, hoac alarm muc STOP/ESTOP
-         * (bao gom ca loi controller/BMS/derived ma summary khong thay) */
-        AlarmView_t av_led;
-        Alarm_GetView(&av_led);
-        if (sum.any_critical || sum.modules_fault > 0 ||
-            av_led.highest_action >= ALARM_ACT_STOP) {
-            led_fault_on();
-        } else {
-            led_fault_off();
-        }
+        /* PC7 is the power indicator and is intentionally independent from
+         * alarms, module communication and charger state. */
     }
 
     /* (4) DWIN HMI refresh -- one field group per 50ms tick (see

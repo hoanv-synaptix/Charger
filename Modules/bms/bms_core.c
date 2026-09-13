@@ -348,6 +348,22 @@ void BMS_Process(uint32_t now_tick)
         }
     }
 
+    /* Event-triggered ALM_INFO timeout: per vendor PDF (§5.4 0x07F4 cycle is 100ms
+     * when active, but "if there is no alarm information, it will not be sent").
+     * When BMS alarm condition recovers, BMS stops sending 0x07F4. If no frame
+     * arrives for BMS_ALM_INFO_TIMEOUT_MS, clear cached alarm data so alarms
+     * auto-recover and fault code resets to 0000. */
+    if (g_bms_data.alm_info.valid && last_rx_frames[BMS_FRAME_ALM_INFO] != 0U) {
+        uint32_t alm_elapsed = bms_tick_elapsed(now_tick, last_rx_frames[BMS_FRAME_ALM_INFO]);
+        if (alm_elapsed >= BMS_ALM_INFO_TIMEOUT_MS) {
+            BSP_EnterCritical();
+            g_bms_data.alm_info.valid = false;
+            memset((void*)&g_bms_data.alm_info, 0, sizeof(g_bms_data.alm_info));
+            BSP_ExitCritical();
+            update_alarm_flags();
+        }
+    }
+
     /* ---- State Machine ---- */
     if (g_bms_state == BMS_STATE_OFFLINE) {
         /* Transition to ONLINE as soon as any valid frame has been parsed and

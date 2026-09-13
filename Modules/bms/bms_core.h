@@ -45,6 +45,7 @@ extern "C" {
 
 #define BMS_OFFLINE_TIMEOUT_MS    5000U   /* BMS offline after 5s no data */
 #define BMS_STALE_THRESHOLD_MS    2000U   /* Data stale after 2s */
+#define BMS_ALM_INFO_TIMEOUT_MS   1000U   /* ALM_INFO timeout: 10 missed frames at 100ms cycle -> auto-clear */
 #define BMS_CTRL_TX_INTERVAL_MS   500U    /* Send Ctrl_INFO every 500ms */
 #define BMS_MIN_VOLT_MV           2000U   /* Min cell voltage (mV) */
 #define BMS_MAX_VOLT_MV           4500U   /* Max cell voltage (mV) */

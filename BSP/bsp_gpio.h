@@ -6,7 +6,7 @@
 
 typedef enum {
     BSP_LED_RUN,
-    BSP_LED_FAULT
+    BSP_LED_POWER /* PC7: power indicator, enabled by App_Init */
 } BSP_LED_t;
 
 typedef enum {

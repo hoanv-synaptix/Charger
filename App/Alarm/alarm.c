@@ -56,6 +56,7 @@
 #define ALARM_DB_NO_PACK_SET_MS       500U
 #define ALARM_DB_NO_PACK_CLEAR_MS    1000U
 #define ALARM_DB_AC_MS               1000U
+#define ALARM_DB_LOAD_LOST_CLEAR_MS   3000U  /* Keep code visible 3s after stop before returning to 0000 */
 
 /* Console (LOG) breadcrumb rate-limit. LOG() blocks up to 50 ms
  * (Utils/Log/debug_log.c); several alarms can flip in a single 20 ms tick
@@ -205,10 +206,10 @@ static const AlarmSpec_t k_specs[] = {
     /* --- derived / station-level --- */
     { ALARM_BMS_COMM_LOST,          ALARM_ACT_INFO, false, ALARM_DB_COMM_SET_MS,    ALARM_DB_COMM_CLEAR_MS,    ev_bms_comm_lost,          0, "BMS link lost during charge" },
     { ALARM_BMS_NO_PACK_VOLTAGE,    ALARM_ACT_STOP, false, ALARM_DB_NO_PACK_SET_MS, ALARM_DB_NO_PACK_CLEAR_MS, ev_bms_no_pack_voltage,    0, "No pack voltage" },
-    { ALARM_DC_LOAD_LOST,           ALARM_ACT_STOP, true,  ALARM_LOAD_LOST_MS,      0,                        ev_dc_load_lost,           0, "DC load lost" },
-    { ALARM_DC_OUT_NOT_ESTABLISHED, ALARM_ACT_STOP, true,  0,                       0,                        ev_dc_out_not_established, 0, "DC output not established" },
-    { ALARM_AC_PHASE_LOSS,          ALARM_ACT_STOP, true,  ALARM_DB_AC_MS,          ALARM_DB_AC_MS,           ev_ac_phase_loss,          0, "AC input phase loss" },
-    { ALARM_AC_UNDERVOLT,           ALARM_ACT_STOP, true,  ALARM_DB_AC_MS,          ALARM_DB_AC_MS,           ev_ac_undervolt,           0, "AC input under-voltage" },
+    { ALARM_DC_LOAD_LOST,           ALARM_ACT_STOP, false, ALARM_LOAD_LOST_MS,      ALARM_DB_LOAD_LOST_CLEAR_MS, ev_dc_load_lost,           0, "DC load lost" },
+    { ALARM_DC_OUT_NOT_ESTABLISHED, ALARM_ACT_STOP, false, 0,                       ALARM_DB_LOAD_LOST_CLEAR_MS, ev_dc_out_not_established, 0, "DC output not established" },
+    { ALARM_AC_PHASE_LOSS,          ALARM_ACT_STOP, false, ALARM_DB_AC_MS,          ALARM_DB_AC_MS,              ev_ac_phase_loss,          0, "AC input phase loss" },
+    { ALARM_AC_UNDERVOLT,           ALARM_ACT_STOP, false, ALARM_DB_AC_MS,          ALARM_DB_AC_MS,              ev_ac_undervolt,           0, "AC input under-voltage" },
     { ALARM_MOD_FAN_FAULT,          ALARM_ACT_STOP, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_FAN_FAULT,    "Module fan fault" },
     { ALARM_MOD_AC_OVER_VOLT,       ALARM_ACT_STOP, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_AC_OVER_VOLT, "Module AC input over-voltage" },
 };
@@ -287,15 +288,16 @@ static bool ev_bms_no_pack_voltage(const AlarmInputs_t *in, uint32_t param) {
 static bool ev_dc_load_lost(const AlarmInputs_t *in, uint32_t param) {
     (void)param;
 
-    bool thermal_inhibit =
-        (in->cc.inhibit != 0U) &&
-        (in->cc.active_limit_source == CHARGE_LIMIT_SOURCE_TEMPERATURE);
+    /* When current is inhibited by controller (temperature stage ABOVE_MAX,
+     * cell/SOC below min, etc.), current is commanded to 0A by design -- not DC load lost. */
+    if (in->cc.inhibit != 0U) return false;
+
     bool bms_thermal_alarm =
         in->bms.online &&
         (((in->bms.warning_flags | in->bms.alarm_flags) &
-          BMS_ALARM_TEMP_HIGH_CHG) != 0U);
+          (BMS_ALARM_TEMP_HIGH_CHG | BMS_ALARM_TEMP_HIGH_DCHG)) != 0U);
 
-    if (thermal_inhibit || bms_thermal_alarm) return false;
+    if (bms_thermal_alarm) return false;
 
     if (in->cc.state != CHARGE_CTRL_STATE_RUNNING) return false;
     if (!g_alarm.load_established) return false;

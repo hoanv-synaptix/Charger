@@ -937,6 +937,43 @@ static bool test_current_ramp_up(void)
     return true;
 }
 
+/* Imin is the floor for an allowed charge target, while the effective
+ * capacity is the smaller of the configured capacity and BMS rate_cap. */
+static bool test_min_current_and_bms_capacity(void)
+{
+    printf("Running test_min_current_and_bms_capacity...\n");
+
+    ChargeCycleConfig_t cfg;
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_TONHE, &cfg), "setup failed");
+    cfg.imax_c = 0.8f;
+    cfg.imin_c = 0.2f;
+    cfg.cell_curr_1_c = 1.0f;
+    ASSERT(ChargeCycleConfig_Set(&cfg), "config set failed");
+    set_healthy_bms(400.0f, 50);
+    g_sim_bms.rate_cap_x0_1ah = 600; /* 60Ah < configured 100Ah */
+    ASSERT(warmup_and_start(1500U, 4000U), "module never reached RUNNING");
+
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(fabsf(cv.target_current_total_a - 48.0f) < 1.0f,
+           "Imax must use min(config capacity, BMS rate_cap): 0.8C * 60Ah");
+
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_TONHE, &cfg), "second setup failed");
+    cfg.imax_c = 0.8f;
+    cfg.imin_c = 0.2f;
+    cfg.cell_curr_1_c = 0.1f; /* stage would otherwise request 0.1C */
+    ASSERT(ChargeCycleConfig_Set(&cfg), "second config set failed");
+    set_healthy_bms(400.0f, 50);
+    ASSERT(warmup_and_start(1500U, 4000U), "second module never reached RUNNING");
+
+    ChargeController_GetView(&cv);
+    ASSERT(fabsf(cv.target_current_total_a - 20.0f) < 1.0f,
+           "Imin must floor an allowed stage target: 0.2C * 100Ah");
+
+    printf("[PASS] test_min_current_and_bms_capacity\n");
+    return true;
+}
+
 /* Two-rate voltage ramp: PRE-close the commanded voltage rises from 0 toward
  * the pack voltage at the fast CHARGE_CTRL_VOLTAGE_PRECLOSE_RAMP_V_PER_S
  * (which also gates when the relay arms); POST-close the Stage-1 -> vmax
@@ -2153,6 +2190,7 @@ int main(void)
     pass &= test_relay_standalone_mode();
     pass &= test_acknowledge_completion();
     pass &= test_current_ramp_up();
+    pass &= test_min_current_and_bms_capacity();
     pass &= test_voltage_ramp_up();
     pass &= test_ramp_down_immediate();
     pass &= test_jack_temp_derating_and_trip();

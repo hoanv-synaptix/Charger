@@ -261,11 +261,11 @@ class BmsSimulator(threading.Thread):
         self.dev.transmit(self.CAN_CHANNEL, 0x05F4, d, extended=False)
 
     def send_alm_info(self):
-        b0 = ((self.fault_low_pack_volt & 3) |
-              ((self.fault_low_cell_volt & 3) << 2) |
-              ((self.fault_high_pack_volt & 3) << 4) |
-              ((self.fault_high_cell_volt & 3) << 6))
-        b1 = (self.fault_over_temp & 3)
+        b0 = (((self.fault_low_pack_volt & 3) << 6) |
+              ((self.fault_low_cell_volt & 3) << 4) |
+              ((self.fault_high_pack_volt & 3) << 2) |
+              ((self.fault_high_cell_volt & 3) << 0))
+        b1 = ((self.fault_over_temp & 3) << 6)
         self.dev.transmit(self.CAN_CHANNEL, 0x07F4, bytes([b0, b1, 0, 0, 0, 0, 0, 0]), extended=False)
 
     def send_batt_st2(self):

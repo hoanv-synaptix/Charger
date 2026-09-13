@@ -57,6 +57,10 @@ void BSP_CAN_SetBmsRxHandler(BSP_CAN_BmsRxHandler_t handler);
 /* Deliver a bounded number of captured frames to protocol consumers. */
 void BSP_CAN_ProcessRx(void);
 
+/* Bench-only diagnostic: drain successful MCU -> charger-module control
+ * frames to UART1. No-op unless CHG_DEBUG_CAN_TX_TRACE is enabled. */
+void BSP_CAN_ProcessTxTrace(void);
+
 /* Read transport diagnostics.  bus is 1 for FDCAN1 or 2 for FDCAN2. */
 void BSP_CAN_GetRxStats(uint8_t bus, BSP_CAN_RxStats_t *stats);
 

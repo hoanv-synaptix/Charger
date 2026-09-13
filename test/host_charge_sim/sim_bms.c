@@ -22,6 +22,7 @@ void sim_bms_reset(SimBmsState_t *b)
 {
     memset(b, 0, sizeof(*b));
     b->transmitting = true;
+    b->alm_info_tx_enabled = true;
     b->soh_pct = 100;
     b->bms_relay_allow = true; /* healthy-BMS default; scenarios flip it explicitly */
     s_last_st1 = s_last_cell_volt = s_last_cell_temp = 0;
@@ -65,26 +66,28 @@ static void send_cell_temp(void)
 
 static void send_alm_info(void)
 {
-    uint32_t raw = 0;
-    raw |= ((uint32_t)g_sim_bms.low_pack_volt & 0x03U) << 0;
-    raw |= ((uint32_t)g_sim_bms.low_cell_volt & 0x03U) << 2;
-    raw |= ((uint32_t)g_sim_bms.high_pack_volt & 0x03U) << 4;
-    raw |= ((uint32_t)g_sim_bms.high_cell_volt & 0x03U) << 6;
-    raw |= ((uint32_t)g_sim_bms.temp_cell_high_chg & 0x03U) << 8;
-    raw |= ((uint32_t)g_sim_bms.temp_cell_high_dchg & 0x03U) << 10;
-    raw |= ((uint32_t)g_sim_bms.temp_cell_low_chg & 0x03U) << 12;
-    raw |= ((uint32_t)g_sim_bms.temp_cell_low_dchg & 0x03U) << 14;
-    raw |= ((uint32_t)g_sim_bms.temp_relay_high & 0x03U) << 16;
-    raw |= ((uint32_t)g_sim_bms.over_chg_curr & 0x03U) << 18;
-    raw |= ((uint32_t)g_sim_bms.over_dchg_curr & 0x03U) << 20;
-    raw |= ((uint32_t)g_sim_bms.cell_volt_diff & 0x03U) << 22;
-    raw |= ((uint32_t)g_sim_bms.low_soc & 0x03U) << 24;
-
     uint8_t d[8] = {0};
-    d[0] = (uint8_t)(raw >> 0);
-    d[1] = (uint8_t)(raw >> 8);
-    d[2] = (uint8_t)(raw >> 16);
-    d[3] = (uint8_t)(raw >> 24);
+    /* Byte 0: MSB -> LSB */
+    d[0] = (uint8_t)(((g_sim_bms.low_pack_volt  & 0x03U) << 6) |
+                     ((g_sim_bms.low_cell_volt  & 0x03U) << 4) |
+                     ((g_sim_bms.high_pack_volt & 0x03U) << 2) |
+                     ((g_sim_bms.high_cell_volt & 0x03U) << 0));
+
+    /* Byte 1: MSB -> LSB */
+    d[1] = (uint8_t)(((g_sim_bms.temp_cell_high_chg  & 0x03U) << 6) |
+                     ((g_sim_bms.temp_cell_high_dchg & 0x03U) << 4) |
+                     ((g_sim_bms.temp_cell_low_chg   & 0x03U) << 2) |
+                     ((g_sim_bms.temp_cell_low_dchg  & 0x03U) << 0));
+
+    /* Byte 2: MSB -> LSB */
+    d[2] = (uint8_t)(((g_sim_bms.temp_relay_high & 0x03U) << 6) |
+                     ((g_sim_bms.over_chg_curr   & 0x03U) << 4) |
+                     ((g_sim_bms.over_dchg_curr  & 0x03U) << 2) |
+                     ((g_sim_bms.cell_volt_diff  & 0x03U) << 0));
+
+    /* Byte 3: MSB */
+    d[3] = (uint8_t)(((g_sim_bms.low_soc & 0x03U) << 6));
+
     BMS_FeedFrame(0, 0x07F4U, d, 8);
 }
 
@@ -127,7 +130,10 @@ void sim_bms_tick(uint32_t now_tick)
     if (now_tick - s_last_st1 >= 20U)   { send_batt_st1();    s_last_st1 = now_tick; }
     if (now_tick - s_last_cell_volt >= 100U) { send_cell_volt();   s_last_cell_volt = now_tick; }
     if (now_tick - s_last_cell_temp >= 500U) { send_cell_temp();   s_last_cell_temp = now_tick; }
-    if (now_tick - s_last_alm >= 500U)  { send_alm_info();    s_last_alm = now_tick; }
+    if (g_sim_bms.alm_info_tx_enabled && (now_tick - s_last_alm >= 500U)) {
+        send_alm_info();
+        s_last_alm = now_tick;
+    }
     if (now_tick - s_last_st2 >= 100U)  { send_batt_st2();    s_last_st2 = now_tick; }
     if (now_tick - s_last_chg_req >= 1000U) { send_chg_request(); s_last_chg_req = now_tick; }
     if (now_tick - s_last_sw_sta >= 500U) { send_bms_sw_sta(); s_last_sw_sta = now_tick; }

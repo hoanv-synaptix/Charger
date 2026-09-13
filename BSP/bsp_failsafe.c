@@ -21,6 +21,4 @@ void Safety_Shutdown(void)
     if (hfdcan2.Instance != NULL) {
         HAL_FDCAN_Stop(&hfdcan2);
     }
-    /* Turn on fault LED PC7 */
-    GPIOC->BSRR = GPIO_PIN_7;
 }

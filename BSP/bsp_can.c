@@ -32,6 +32,65 @@ static BSP_CAN_BmsRxHandler_t     g_bms_rx_handler = 0;
 #define BSP_CAN_RX_ISR_DRAIN_LIMIT 8U
 #define BSP_CAN_RX_MAX_QUEUE_AGE_MS 1000U
 
+#if defined(CHG_DEBUG_CAN_TX_TRACE)
+#define BSP_CAN_TX_TRACE_CAPACITY 32U
+
+typedef struct {
+    uint32_t id;
+    uint8_t dlc;
+    uint8_t data[8];
+} BSP_CAN_TxTraceFrame_t;
+
+static BSP_CAN_TxTraceFrame_t g_tx_trace[BSP_CAN_TX_TRACE_CAPACITY];
+static uint8_t g_tx_trace_head;
+static uint8_t g_tx_trace_tail;
+
+static uint8_t tx_trace_next(uint8_t index)
+{
+    index++;
+    return (index >= BSP_CAN_TX_TRACE_CAPACITY) ? 0U : index;
+}
+
+static bool is_module_control_frame(uint32_t id)
+{
+    uint8_t pf = (uint8_t)((id >> 16) & 0xFFU);
+    return pf == 0x04U || pf == 0x06U; /* C_M_2 / C_M_24 */
+}
+
+static void tx_trace_reset(void)
+{
+    g_tx_trace_head = 0U;
+    g_tx_trace_tail = 0U;
+}
+
+static void tx_trace_push(const BSP_CAN_Frame_t *frame)
+{
+    uint8_t next;
+
+    if (frame == NULL || !is_module_control_frame(frame->ext_id)) return;
+
+    next = tx_trace_next(g_tx_trace_head);
+    if (next == g_tx_trace_tail) {
+        /* Drop newest diagnostic record only; CAN transmission already
+         * succeeded and must never depend on the trace buffer. */
+        return;
+    }
+
+    g_tx_trace[g_tx_trace_head].id = frame->ext_id;
+    g_tx_trace[g_tx_trace_head].dlc = (frame->dlc > 8U) ? 8U : frame->dlc;
+    memcpy(g_tx_trace[g_tx_trace_head].data, frame->data, 8U);
+    g_tx_trace_head = next;
+}
+
+static bool tx_trace_pop(BSP_CAN_TxTraceFrame_t *frame)
+{
+    if (frame == NULL || g_tx_trace_tail == g_tx_trace_head) return false;
+    *frame = g_tx_trace[g_tx_trace_tail];
+    g_tx_trace_tail = tx_trace_next(g_tx_trace_tail);
+    return true;
+}
+#endif
+
 #define BSP_CAN_RX_NOTIFICATIONS (FDCAN_IT_RX_FIFO0_NEW_MESSAGE | \
                                   FDCAN_IT_RX_FIFO0_FULL | \
                                   FDCAN_IT_RX_FIFO0_MESSAGE_LOST | \
@@ -167,6 +226,9 @@ bool BSP_CAN_Start(void)
 {
     queue_reset(&g_c1_rx_queue);
     queue_reset(&g_c2_rx_queue);
+#if defined(CHG_DEBUG_CAN_TX_TRACE)
+    tx_trace_reset();
+#endif
 
     if (!config_charger_bus_filters(&hfdcan1)) return false;
     if (!config_bms_bus_filters(&hfdcan2)) return false;
@@ -210,6 +272,10 @@ bool BSP_CAN_Transmit(uint8_t bus, const BSP_CAN_Frame_t *frame)
 
     if (bus == 1) g_c1_tx++;
     else if (bus == 2) g_c2_tx++;
+
+#if defined(CHG_DEBUG_CAN_TX_TRACE)
+    if (bus == 1U) tx_trace_push(frame);
+#endif
 
     return true;
 }
@@ -305,6 +371,46 @@ void BSP_CAN_ProcessRx(void)
 {
     process_rx_queue(&g_c1_rx_queue, 1U);
     process_rx_queue(&g_c2_rx_queue, 2U);
+}
+
+void BSP_CAN_ProcessTxTrace(void)
+{
+#if defined(CHG_DEBUG_CAN_TX_TRACE)
+    BSP_CAN_TxTraceFrame_t frame;
+    uint8_t budget = 2U;
+
+    while (budget-- > 0U && tx_trace_pop(&frame)) {
+        uint8_t pf = (uint8_t)((frame.id >> 16) & 0xFFU);
+
+        if (pf == 0x04U) {
+            uint16_t voltage_raw = (uint16_t)frame.data[4] |
+                                    ((uint16_t)frame.data[5] << 8);
+            uint16_t current_raw = (uint16_t)frame.data[6] |
+                                    ((uint16_t)frame.data[7] << 8);
+            const char *setpoint_reason =
+                (voltage_raw == 0U && current_raw == 0U) ? "START_RESET" :
+                (current_raw == 0U) ? "CURRENT_ZERO" : "NORMAL";
+            LOG("[CAN1 TX] C_M_2 reason=%s id=%08lX dlc=%u Vraw=%u Iraw=%u "
+                "data=%02X %02X %02X %02X %02X %02X %02X %02X\r\n",
+                setpoint_reason,
+                (unsigned long)frame.id, (unsigned)frame.dlc,
+                (unsigned)voltage_raw, (unsigned)current_raw,
+                frame.data[0], frame.data[1], frame.data[2], frame.data[3],
+                frame.data[4], frame.data[5], frame.data[6], frame.data[7]);
+        } else {
+            const char *command = (frame.data[0] == 0x55U) ? "STOP" :
+                                  (frame.data[0] == 0xAAU) ? "START" : "OTHER";
+            LOG("[CAN1 TX] C_M_24 id=%08lX dlc=%u cmd=%s(0x%02X) "
+                "data=%02X %02X %02X %02X %02X %02X %02X %02X\r\n",
+                (unsigned long)frame.id, (unsigned)frame.dlc, command,
+                (unsigned)frame.data[0],
+                frame.data[0], frame.data[1], frame.data[2], frame.data[3],
+                frame.data[4], frame.data[5], frame.data[6], frame.data[7]);
+        }
+    }
+#else
+    /* Keep the call site stable between normal and diagnostic builds. */
+#endif
 }
 
 void BSP_CAN_GetStats(uint32_t *c1tx, uint32_t *c1rx, uint32_t *c2tx, uint32_t *c2rx)

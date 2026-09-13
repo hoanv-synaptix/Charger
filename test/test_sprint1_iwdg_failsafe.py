@@ -76,5 +76,6 @@ def test_bsp_failsafe_disables_relays():
     c = read("BSP/bsp_failsafe.c")
     # Must turn off relays — either GPIO_PIN_RESET or direct BSRR << 16u
     assert ("GPIO_PIN_RESET" in c) or ("<< 16u" in c)
-    # Must set fault LED
-    assert "GPIOC" in c or "LED" in c
+    # Safety shutdown owns the safe outputs. PC7 is now a power indicator and
+    # must not be driven from this safety-shutdown path.
+    assert "GPIO_PIN_7" not in c

@@ -5,8 +5,8 @@ void BSP_LED_On(BSP_LED_t led) {
     if (led == BSP_LED_RUN) {
         // LED_EXT_1 on PC6 (Active High via Q500)
         HAL_GPIO_WritePin(GPIOC, GPIO_PIN_6, GPIO_PIN_SET);
-    } else if (led == BSP_LED_FAULT) {
-        // LED_EXT_2 on PC7 (Active High via Q501)
+    } else if (led == BSP_LED_POWER) {
+        // LED_EXT_2 power indicator on PC7 (Active High via Q501)
         HAL_GPIO_WritePin(GPIOC, GPIO_PIN_7, GPIO_PIN_SET);
     }
 }
@@ -14,8 +14,6 @@ void BSP_LED_On(BSP_LED_t led) {
 void BSP_LED_Off(BSP_LED_t led) {
     if (led == BSP_LED_RUN) {
         HAL_GPIO_WritePin(GPIOC, GPIO_PIN_6, GPIO_PIN_RESET);
-    } else if (led == BSP_LED_FAULT) {
-        HAL_GPIO_WritePin(GPIOC, GPIO_PIN_7, GPIO_PIN_RESET);
     }
 }
 

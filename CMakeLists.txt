@@ -15,6 +15,7 @@ set(CMAKE_C_EXTENSIONS ON)
 
 # Define the build type
 option(CHG_DEBUG_DWIN "Enable the USB->RS485 DWIN relay debug command (bench only)" OFF)
+option(CHG_DEBUG_CAN_TX_TRACE "Trace MCU CAN1 control frames to UART1 (bench only)" OFF)
 
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE "Release")
@@ -70,6 +71,11 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     # the -O0 -g3 Debug build already overflows the 128 KB flash; turn it on for
     # a Release build:  cmake --preset Release -DCHG_DEBUG_DWIN=ON
     $<$<BOOL:${CHG_DEBUG_DWIN}>:CHG_DEBUG_DWIN>
+    # CHG_DEBUG_CAN_TX_TRACE: captures successful MCU->charger-module control
+    # frames (C_M_2/C_M_24) into a bounded queue and prints them from the main
+    # loop through UART1. It also suppresses unrelated LOG() lines in this
+    # diagnostic build. Never enable it for production: UART output is slow.
+    $<$<BOOL:${CHG_DEBUG_CAN_TX_TRACE}>:CHG_DEBUG_CAN_TX_TRACE>
 )
 
 # Remove wrong libob.a library dependency when using cpp files

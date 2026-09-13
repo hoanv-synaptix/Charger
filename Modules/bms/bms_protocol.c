@@ -72,25 +72,35 @@ static void parse_cell_temp(const uint8_t *d, BMS_Data_t *bms, uint32_t ext_id)
     out->valid         = true;
 }
 
-/* ---- ALM_INFO: ID=0x07F4, event-triggered ---- */
+/* ---- ALM_INFO: ID=0x07F4, event-triggered ----
+ * Byte 0..3: Packed in Motorola (MSB-first) order within each byte:
+ *   [7:6] = 1st field, [5:4] = 2nd field, [3:2] = 3rd field, [1:0] = 4th field
+ */
 static void parse_alm_info(const uint8_t *d, BMS_Data_t *bms, uint32_t ext_id)
 {
     BMS_AlmInfo_t *out = &bms->alm_info;
-    uint32_t raw = get_u32_le(d, 0);  /* Only 26 bits used (4 bytes), little-endian */
 
-    out->low_pack_volt      = (uint8_t)((raw >> 0)  & 0x03U);
-    out->low_cell_volt      = (uint8_t)((raw >> 2)  & 0x03U);
-    out->high_pack_volt     = (uint8_t)((raw >> 4)  & 0x03U);
-    out->high_cell_volt     = (uint8_t)((raw >> 6)  & 0x03U);
-    out->temp_cell_high_chg = (uint8_t)((raw >> 8)  & 0x03U);
-    out->temp_cell_high_dchg= (uint8_t)((raw >> 10) & 0x03U);
-    out->temp_cell_low_chg  = (uint8_t)((raw >> 12) & 0x03U);
-    out->temp_cell_low_dchg = (uint8_t)((raw >> 14) & 0x03U);
-    out->temp_relay_high    = (uint8_t)((raw >> 16) & 0x03U);
-    out->over_chg_curr      = (uint8_t)((raw >> 18) & 0x03U);
-    out->over_dchg_curr     = (uint8_t)((raw >> 20) & 0x03U);
-    out->cell_volt_diff     = (uint8_t)((raw >> 22) & 0x03U);
-    out->low_soc            = (uint8_t)((raw >> 24) & 0x03U);
+    /* Byte 0 */
+    out->low_pack_volt       = (uint8_t)((d[0] >> 6) & 0x03U);
+    out->low_cell_volt       = (uint8_t)((d[0] >> 4) & 0x03U);
+    out->high_pack_volt      = (uint8_t)((d[0] >> 2) & 0x03U);
+    out->high_cell_volt      = (uint8_t)((d[0] >> 0) & 0x03U);
+
+    /* Byte 1 */
+    out->temp_cell_high_chg  = (uint8_t)((d[1] >> 6) & 0x03U);
+    out->temp_cell_high_dchg = (uint8_t)((d[1] >> 4) & 0x03U);
+    out->temp_cell_low_chg   = (uint8_t)((d[1] >> 2) & 0x03U);
+    out->temp_cell_low_dchg  = (uint8_t)((d[1] >> 0) & 0x03U);
+
+    /* Byte 2 */
+    out->temp_relay_high     = (uint8_t)((d[2] >> 6) & 0x03U);
+    out->over_chg_curr       = (uint8_t)((d[2] >> 4) & 0x03U);
+    out->over_dchg_curr      = (uint8_t)((d[2] >> 2) & 0x03U);
+    out->cell_volt_diff      = (uint8_t)((d[2] >> 0) & 0x03U);
+
+    /* Byte 3 */
+    out->low_soc             = (uint8_t)((d[3] >> 6) & 0x03U);
+
     out->valid = true;
 }
 

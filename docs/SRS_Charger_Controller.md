@@ -124,7 +124,7 @@ Hệ thống là **trung tâm điều khiển** của một trạm sạc pin (xe
 | USART5 | PB3/PB4 — dự phòng LTE |
 | USB | FS Device, CDC class (PA11/PA12) |
 | ADC1 | PA0–PA3 — 4 kênh NTC nhiệt độ |
-| GPIO | RELAY_1/2/3 (PB14, PB15, PA8), LED_RUN (PC6), LED_FAULT (PC7), LED_STT (PC13), BUTTON_1 (PA15), BUTTON_2 (PD2), POWER_EN (PA4) |
+| GPIO | RELAY_1/2/3 (PB14, PB15, PA8), LED_RUN (PC6), LED_POWER (PC7), LED_STT (PC13), BUTTON_1 (PA15), BUTTON_2 (PD2), POWER_EN (PA4) |
 | Nguồn cô lập | B1205S-1WR2 ×2 → +5V_ISO1/2 cho transceiver CAN; PA4=POWER_EN cấp nguồn cụm RS485/HMI |
 
 > ⚠️ **Ghi chú thiết kế bắt buộc**: USART3 của board này có đường RO/DI **đảo ngược** so với mapping silicon mặc định (PB10=TX, PB11=RX). Firmware **phải** bật `USART_CR2.SWAP` (TX phát qua PB11 vào DI, RX nhận từ PB10 qua RO). Mất cấu hình này RS485 sẽ không hoạt động.
@@ -297,7 +297,7 @@ must not force the Page 07 `ERROR` state.
 | ID | Yêu cầu | ƯP |
 |---|---|---|
 | FR-OPS-01 | POWER_EN (PA4) kéo HIGH đầu init | M |
-| FR-OPS-02 | LED_RUN khi đang sạc; LED_FAULT khi critical/fault/0 module | M |
+| FR-OPS-02 | LED_POWER (PC7) luôn sáng khi MCU đã khởi tạo; LED_RUN (PC6) sáng khi đang sạc | M |
 | FR-OPS-03 | Nút START/STOP debounce 50ms rising-edge → controller (owner=DWIN) | M |
 | FR-OPS-04 | Watchdog bus-off 1s: Stop/Start + re-notify + log | M |
 | FR-OPS-05 | AutoRetransmission = ENABLE cả 2 bus | M |

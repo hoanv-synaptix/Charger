@@ -120,7 +120,7 @@ flowchart TD
         ErrorPath["Error_Handler() or HardFault_Handler()"] --> Safety["Safety_Shutdown()"]
         Safety --> Relays["Disable relays and POWER_EN"]
         Safety --> StopCAN["Stop FDCAN controllers"]
-        Safety --> FaultLED["Turn on fault LED"]
+        Safety --> PowerLED["Power LED remains on while MCU is powered"]
     end
 
     subgraph Verification["Regression Tests"]

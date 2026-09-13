@@ -53,7 +53,7 @@ Một lỗi gốc kéo sập chuỗi phân hệ:
 ```
 [1] CAN filter REJECT std (bsp_can.c:28)
     → BMS 4 frame Std (02F4/04F4/05F4/07F4) mất → BMS OFFLINE
-    → Charge CTRL: BMS-Controlled → FAULT BMS_OFFLINE → LED_FAULT
+    → Charge CTRL: BMS-Controlled → FAULT BMS_OFFLINE; LED_POWER vẫn sáng vì chỉ báo MCU đang hoạt động
 
 [2] LOG (50ms) trong ISR + TX queue spam 20ms
     → Treo ISR >1ms → mất FDCAN FIFO0 → timeout → RECOVERING loop
@@ -478,8 +478,8 @@ lỗi BMS/module/controller vào cùng danh sách + log.
 
 - Chạy trong `App_Loop` 20ms block ngay sau `ChargeController_Process()`,
   trước bước ghi GPIO relay.
-- `LED_FAULT` + icon lỗi DWIN + nút RESET/ack giờ có nhìn alarm view (trước
-  `LED_FAULT` bỏ qua hoàn toàn lỗi controller/BMS).
+- PC7 hiện là `LED_POWER`, được bật sau khởi tạo và không còn phụ thuộc vào
+  alarm, lỗi giao tiếp hoặc trạng thái charger. Alarm vẫn hiển thị qua DWIN/PC.
 - PC debug protocol: thêm `DEBUG_CMD_GET_ALARMS 0x1C` / `DEBUG_RSP_ALARMS
   0x9C` (thuần additive; `debug_app/` — việc song song của người khác — chỉ
   cần thêm handler).

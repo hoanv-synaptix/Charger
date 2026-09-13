@@ -444,6 +444,10 @@ static void process_frame(uint8_t cmd, const uint8_t *payload, uint8_t len)
             float c = payload_float(payload);
             if (!isfinite(c)) { send_nack(cmd, PC_ERR_BAD_PARAM); return; }
             last_set_current = c;
+            LOG("PC: SET_CURRENT %.3fA manual=%u running=%u\r\n",
+                (double)last_set_current,
+                (unsigned)ChargeController_IsManualMode(),
+                (unsigned)ChargeController_IsRunning());
         }
         ChargeController_SetManualTarget(last_set_voltage, last_set_current);
         CHG_LIB_SetCurrentLimitAll(last_set_current);
@@ -729,7 +733,6 @@ bool PC_Protocol_PeekTxFrame(uint8_t index, uint8_t *cmd, uint8_t *payload, uint
     }
     return true;
 }
-
 
 
 

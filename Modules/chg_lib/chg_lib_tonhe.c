@@ -265,6 +265,7 @@ static void send_param_set(TONHE_Internal_t *mod)
     if (CHG_LIB_CanBackend_Transmit(tonhe_param_set_id(), data, 8U)) {
         mod->view.stats.tx_count++;
         mod->last_tx_tick = CHG_LIB_NowTick();
+        mod->last_poll_tick = mod->last_tx_tick;
         mod->pending_param = false;
     }
 }
@@ -547,7 +548,7 @@ static void process_module(TONHE_Internal_t *mod, uint32_t now)
 
     case CHG_LIB_STATE_IDLE:
         /* Periodic poll for keepalive */
-        if ((now - mod->last_poll_tick) >= 1000) {  /* 1 second poll */
+        if ((now - mod->last_poll_tick) >= TONHE_HEARTBEAT_INTERVAL_MS) {
             send_param_set(mod);
             mod->last_poll_tick = now;
         }
@@ -587,8 +588,10 @@ static void process_module(TONHE_Internal_t *mod, uint32_t now)
         break;
 
     case CHG_LIB_STATE_RUNNING:
-        if (mod->pending_param) {
+        /* Keepalive setpoint heartbeat or immediate update on param change */
+        if (mod->pending_param || ((now - mod->last_poll_tick) >= TONHE_HEARTBEAT_INTERVAL_MS)) {
             send_param_set(mod);
+            mod->last_poll_tick = now;
         }
         /* Handle stop command - only send when app requests */
         if (!mod->should_run) {

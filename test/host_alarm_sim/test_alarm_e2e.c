@@ -125,9 +125,9 @@ static bool test_bms_alm_info_raw_e005(void)
     printf("Running test_bms_alm_info_raw_e005...\n");
     uint8_t frame[8] = {0};
 
-    /* PDF raw example for temp_cell_high_chg: bits 8-9, therefore byte 1. */
+    /* In Motorola CAN layout, temp_cell_high_chg is bits 7-6 of byte 1. */
     BMS_Init();
-    frame[1] = 0x02U; /* severity=fault */
+    frame[1] = 0x80U; /* severity=2 (fault): (2 << 6) */
     BMS_FeedFrame(0U, BMS_ID_ALM_INFO, frame, 8U);
 
     BMS_View_t view;
@@ -135,7 +135,7 @@ static bool test_bms_alm_info_raw_e005(void)
     ASSERT((view.alarm_flags & BMS_ALARM_TEMP_HIGH_CHG) != 0U,
            "ALM_INFO byte1 severity 2 must set TEMP_HIGH_CHG");
 
-    frame[1] = 0x01U; /* warning only: not an E005 fault */
+    frame[1] = 0x40U; /* warning only: (1 << 6), not an E005 fault */
     BMS_FeedFrame(0U, BMS_ID_ALM_INFO, frame, 8U);
     BMS_GetView(&view);
     ASSERT((view.alarm_flags & BMS_ALARM_TEMP_HIGH_CHG) == 0U,
@@ -143,7 +143,7 @@ static bool test_bms_alm_info_raw_e005(void)
     ASSERT((view.warning_flags & BMS_ALARM_TEMP_HIGH_CHG) != 0U,
            "ALM_INFO warning severity must set E005 warning flag");
 
-    frame[1] = 0x03U; /* severity=severe */
+    frame[1] = 0xC0U; /* severity=3 (severe): (3 << 6) */
     BMS_FeedFrame(0U, BMS_ID_ALM_INFO, frame, 8U);
     BMS_GetView(&view);
     ASSERT((view.alarm_flags & BMS_ALARM_TEMP_HIGH_CHG) != 0U,
@@ -664,18 +664,31 @@ static bool test_module_ac_undervolt_mirrored_and_derived(void)
     healthy_bms(400.0f);
     ASSERT(start_running(), "controller never RUNNING");
 
+    /* 1. AC input drops -> both module and derived AC_UNDERVOLT trip */
     g_sim_module.tonhe_fault_bits = (1U << 0);   /* input undervoltage */
     drive_ms(1500U);
 
     ASSERT(alarm_logged_raise(ALARM_MOD_AC_UNDER_VOLT), "module AC-undervolt mirror missing");
     ASSERT(alarm_logged_raise(ALARM_AC_UNDERVOLT), "derived AC_UNDERVOLT missing");
+    ASSERT(alarm_active(ALARM_AC_UNDERVOLT), "derived AC_UNDERVOLT must be active");
+
+    /* 2. AC grid recovers -> both alarms auto-clear after debounce */
+    g_sim_module.tonhe_fault_bits = 0;
+    drive_ms(1500U);
+
+    ASSERT(!alarm_active(ALARM_AC_UNDERVOLT), "derived AC_UNDERVOLT must clear after AC recovers");
+    ASSERT(!alarm_active(ALARM_MOD_AC_UNDER_VOLT), "module AC-undervolt mirror must clear after AC recovers");
+    AlarmView_t av;
+    Alarm_GetView(&av);
+    ASSERT(av.worst_code == ALARM_NONE, "worst_code must return to ALARM_NONE (0000)");
+
     printf("[PASS] test_module_ac_undervolt_mirrored_and_derived\n");
     return true;
 }
 
 static bool test_acknowledge_clears_latched(void)
 {
-    printf("Running test_acknowledge_clears_latched...\n");
+    printf("Running test_dc_load_lost_hold_and_auto_recover_to_0000...\n");
     ASSERT(setup(NULL), "setup");
     healthy_bms(400.0f);
     ASSERT(start_running(), "controller never RUNNING");
@@ -686,18 +699,34 @@ static bool test_acknowledge_clears_latched(void)
     g_sim_module.current = 0.0f;
     g_sim_bms.pack_current_a = 0.0f;
     drive_ms(1500U);
-    ASSERT(alarm_active(ALARM_DC_LOAD_LOST), "precondition: DC_LOAD_LOST latched");
+    ASSERT(alarm_active(ALARM_DC_LOAD_LOST), "precondition: DC_LOAD_LOST active");
 
-    /* Latching: the alarm must NOT auto-clear just because the charge has
-     * stopped and the raw condition is no longer observable -- only an
-     * operator acknowledge clears it. */
-    drive_ms(3000U);
-    ASSERT(alarm_active(ALARM_DC_LOAD_LOST), "latched alarm must survive until acknowledged");
+    /* Hold window: alarm stays visible for operator (at 1500ms into hold window) */
+    drive_ms(1500U);
+    ASSERT(alarm_active(ALARM_DC_LOAD_LOST), "alarm must remain visible during 3s hold window");
 
-    Alarm_Acknowledge(mock_tick);
-    drive_step(20U);
-    ASSERT(!alarm_active(ALARM_DC_LOAD_LOST), "acknowledge should clear the latched alarm");
-    printf("[PASS] test_acknowledge_clears_latched\n");
+    /* After 3s clear window expires, alarm auto-recovers to 0000 */
+    drive_ms(2000U);
+    ASSERT(!alarm_active(ALARM_DC_LOAD_LOST), "alarm must auto-clear after 3s hold window");
+    AlarmView_t av;
+    Alarm_GetView(&av);
+    ASSERT(av.active_count == 0U, "active count must be 0");
+    ASSERT(av.worst_code == ALARM_NONE, "worst_code must be ALARM_NONE (0000)");
+
+    /* Verify both RAISE and CLEAR were recorded in the event log */
+    AlarmLogEntry_t log[ALARM_LOG_DEPTH];
+    uint8_t n = Alarm_GetLog(log, ALARM_LOG_DEPTH);
+    bool saw_raise = false;
+    bool saw_clear = false;
+    for (uint8_t i = 0; i < n; i++) {
+        if (log[i].code == (uint16_t)ALARM_DC_LOAD_LOST) {
+            if (log[i].event == 1U) saw_raise = true;
+            if (log[i].event == 0U) saw_clear = true;
+        }
+    }
+    ASSERT(saw_raise && saw_clear, "both RAISE and CLEAR must be preserved in event log");
+
+    printf("[PASS] test_dc_load_lost_hold_and_auto_recover_to_0000\n");
     return true;
 }
 
@@ -728,6 +757,58 @@ static bool test_start_with_no_module_or_bms_reports_fault_code(void)
     return true;
 }
 
+static bool test_bms_alarm_timeout_auto_recovers_to_0000(void)
+{
+    printf("Running test_bms_alarm_timeout_auto_recovers_to_0000...\n");
+    ASSERT(setup(NULL), "setup");
+    healthy_bms(400.0f);
+    g_sim_bms.alm_info_tx_enabled = false; /* ALM_INFO only transmitted when event occurs */
+    ASSERT(start_running(), "controller never RUNNING");
+    establish_load(400.0f, 40.0f);
+
+    /* 1. BMS sends ALM_INFO with temp_cell_high_chg = 2 (E005 fault) */
+    uint8_t frame[8] = {0};
+    frame[1] = 0x80U; /* temp_cell_high_chg severity 2 */
+    BMS_FeedFrame(0U, BMS_ID_ALM_INFO, frame, 8U);
+    drive_ms(100U);
+
+    BMS_View_t bms_view;
+    BMS_GetView(&bms_view);
+    ASSERT((bms_view.alarm_flags & BMS_ALARM_TEMP_HIGH_CHG) != 0U,
+           "ALM_INFO must set TEMP_HIGH_CHG");
+    AlarmView_t av;
+    Alarm_GetView(&av);
+    ASSERT(av.worst_code == ALARM_BMS_TEMP_HIGH_CHG, "worst_code must be E005");
+    ASSERT(strcmp(DWIN_Alarm_GetCodeString(av.worst_code), "E005") == 0,
+           "E005 string check");
+
+    /* 2. Over-temperature clears: per vendor PDF §5.4, BMS stops sending 0x07F4.
+     * Advance time past BMS_ALM_INFO_TIMEOUT_MS (1000ms) + 100ms debounce clear. */
+    drive_ms(1200U);
+
+    /* 3. Verify ALM_INFO timed out and alarm auto-recovered */
+    BMS_GetView(&bms_view);
+    ASSERT((bms_view.alarm_flags & BMS_ALARM_TEMP_HIGH_CHG) == 0U,
+           "TEMP_HIGH_CHG must clear after ALM_INFO timeout");
+    Alarm_GetView(&av);
+    ASSERT(av.active_count == 0U, "all alarms must be cleared");
+    ASSERT(av.latched_mask == 0U, "no alarms should be latched");
+    ASSERT(av.worst_code == ALARM_NONE, "worst_code must be ALARM_NONE");
+
+    /* Topbar fault code logic: if active_count == 0 and latched_mask == 0 -> "0000" */
+    char topbar_code[8] = {0};
+    if (av.active_count == 0U && av.latched_mask == 0U) {
+        strncpy(topbar_code, "0000", sizeof(topbar_code) - 1U);
+    } else {
+        const char *c_str = DWIN_Alarm_GetCodeString(av.worst_code);
+        strncpy(topbar_code, c_str, sizeof(topbar_code) - 1U);
+    }
+    ASSERT(strcmp(topbar_code, "0000") == 0, "topbar must reset to 0000");
+
+    printf("[PASS] test_bms_alarm_timeout_auto_recovers_to_0000\n");
+    return true;
+}
+
 int main(void)
 {
     bool ok = true;
@@ -748,6 +829,7 @@ int main(void)
     ok &= test_module_ac_undervolt_mirrored_and_derived();
     ok &= test_acknowledge_clears_latched();
     ok &= test_start_with_no_module_or_bms_reports_fault_code();
+    ok &= test_bms_alarm_timeout_auto_recovers_to_0000();
 
     if (ok) { printf("\nALL TESTS PASSED.\n"); return 0; }
     printf("\nSOME TESTS FAILED.\n");

@@ -57,6 +57,10 @@ typedef struct {
     /* When false, sim_bms_tick() sends nothing (used to simulate BMS
      * offline / communication loss). */
     bool transmitting;
+
+    /* When false, sim_bms_tick() suppresses 0x07F4 transmission (used to simulate
+     * real BMS behavior where ALM_INFO is not sent when clear per §5.4). */
+    bool alm_info_tx_enabled;
 } SimBmsState_t;
 
 extern SimBmsState_t g_sim_bms;

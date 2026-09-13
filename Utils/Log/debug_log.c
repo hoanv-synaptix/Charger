@@ -17,6 +17,14 @@ void LOG(const char *fmt, ...)
 {
     char buf[LOG_BUF_SIZE];
     va_list args;
+
+#if defined(CHG_DEBUG_CAN_TX_TRACE)
+    /* Diagnostic build intentionally emits only the deferred CAN1 TX trace.
+     * The trace itself is drained from the main loop, never from the CAN
+     * transmit path, so UART blocking cannot run inside the transport call. */
+    if (fmt == NULL || strncmp(fmt, "[CAN1 TX]", 9U) != 0) return;
+#endif
+
     va_start(args, fmt);
     int len = vsnprintf(buf, sizeof(buf), fmt, args);
     va_end(args);

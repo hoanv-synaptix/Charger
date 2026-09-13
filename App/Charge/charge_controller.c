@@ -303,6 +303,24 @@ static float compute_voltage_ref(const ChargeCycleConfig_t *cfg) {
     return voltage_ref;
 }
 
+/* Use the smaller capacity so a stale/over-optimistic local configuration
+ * cannot command more current than the BMS-rated pack can support. A zero
+ * BMS rate_cap means that the BMS has not supplied a usable capacity yet. */
+static float compute_charge_capacity_ah(const ChargeCycleConfig_t *cfg,
+                                        const BMS_View_t *bms)
+{
+    float capacity_ah = cfg->battery_capacity_ah;
+
+    if (bms != NULL && bms->rate_cap > 0U) {
+        float bms_capacity_ah = (float)bms->rate_cap * 0.1f;
+        if (bms_capacity_ah < capacity_ah) {
+            capacity_ah = bms_capacity_ah;
+        }
+    }
+
+    return capacity_ah;
+}
+
 /**
  * @brief Decide whether the battery relay should be closed this tick.
  * @note  This is a latch, not a continuous gate: reaching the
@@ -642,6 +660,12 @@ static void apply_charge_targets(uint32_t now_tick) {
         g_ctrl.applied_current_per_module_a = 0.0f;
         g_ctrl.ramp_tick = now_tick;
 
+        LOG("CC: APPLY_START_ZERO state=%d last_run=%u inhibit=%u target=%.3fA/mod applied=%.3fA/mod V=%.3fV src=%u band=%u\r\n",
+            (int)g_ctrl.state, (unsigned)g_ctrl.last_running, (unsigned)g_ctrl.inhibit,
+            (double)g_ctrl.target_current_per_module_a,
+            (double)g_ctrl.applied_current_per_module_a,
+            (double)g_ctrl.target_voltage_v,
+            (unsigned)g_ctrl.active_limit_source, (unsigned)g_ctrl.active_stage_band);
         CHG_LIB_SetVoltageAll(0.0f);
         CHG_LIB_SetCurrentLimitAll(0.0f);
         CHG_LIB_StartAll();
@@ -689,6 +713,13 @@ static void apply_charge_targets(uint32_t now_tick) {
             }
         }
     } else if (!should_run && g_ctrl.last_running) {
+        LOG("CC: APPLY_STOP_ZERO state=%d inhibit=%u target_total=%.3fA target=%.3fA/mod applied=%.3fA/mod reason=%u src=%u band=%u\r\n",
+            (int)g_ctrl.state, (unsigned)g_ctrl.inhibit,
+            (double)g_ctrl.target_current_total_a,
+            (double)g_ctrl.target_current_per_module_a,
+            (double)g_ctrl.applied_current_per_module_a,
+            (unsigned)g_ctrl.stop_reason,
+            (unsigned)g_ctrl.active_limit_source, (unsigned)g_ctrl.active_stage_band);
         CHG_LIB_StopAll();
         g_ctrl.applied_voltage_v = 0.0f;
         g_ctrl.applied_current_per_module_a = 0.0f;
@@ -1375,6 +1406,16 @@ static void run_standalone_mode(uint32_t now_tick) {
     /* Apply Jack Temp Derating */
     apply_jack_temp_derating(&cfg, now_tick);
 
+    /* Imin is the lowest normal charging current. Do not apply it to a
+     * zero-current target, which is reserved for an inhibit/stop condition. */
+    {
+        float min_current_a = cfg.imin_c * cfg.battery_capacity_ah;
+        if (g_ctrl.target_current_total_a > 0.0f &&
+            g_ctrl.target_current_total_a < min_current_a) {
+            g_ctrl.target_current_total_a = min_current_a;
+        }
+    }
+
     /* Per-module split */
     if (g_ctrl.actual_module_count > 0) {
         g_ctrl.target_current_per_module_a = g_ctrl.target_current_total_a / (float)g_ctrl.actual_module_count;
@@ -1509,6 +1550,9 @@ static void run_bms_controlled_mode(uint32_t now_tick) {
         } else {
             g_ctrl.stop_reason = CHARGE_STOP_SOC_REACHED;
         }
+        LOG("CC: TARGET_ZERO completion cell=%u soc=%u max_cv=%u soc=%u state=%d\r\n",
+            (unsigned)g_ctrl.cell_full_latched, (unsigned)g_ctrl.soc_full_latched,
+            (unsigned)bms.max_cell_volt, (unsigned)bms.soc, (int)g_ctrl.state);
         g_ctrl.target_current_total_a = 0.0f;
         g_ctrl.target_current_per_module_a = 0.0f;
         transition_to(CHARGE_CTRL_STATE_STOPPING, now_tick);
@@ -1543,8 +1587,16 @@ static void run_bms_controlled_mode(uint32_t now_tick) {
     if (g_ctrl.inhibit) {
         g_ctrl.target_current_total_a = 0.0f;
     } else {
-        /* Use BMS rated capacity if available, otherwise fallback to config */
-        float active_capacity = (bms.rate_cap > 0) ? ((float)bms.rate_cap * 0.1f) : cfg.battery_capacity_ah;
+        float active_capacity = compute_charge_capacity_ah(&cfg, &bms);
+
+        /* Stage limits are upper limits. Imin defines the lowest normal
+         * charging current, so a positive stage limit below Imin is raised
+         * before converting C-rate to Amps. The inhibit path above remains
+         * an explicit zero-current exception. */
+        if (stage_limit_c > 0.0f && stage_limit_c < cfg.imin_c) {
+            stage_limit_c = cfg.imin_c;
+            g_ctrl.active_limit_current_c = stage_limit_c;
+        }
 
         /* Convert C-rate to Amps */
         float stage_limit_a = stage_limit_c * active_capacity;
@@ -1558,7 +1610,16 @@ static void run_bms_controlled_mode(uint32_t now_tick) {
             g_ctrl.derating = 1;
         }
 
+        float min_allowed_a = cfg.imin_c * active_capacity;
+
         apply_jack_temp_derating(&cfg, now_tick);
+
+        /* Jack temperature derating is a normal charging clamp, so retain
+         * the configured minimum unless the charge is already inhibited. */
+        if (g_ctrl.target_current_total_a > 0.0f &&
+            g_ctrl.target_current_total_a < min_allowed_a) {
+            g_ctrl.target_current_total_a = min_allowed_a;
+        }
     }
 
     /* Per-module split (strict: must match configured count) */
@@ -1613,7 +1674,9 @@ static bool precharge_modules_at_target(const ChargeCycleConfig_t *cfg, uint32_t
 static void run_precharge_mode(uint32_t now_tick)
 {
     ChargeCycleConfig_t cfg;
+    BMS_View_t bms;
     ChargeCycleConfig_Get(&cfg);
+    BMS_GetView(&bms);
 
     /* A low-voltage alarm is expected while recovering an exhausted pack.
      * Critical BMS alarms become actionable only once both recovery frames
@@ -1625,7 +1688,7 @@ static void run_precharge_mode(uint32_t now_tick)
     }
 
     g_ctrl.target_voltage_v = cfg.vlow_v;
-    g_ctrl.target_current_total_a = cfg.ilow_c * cfg.battery_capacity_ah;
+    g_ctrl.target_current_total_a = cfg.ilow_c * compute_charge_capacity_ah(&cfg, &bms);
     g_ctrl.target_current_per_module_a =
         g_ctrl.target_current_total_a / (float)g_ctrl.actual_module_count;
     g_ctrl.inhibit = 0U;
