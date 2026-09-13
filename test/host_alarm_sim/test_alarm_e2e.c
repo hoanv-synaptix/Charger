@@ -208,7 +208,7 @@ static bool test_all_bms_alm_info_fields_from_pdf(void)
         {1U,  BMS_ALARM_LOW_CELL_VOLT,   ALARM_BMS_LOW_CELL_VOLT,   "E002", ALARM_ACT_INFO},
         {2U,  BMS_ALARM_HIGH_PACK_VOLT,  ALARM_BMS_HIGH_PACK_VOLT,  "E003", ALARM_ACT_STOP},
         {3U,  BMS_ALARM_HIGH_CELL_VOLT,  ALARM_BMS_HIGH_CELL_VOLT,  "E004", ALARM_ACT_STOP},
-        {4U,  BMS_ALARM_TEMP_HIGH_CHG,   ALARM_BMS_TEMP_HIGH_CHG,   "E005", ALARM_ACT_STOP},
+        {4U,  BMS_ALARM_TEMP_HIGH_CHG,   ALARM_BMS_TEMP_HIGH_CHG,   "E005", ALARM_ACT_INFO},
         {5U,  BMS_ALARM_TEMP_HIGH_DCHG,  ALARM_BMS_TEMP_HIGH_DCHG,  "W001", ALARM_ACT_INFO},
         {6U,  BMS_ALARM_TEMP_LOW_CHG,    ALARM_BMS_TEMP_LOW_CHG,    "E006", ALARM_ACT_STOP},
         {7U,  BMS_ALARM_TEMP_LOW_DCHG,   ALARM_BMS_TEMP_LOW_DCHG,   "W002", ALARM_ACT_INFO},
@@ -507,9 +507,9 @@ static bool test_bms_thermal_warning_suppresses_load_lost(void)
     return true;
 }
 
-static bool test_bms_thermal_fault_owns_stop_without_e023(void)
+static bool test_bms_thermal_fault_recovers_without_e023(void)
 {
-    printf("Running test_bms_thermal_fault_owns_stop_without_e023...\n");
+    printf("Running test_bms_thermal_fault_recovers_without_e023...\n");
     ASSERT(setup(NULL), "setup");
     healthy_bms(400.0f);
     ASSERT(start_running(), "controller never RUNNING");
@@ -522,16 +522,28 @@ static bool test_bms_thermal_fault_owns_stop_without_e023(void)
     Alarm_GetView(&view);
     ASSERT(alarm_active(ALARM_BMS_TEMP_HIGH_CHG),
            "severity 2 thermal alarm must be visible");
-    ASSERT(view.highest_action == ALARM_ACT_STOP,
-           "severity 2 thermal alarm must request STOP");
+    ASSERT(view.highest_action == ALARM_ACT_INFO,
+           "severity 2 thermal alarm must remain an INFO mirror");
     ASSERT(!alarm_active(ALARM_DC_LOAD_LOST),
            "BMS thermal fault must not create duplicate E023");
 
     ChargeCtrlView_t cv;
     ChargeController_GetView(&cv);
-    ASSERT(cv.state != CHARGE_CTRL_STATE_RUNNING,
-           "severity 2 thermal alarm must stop charging");
-    printf("[PASS] test_bms_thermal_fault_owns_stop_without_e023\n");
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING,
+           "severity 2 thermal alarm must keep the controller session alive");
+    ASSERT(cv.inhibit != 0U && cv.applied_current_per_module_a == 0.0f,
+           "severity 2 thermal alarm must inhibit current");
+
+    set_bms_alarm_severity(4U, 0U);
+    drive_ms(3500U);
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING,
+           "controller must remain RUNNING after thermal recovery");
+    ASSERT(cv.inhibit == 0U,
+           "thermal inhibit must clear after fresh BMS recovery");
+    ASSERT(g_sim_module.actually_on,
+           "module session must remain active during thermal recovery");
+    printf("[PASS] test_bms_thermal_fault_recovers_without_e023\n");
     return true;
 }
 
@@ -575,9 +587,39 @@ static bool test_controller_temperature_inhibit_suppresses_load_lost(void)
 
     ASSERT(!alarm_active(ALARM_DC_LOAD_LOST),
            "controller thermal inhibit must suppress latched E023");
+    ASSERT(!alarm_active(ALARM_DC_OUT_NOT_ESTABLISHED),
+           "controller thermal inhibit must not trigger DC_OUT_NOT_ESTABLISHED");
     ChargeController_GetView(&cv);
     ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING,
            "recoverable temperature inhibit must keep RUNNING state");
+    ASSERT(g_sim_module.actually_on,
+           "module must stay ON during stage inhibit");
+
+    /* Temperature cools down to 50.0C (< 55.0C - 1.0C = 54.0C): auto-recovery */
+    g_sim_bms.max_cell_temp_c = 50.0f;
+    drive_ms(600U);
+
+    ChargeController_GetView(&cv);
+    ASSERT(cv.inhibit == 0U, "inhibit must clear upon cooling below hysteresis");
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "controller must remain RUNNING on recovery");
+    ASSERT(g_sim_module.actually_on, "module must stay ON throughout recovery");
+
+    /* During current ramp-up, simulate module current following the ramp */
+    for (int step = 0; step < 20; step++) {
+        drive_ms(100U);
+        ChargeController_GetView(&cv);
+        g_sim_module.current = cv.applied_current_per_module_a;
+        g_sim_bms.pack_current_a = cv.applied_current_per_module_a;
+        ASSERT(!alarm_active(ALARM_DC_LOAD_LOST),
+               "LOAD_LOST must not trigger during ramp recovery");
+        ASSERT(!alarm_active(ALARM_DC_OUT_NOT_ESTABLISHED),
+               "DC_OUT_NOT_ESTABLISHED must not trigger during ramp recovery");
+    }
+
+    ChargeController_GetView(&cv);
+    ASSERT(cv.applied_current_per_module_a > 5.0f, "current must ramp up toward target");
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "charging continues uninterrupted");
+
     printf("[PASS] test_controller_temperature_inhibit_suppresses_load_lost\n");
     return true;
 }
@@ -820,7 +862,7 @@ int main(void)
     ok &= test_cv_taper_no_false_load_lost();
     ok &= test_dc_load_lost_hot_unplug();
     ok &= test_bms_thermal_warning_suppresses_load_lost();
-    ok &= test_bms_thermal_fault_owns_stop_without_e023();
+    ok &= test_bms_thermal_fault_recovers_without_e023();
     ok &= test_controller_temperature_inhibit_suppresses_load_lost();
     ok &= test_dc_out_not_established();
     ok &= test_bms_comm_lost_mid_charge();

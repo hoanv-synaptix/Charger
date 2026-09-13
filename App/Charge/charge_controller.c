@@ -61,6 +61,7 @@
 #define CHARGE_CTRL_CURRENT_RAMP_A_PER_S             5.0f   /* per module; e.g. 0->100A -> 20s */
 #define CHARGE_CTRL_BELOW_MIN_CONFIRM_MS             500U   /* In-flight glitch debounce: confirm cell below min for 500ms before inhibit */
 #define CHARGE_CTRL_CURRENT_TARGET_EPSILON_A         0.0001f
+#define CHARGE_CTRL_BMS_TEMP_RECOVERY_CONFIRM_MS     3000U  /* BMS must report clear with fresh telemetry before resume */
 
 /* ============== Private State ============== */
 
@@ -136,6 +137,12 @@ static struct {
     /* BMS stale warning tracking */
     bool bms_stale_warned;
 
+    /* BMS over-temperature is a recoverable charging inhibit. Keep this
+     * separate from fault_flags: the BMS must still remove charge current,
+     * but a clean, fresh BMS report may resume the same charging session. */
+    bool bms_temp_inhibit_active;
+    uint32_t bms_temp_recovery_start_tick;
+
     /* Standalone voltage-completion confirmation timer */
     uint32_t standalone_vmax_reached_tick;
 
@@ -209,6 +216,7 @@ static uint32_t check_precharge_faults(void);
 static void apply_charge_targets(uint32_t now_tick);
 static void stop_charging(void);
 static float get_existing_current_baseline(uint32_t now_tick, bool *active_out);
+static bool handle_bms_temperature_inhibit(const BMS_View_t *bms, uint32_t now_tick);
 
 /* Stage evaluation */
 static ChargeStageEval_t eval_cell_stage(const ChargeCycleConfig_t *cfg, const BMS_View_t *bms, uint32_t now_tick);
@@ -256,6 +264,53 @@ static void set_fault(uint32_t flags, uint32_t now) {
 
 static void clear_fault(void) {
     g_ctrl.fault_flags = CHARGE_CTRL_FAULT_NONE;
+}
+
+static bool handle_bms_temperature_inhibit(const BMS_View_t *bms, uint32_t now_tick)
+{
+    const bool temp_alarm = (bms->alarm_flags & BMS_ALARM_TEMP_HIGH_CHG) != 0U;
+
+    if (temp_alarm) {
+        if (!g_ctrl.bms_temp_inhibit_active) {
+            LOG("CC: BMS temperature inhibit active alarm=0x%08lX\r\n",
+                (unsigned long)bms->alarm_flags);
+        }
+        g_ctrl.bms_temp_inhibit_active = true;
+        g_ctrl.bms_temp_recovery_start_tick = 0U;
+    } else if (g_ctrl.bms_temp_inhibit_active) {
+        /* Alarm clear alone is not sufficient. Require fresh battery status
+         * and cell voltage data so a stale/partial BMS snapshot cannot
+         * release the charger after a thermal trip. */
+        if (!bms->online || BMS_IsDataStale() ||
+            !BMS_HasFreshPrechargeData(now_tick)) {
+            g_ctrl.bms_temp_recovery_start_tick = 0U;
+        } else {
+            if (g_ctrl.bms_temp_recovery_start_tick == 0U) {
+                g_ctrl.bms_temp_recovery_start_tick = now_tick;
+                LOG("CC: BMS temperature recovery confirmation started\r\n");
+            } else if ((now_tick - g_ctrl.bms_temp_recovery_start_tick) >=
+                       CHARGE_CTRL_BMS_TEMP_RECOVERY_CONFIRM_MS) {
+                g_ctrl.bms_temp_inhibit_active = false;
+                g_ctrl.bms_temp_recovery_start_tick = 0U;
+                LOG("CC: BMS temperature recovered, charging resume\r\n");
+                return false;
+            }
+        }
+    }
+
+    if (g_ctrl.bms_temp_inhibit_active) {
+        /* Preserve the active target/session, but force the output current to
+         * zero through the explicit safety inhibit path. Do not call STOP or
+         * clear applied state, so recovery ramps from a known zero command. */
+        g_ctrl.inhibit = 1U;
+        g_ctrl.active_limit_source = CHARGE_LIMIT_SOURCE_TEMPERATURE;
+        g_ctrl.active_stage_band = CHARGE_STAGE_BAND_ABOVE_MAX;
+        g_ctrl.active_limit_current_c = 0.0f;
+        apply_charge_targets(now_tick);
+        return true;
+    }
+
+    return false;
 }
 
 static void transition_to(ChargeCtrlState_t new_state, uint32_t now) {
@@ -691,9 +746,12 @@ static float ramp_value(float cur, float tgt, float max_up) {
 }
 
 static void apply_charge_targets(uint32_t now_tick) {
-    bool should_run = (g_ctrl.target_current_total_a > 0.0f && !g_ctrl.inhibit);
+    if (!g_ctrl.last_running) {
+        /* If inhibited before charging starts, wait for valid charging condition */
+        if (g_ctrl.inhibit || g_ctrl.target_current_total_a <= CHARGE_CTRL_CURRENT_TARGET_EPSILON_A) {
+            return;
+        }
 
-    if (should_run && !g_ctrl.last_running) {
         /* Charge start: ramp BOTH from zero. Pre-relay-close the voltage
          * rises at the fast CHARGE_CTRL_VOLTAGE_PRECLOSE_RAMP_V_PER_S toward
          * the pack/Stage-1 voltage (BMS) or vmax (standalone/manual); the
@@ -744,108 +802,112 @@ static void apply_charge_targets(uint32_t now_tick) {
             CHG_LIB_StartAll();
         }
 
+        g_ctrl.last_running = 1;
+
         int v_int = (int)(g_ctrl.target_voltage_v * 10.0f);
         int i_int = (int)(g_ctrl.target_current_per_module_a * 10.0f);
         LOG("CC: Start V=%d.%dV I=%d.%dA/mod (%s)\r\n",
             v_int / 10, v_int % 10, i_int / 10, i_int % 10,
             resumed_start ? "resuming" : "ramping");
-    } else if (should_run) {
-        if (!g_ctrl.current_ramp_ready) {
-            /* Stay put after a failed start reset. Retry only the valid
-             * CC_START zero request; never emit a ramp command from an
-             * untrusted zero baseline. */
-            if (CHG_LIB_SetCurrentLimitAllEx(0.0f, CHG_LIB_TX_SOURCE_CC_START)) {
-                g_ctrl.current_ramp_ready = true;
-                g_ctrl.applied_current_per_module_a = 0.0f;
-                g_ctrl.ramp_tick = now_tick;
-            } else {
-                g_ctrl.last_running = should_run;
-                return;
-            }
-        }
-        /* A DROP in target (soft derating / protective clamp) takes effect
-         * immediately -- must not wait up to RAMP_STEP_MS. Hard faults use a
-         * separate path (stop_charging). */
+        return;
+    }
+
+    /* While running: handle stage inhibit (FR-CTRL-11: soft pause, I=0A, keep module alive and voltage matched) */
+    if (g_ctrl.inhibit) {
+        /* Hold / track target voltage so module stays matched to battery pack voltage */
         if (g_ctrl.target_voltage_v < g_ctrl.applied_voltage_v) {
             g_ctrl.applied_voltage_v = g_ctrl.target_voltage_v;
             CHG_LIB_SetVoltageAllEx(g_ctrl.applied_voltage_v, CHG_LIB_TX_SOURCE_CC_RAMP);
         }
-        if (g_ctrl.target_current_per_module_a > CHARGE_CTRL_CURRENT_TARGET_EPSILON_A &&
-            g_ctrl.target_current_per_module_a < g_ctrl.applied_current_per_module_a) {
-            /* Update the controller's applied state only after the driver
-             * accepted the command. A rejected command must not create a
-             * lower software baseline for the next ramp step. */
-            if (CHG_LIB_SetCurrentLimitAllEx(g_ctrl.target_current_per_module_a,
-                                             CHG_LIB_TX_SOURCE_CC_RAMP)) {
-                g_ctrl.applied_current_per_module_a = g_ctrl.target_current_per_module_a;
-            }
-        }
-
-        /* A positive total target with no valid per-module split is an
-         * internal transient (normally a module-count mismatch). Never turn
-         * it into CC_RAMP=0: an explicit inhibit/completion/stop owns zero. */
-        if (g_ctrl.target_current_per_module_a <= CHARGE_CTRL_CURRENT_TARGET_EPSILON_A) {
-            if (!g_ctrl.zero_target_hold_logged) {
-                LOG("CC: HOLD_CURRENT target_per=0 applied=%.3fA/mod modules=%u/%u\r\n",
+        /* Immediately clamp commanded current to 0A via inhibit path */
+        if (g_ctrl.applied_current_per_module_a > 0.0f) {
+            if (CHG_LIB_SetCurrentLimitAllEx(0.0f, CHG_LIB_TX_SOURCE_CC_INHIBIT)) {
+                LOG("CC: INHIBIT_CLAMP applied=0.000A/mod (was %.3fA/mod) V=%.1fV src=%u band=%u\r\n",
                     (double)g_ctrl.applied_current_per_module_a,
-                    (unsigned)g_ctrl.actual_module_count,
-                    (unsigned)g_ctrl.source_module_count);
-                g_ctrl.zero_target_hold_logged = true;
-            }
-            g_ctrl.last_running = should_run;
-            return;
-        }
-        g_ctrl.zero_target_hold_logged = false;
-
-        /* Rate-limited RISE, one step per RAMP_STEP_MS (bounds CAN traffic). */
-        if ((now_tick - g_ctrl.ramp_tick) >= CHARGE_CTRL_RAMP_STEP_MS) {
-            g_ctrl.ramp_tick = now_tick;
-
-            float step_s = (float)CHARGE_CTRL_RAMP_STEP_MS / 1000.0f;
-            /* Fast rate while arming (module unloaded), slow rate once the
-             * relay is latched and real current can flow. */
-            float v_rate = g_ctrl.relay_latched_closed
-                               ? CHARGE_CTRL_VOLTAGE_RAMP_V_PER_S
-                               : CHARGE_CTRL_VOLTAGE_PRECLOSE_RAMP_V_PER_S;
-            float new_v = ramp_value(g_ctrl.applied_voltage_v, g_ctrl.target_voltage_v,
-                                     v_rate * step_s);
-            float new_i = ramp_value(g_ctrl.applied_current_per_module_a,
-                                     g_ctrl.target_current_per_module_a,
-                                     CHARGE_CTRL_CURRENT_RAMP_A_PER_S * step_s);
-
-            if (new_v != g_ctrl.applied_voltage_v) {
-                g_ctrl.applied_voltage_v = new_v;
-                CHG_LIB_SetVoltageAllEx(new_v, CHG_LIB_TX_SOURCE_CC_RAMP);
-            }
-            if (new_i != g_ctrl.applied_current_per_module_a) {
-                if (CHG_LIB_SetCurrentLimitAllEx(new_i, CHG_LIB_TX_SOURCE_CC_RAMP)) {
-                    g_ctrl.applied_current_per_module_a = new_i;
-                }
+                    (double)g_ctrl.applied_voltage_v,
+                    (unsigned)g_ctrl.active_limit_source,
+                    (unsigned)g_ctrl.active_stage_band);
+                g_ctrl.applied_current_per_module_a = 0.0f;
             }
         }
-    } else if (!should_run && g_ctrl.last_running) {
-        LOG("CC: APPLY_STOP_ZERO state=%d inhibit=%u target_total=%.3fA target=%.3fA/mod applied=%.3fA/mod reason=%u src=%u band=%u\r\n",
-            (int)g_ctrl.state, (unsigned)g_ctrl.inhibit,
-            (double)g_ctrl.target_current_total_a,
-            (double)g_ctrl.target_current_per_module_a,
-            (double)g_ctrl.applied_current_per_module_a,
-            (unsigned)g_ctrl.stop_reason,
-            (unsigned)g_ctrl.active_limit_source, (unsigned)g_ctrl.active_stage_band);
-        CHG_LIB_StopAll();
-        g_ctrl.applied_voltage_v = 0.0f;
-        g_ctrl.applied_current_per_module_a = 0.0f;
-        g_ctrl.current_ramp_ready = false;
-        g_ctrl.last_valid_target_current_per_module_a = 0.0f;
-        g_ctrl.module_target_hold_active = false;
-        g_ctrl.zero_target_hold_logged = false;
-        if (g_ctrl.inhibit) {
-            g_ctrl.stop_reason = CHARGE_STOP_STAGE_INHIBIT;
-        }
-        LOG("CC: Stop inhibit=%u derating=%u\r\n",
-            g_ctrl.inhibit, g_ctrl.derating);
+        g_ctrl.current_ramp_ready = true;
+        g_ctrl.ramp_tick = now_tick;
+        return;
     }
 
-    g_ctrl.last_running = should_run;
+    /* Normal running with active current target */
+    if (!g_ctrl.current_ramp_ready) {
+        /* Stay put after a failed start reset. Retry only the valid
+         * CC_START zero request; never emit a ramp command from an
+         * untrusted zero baseline. */
+        if (CHG_LIB_SetCurrentLimitAllEx(0.0f, CHG_LIB_TX_SOURCE_CC_START)) {
+            g_ctrl.current_ramp_ready = true;
+            g_ctrl.applied_current_per_module_a = 0.0f;
+            g_ctrl.ramp_tick = now_tick;
+        } else {
+            return;
+        }
+    }
+
+    /* A DROP in target (soft derating / protective clamp) takes effect
+     * immediately -- must not wait up to RAMP_STEP_MS. Hard faults use a
+     * separate path (stop_charging). */
+    if (g_ctrl.target_voltage_v < g_ctrl.applied_voltage_v) {
+        g_ctrl.applied_voltage_v = g_ctrl.target_voltage_v;
+        CHG_LIB_SetVoltageAllEx(g_ctrl.applied_voltage_v, CHG_LIB_TX_SOURCE_CC_RAMP);
+    }
+    if (g_ctrl.target_current_per_module_a > CHARGE_CTRL_CURRENT_TARGET_EPSILON_A &&
+        g_ctrl.target_current_per_module_a < g_ctrl.applied_current_per_module_a) {
+        /* Update the controller's applied state only after the driver
+         * accepted the command. A rejected command must not create a
+         * lower software baseline for the next ramp step. */
+        if (CHG_LIB_SetCurrentLimitAllEx(g_ctrl.target_current_per_module_a,
+                                         CHG_LIB_TX_SOURCE_CC_RAMP)) {
+            g_ctrl.applied_current_per_module_a = g_ctrl.target_current_per_module_a;
+        }
+    }
+
+    /* A positive total target with no valid per-module split is an
+     * internal transient (normally a module-count mismatch). Never turn
+     * it into CC_RAMP=0: an explicit inhibit/completion/stop owns zero. */
+    if (g_ctrl.target_current_per_module_a <= CHARGE_CTRL_CURRENT_TARGET_EPSILON_A) {
+        if (!g_ctrl.zero_target_hold_logged) {
+            LOG("CC: HOLD_CURRENT target_per=0 applied=%.3fA/mod modules=%u/%u\r\n",
+                (double)g_ctrl.applied_current_per_module_a,
+                (unsigned)g_ctrl.actual_module_count,
+                (unsigned)g_ctrl.source_module_count);
+            g_ctrl.zero_target_hold_logged = true;
+        }
+        return;
+    }
+    g_ctrl.zero_target_hold_logged = false;
+
+    /* Rate-limited RISE, one step per RAMP_STEP_MS (bounds CAN traffic). */
+    if ((now_tick - g_ctrl.ramp_tick) >= CHARGE_CTRL_RAMP_STEP_MS) {
+        g_ctrl.ramp_tick = now_tick;
+
+        float step_s = (float)CHARGE_CTRL_RAMP_STEP_MS / 1000.0f;
+        /* Fast rate while arming (module unloaded), slow rate once the
+         * relay is latched and real current can flow. */
+        float v_rate = g_ctrl.relay_latched_closed
+                           ? CHARGE_CTRL_VOLTAGE_RAMP_V_PER_S
+                           : CHARGE_CTRL_VOLTAGE_PRECLOSE_RAMP_V_PER_S;
+        float new_v = ramp_value(g_ctrl.applied_voltage_v, g_ctrl.target_voltage_v,
+                                 v_rate * step_s);
+        float new_i = ramp_value(g_ctrl.applied_current_per_module_a,
+                                 g_ctrl.target_current_per_module_a,
+                                 CHARGE_CTRL_CURRENT_RAMP_A_PER_S * step_s);
+
+        if (new_v != g_ctrl.applied_voltage_v) {
+            g_ctrl.applied_voltage_v = new_v;
+            CHG_LIB_SetVoltageAllEx(new_v, CHG_LIB_TX_SOURCE_CC_RAMP);
+        }
+        if (new_i != g_ctrl.applied_current_per_module_a) {
+            if (CHG_LIB_SetCurrentLimitAllEx(new_i, CHG_LIB_TX_SOURCE_CC_RAMP)) {
+                g_ctrl.applied_current_per_module_a = new_i;
+            }
+        }
+    }
 }
 
 static void stop_charging(void) {
@@ -864,6 +926,8 @@ static void stop_charging(void) {
     g_ctrl.ramp_tick = 0;
     g_ctrl.last_running = 0;
     g_ctrl.last_inhibit = 0;
+    g_ctrl.bms_temp_inhibit_active = false;
+    g_ctrl.bms_temp_recovery_start_tick = 0U;
     g_ctrl.precharge_hold_active = false;
     g_ctrl.precharge_hold_start_tick = 0;
     g_ctrl.cell_candidate_start_tick = 0;
@@ -1597,19 +1661,17 @@ static void run_bms_controlled_mode(uint32_t now_tick) {
         g_ctrl.bms_stale_warned = false;
     }
 
-    /* Check critical BMS alarms. BUGFIX 2026-08-29: this mask used to omit
-     * BMS_ALARM_HIGH_PACK_VOLT and BMS_ALARM_TEMP_LOW_CHG, both of which
-     * ARE in bms_critical_alarm_mask() (Modules/bms/bms_core.c) and so
-     * already fail BMS_ShouldCloseChargeRelay() -- meaning either alarm
-     * alone would make update_relay_decision() want the relay open while
-     * the controller state stayed RUNNING (module still actively
-     * sourcing current, nothing here telling it to stop). Kept in sync
-     * with bms_critical_alarm_mask() by listing the same bits. */
-    if (bms.alarm_flags & (BMS_ALARM_OVER_CHG_CURR | BMS_ALARM_HIGH_CELL_VOLT |
-                           BMS_ALARM_TEMP_HIGH_CHG | BMS_ALARM_HIGH_PACK_VOLT |
-                           BMS_ALARM_TEMP_LOW_CHG)) {
+    /* BMS over-temperature is a recoverable safety inhibit. Other critical
+     * alarms remain latched controller faults and require an explicit reset. */
+    const BMS_AlarmFlag_t hard_bms_alarms =
+        (BMS_ALARM_OVER_CHG_CURR | BMS_ALARM_HIGH_CELL_VOLT |
+         BMS_ALARM_HIGH_PACK_VOLT | BMS_ALARM_TEMP_LOW_CHG);
+    if ((bms.alarm_flags & hard_bms_alarms) != 0U) {
         LOG("CC: BMS alarm active\r\n");
         set_fault(CHARGE_CTRL_FAULT_BMS_ALARM, now_tick);
+        return;
+    }
+    if (handle_bms_temperature_inhibit(&bms, now_tick)) {
         return;
     }
 
@@ -1838,10 +1900,19 @@ static void run_precharge_mode(uint32_t now_tick)
 
     /* A low-voltage alarm is expected while recovering an exhausted pack.
      * Critical BMS alarms become actionable only once both recovery frames
-     * are fresh; stale pre-wake flags cannot stop the wake sequence. */
-    if (BMS_HasFreshPrechargeData(now_tick) && BMS_HasCriticalAlarm()) {
+     * are fresh; stale pre-wake flags cannot stop the wake sequence. BMS
+     * over-temperature is handled as a recoverable inhibit in both normal
+     * charge and pre-charge paths. */
+    const BMS_AlarmFlag_t hard_bms_alarms =
+        (BMS_ALARM_OVER_CHG_CURR | BMS_ALARM_HIGH_CELL_VOLT |
+         BMS_ALARM_HIGH_PACK_VOLT | BMS_ALARM_TEMP_LOW_CHG);
+    if (BMS_HasFreshPrechargeData(now_tick) &&
+        ((bms.alarm_flags & hard_bms_alarms) != 0U)) {
         LOG("CC: Pre-charge critical BMS alarm\r\n");
         set_fault(CHARGE_CTRL_FAULT_BMS_ALARM, now_tick);
+        return;
+    }
+    if (handle_bms_temperature_inhibit(&bms, now_tick)) {
         return;
     }
 

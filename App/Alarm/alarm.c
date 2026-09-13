@@ -173,7 +173,12 @@ static const AlarmSpec_t k_specs[] = {
     { ALARM_BMS_LOW_CELL_VOLT,   ALARM_ACT_INFO,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms, BMS_ALARM_LOW_CELL_VOLT,   "BMS low cell voltage" },
     { ALARM_BMS_HIGH_PACK_VOLT,  ALARM_ACT_STOP,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms, BMS_ALARM_HIGH_PACK_VOLT,  "BMS high pack voltage" },
     { ALARM_BMS_HIGH_CELL_VOLT,  ALARM_ACT_STOP,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms, BMS_ALARM_HIGH_CELL_VOLT,  "BMS high cell voltage" },
-    { ALARM_BMS_TEMP_HIGH_CHG,   ALARM_ACT_STOP,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms, BMS_ALARM_TEMP_HIGH_CHG,   "BMS charge over-temp" },
+    /* The charge controller owns the safe response for BMS charge
+     * over-temperature: it clamps current through CC_INHIBIT and can resume
+     * after fresh, stable BMS recovery. Do not dispatch a second generic
+     * ChargeController_Stop() here, because that would erase the session and
+     * make automatic thermal recovery impossible. */
+    { ALARM_BMS_TEMP_HIGH_CHG,   ALARM_ACT_INFO,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms, BMS_ALARM_TEMP_HIGH_CHG,   "BMS charge over-temp" },
     { ALARM_BMS_TEMP_HIGH_DCHG,  ALARM_ACT_INFO,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms, BMS_ALARM_TEMP_HIGH_DCHG,  "BMS discharge over-temp" },
     { ALARM_BMS_TEMP_LOW_CHG,    ALARM_ACT_STOP,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms, BMS_ALARM_TEMP_LOW_CHG,    "BMS charge under-temp" },
     { ALARM_BMS_TEMP_LOW_DCHG,   ALARM_ACT_INFO,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms, BMS_ALARM_TEMP_LOW_DCHG,   "BMS discharge under-temp" },
@@ -314,6 +319,7 @@ static bool ev_dc_load_lost(const AlarmInputs_t *in, uint32_t param) {
 
 static bool ev_dc_out_not_established(const AlarmInputs_t *in, uint32_t param) {
     (void)param;
+    if (in->cc.inhibit != 0U) return false;
     if (in->cc.state != CHARGE_CTRL_STATE_RUNNING) return false;
     if (!in->cc.relay_should_close) return false;
     if (g_alarm.load_established) return false;
@@ -545,6 +551,9 @@ void Alarm_Process(uint32_t now_tick) {
     }
     if (!in.cc.relay_should_close) {
         g_alarm.relay_close_since = 0U;
+    } else if (in.cc.inhibit != 0U && !g_alarm.load_established) {
+        /* Hold DC_OUT_CONFIRM window open if inhibited before load could establish */
+        g_alarm.relay_close_since = (now_tick == 0U) ? 1U : now_tick;
     }
     g_alarm.prev_relay_close = in.cc.relay_should_close;
 

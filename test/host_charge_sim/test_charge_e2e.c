@@ -1344,6 +1344,49 @@ static bool test_bms_critical_alarm(void)
     return true;
 }
 
+static bool test_bms_overtemperature_inhibit_recovers(void)
+{
+    printf("Running test_bms_overtemperature_inhibit_recovers...\n");
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_TONHE, NULL), "setup failed");
+    set_healthy_bms(400.0f, 50);
+    ASSERT(warmup_and_start(1500U, 4000U), "module never reached RUNNING");
+
+    /* A critical BMS charge-temperature alarm must pause output without
+     * destroying the active charging session. */
+    g_sim_bms.temp_cell_high_chg = 2U;
+    drive_ms(600U);
+
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING,
+           "BMS overtemperature must not latch controller FAULT");
+    ASSERT(cv.inhibit != 0U, "BMS overtemperature must inhibit charging");
+    ASSERT(cv.applied_current_per_module_a == 0.0f,
+           "BMS overtemperature must clamp current to zero");
+    ASSERT(g_sim_module.actually_on,
+           "BMS overtemperature must preserve module session without STOP");
+
+    /* BMS reports the alarm cleared. Require the recovery confirmation window
+     * before resuming, then verify current ramps from zero. */
+    g_sim_bms.temp_cell_high_chg = 0U;
+    drive_ms(3500U);
+
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING,
+           "controller must remain RUNNING after BMS thermal recovery");
+    ASSERT(cv.inhibit == 0U, "BMS thermal inhibit must clear after confirmation");
+    ASSERT(g_sim_module.actually_on,
+           "module session must remain active after BMS thermal recovery");
+
+    drive_ms(2000U);
+    ChargeController_GetView(&cv);
+    ASSERT(cv.applied_current_per_module_a > 5.0f,
+           "current must ramp from zero after BMS thermal recovery");
+
+    printf("[PASS] test_bms_overtemperature_inhibit_recovers\n");
+    return true;
+}
+
 static bool test_bms_stale_but_online(void)
 {
     printf("Running test_bms_stale_but_online...\n");
@@ -1949,7 +1992,8 @@ static bool test_precharge_bms_critical_fault_injection(void)
     ASSERT(ChargeController_StartPrecharge(CHARGE_CTRL_OWNER_DWIN, mock_tick), "start failed");
     drive_ms(4500U); /* reach 35V */
 
-    /* BMS wakes up with a CRITICAL over-temperature alarm */
+    /* BMS wakes up with a CRITICAL over-temperature alarm. This alarm is a
+     * recoverable charging inhibit, including during pre-charge. */
     set_healthy_bms(35.0f, 5);
     g_sim_bms.temp_cell_high_chg = 2U; /* Critical alarm level >= 2 */
     g_sim_bms.transmitting = true;
@@ -1957,15 +2001,19 @@ static bool test_precharge_bms_critical_fault_injection(void)
 
     ChargeCtrlView_t cv;
     ChargeController_GetView(&cv);
-    ASSERT(cv.state == CHARGE_CTRL_STATE_FAULT, "Critical BMS alarm must trip FAULT immediately");
-    ASSERT((cv.fault_flags & CHARGE_CTRL_FAULT_BMS_ALARM) != 0, "fault must be BMS_ALARM");
+    ASSERT(cv.state == CHARGE_CTRL_STATE_PRECHARGE,
+           "BMS overtemperature must not latch pre-charge controller FAULT");
+    ASSERT(cv.inhibit != 0U, "BMS overtemperature must inhibit pre-charge");
+    ASSERT(cv.applied_current_per_module_a == 0.0f,
+           "BMS overtemperature must clamp pre-charge current to zero");
 
-    /* A critical BMS fault cannot be reset after the BMS goes stale: without
-     * fresh BATT_ST1 + CELL_VOLT, the controller cannot prove the cause gone. */
-    g_sim_bms.transmitting = false;
-    drive_ms(BMS_OFFLINE_TIMEOUT_MS + 500U);
-    ASSERT(!ChargeController_ResetFaultIfSafe(mock_tick),
-           "stale/offline BMS must reject reset of a critical BMS fault");
+    g_sim_bms.temp_cell_high_chg = 0U;
+    drive_ms(3500U);
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_PRECHARGE,
+           "pre-charge must remain active after BMS thermal recovery");
+    ASSERT(cv.inhibit == 0U,
+           "pre-charge BMS thermal inhibit must clear after confirmation");
 
     ChargeController_Stop(mock_tick);
     drive_ms(100U);
@@ -2061,18 +2109,23 @@ static bool test_temp_stage_asymmetric_hysteresis(void)
     ASSERT(cv.active_stage_band == CHARGE_STAGE_BAND_3_4, "cooling to exactly 47C (= lower_thresh - delta) must recover to band 3_4");
     ASSERT(fabsf(cv.target_current_total_a - 100.0f) < 1.0f, "recovered band 3_4 should restore 100A");
 
-    /* 5. Jump to 60.0C (threshold 5: ABOVE_MAX): must inhibit immediately */
+    /* 5. Jump to 60.0C (threshold 5: ABOVE_MAX): must inhibit immediately without stopping module */
     g_sim_bms.max_cell_temp_c = 60.0f;
     drive_ms(600U);
     ChargeController_GetView(&cv);
     ASSERT(cv.active_stage_band == CHARGE_STAGE_BAND_ABOVE_MAX, "rising to 60C must trip immediately to ABOVE_MAX");
     ASSERT(cv.inhibit == 1, "ABOVE_MAX must set inhibit");
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "controller must stay RUNNING during inhibit");
+    ASSERT(cv.applied_current_per_module_a == 0.0f, "applied current must be clamped to 0A on inhibit");
+    ASSERT(cv.applied_voltage_v > 0.0f, "module target voltage must NOT be wiped to 0V on inhibit");
+    ASSERT(g_sim_module.actually_on, "module must stay ON (no STOP frame) during stage inhibit");
 
     /* 6. Cool down to 58.0C: 58.0 > 60.0 - 3.0 (57.0C) -> still ABOVE_MAX */
     g_sim_bms.max_cell_temp_c = 58.0f;
     drive_ms(600U);
     ChargeController_GetView(&cv);
     ASSERT(cv.active_stage_band == CHARGE_STAGE_BAND_ABOVE_MAX, "cooling to 58C must stay in ABOVE_MAX (delta not met)");
+    ASSERT(g_sim_module.actually_on, "module must remain ON while still inhibited");
 
     /* 7. Cool down to exactly 57.0C (lower_thresh - delta): must recover to band 4_5 */
     g_sim_bms.max_cell_temp_c = 57.0f;
@@ -2081,6 +2134,14 @@ static bool test_temp_stage_asymmetric_hysteresis(void)
     ASSERT(cv.active_stage_band == CHARGE_STAGE_BAND_4_5, "cooling to exactly 57C must recover from ABOVE_MAX to band 4_5");
     ASSERT(cv.inhibit == 0, "inhibit must clear on recovery");
     ASSERT(fabsf(cv.target_current_total_a - 30.0f) < 1.0f, "recovered band 4_5 current target restored");
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "controller remains RUNNING on recovery");
+    ASSERT(g_sim_module.actually_on, "module must stay continuously ON throughout recovery");
+
+    /* 8. Drive further: verify smooth current ramp recovery from 0A towards 30A */
+    drive_ms(2000U);
+    ChargeController_GetView(&cv);
+    ASSERT(cv.applied_current_per_module_a > 5.0f, "current must ramp up smoothly after recovery");
+    ASSERT(g_sim_module.actually_on, "module must remain ON as current ramps");
 
     printf("[PASS] test_temp_stage_asymmetric_hysteresis\n");
     return true;
@@ -2248,6 +2309,7 @@ int main(void)
     pass &= test_bms_offline();
     pass &= test_bms_offline_then_recovers();
     pass &= test_bms_critical_alarm();
+    pass &= test_bms_overtemperature_inhibit_recovers();
     pass &= test_bms_high_pack_volt_alarm_stops_module();
     pass &= test_bms_stale_but_online();
 
