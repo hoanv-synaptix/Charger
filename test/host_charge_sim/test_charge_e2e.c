@@ -1162,6 +1162,17 @@ static bool test_bms_offline(void)
     ChargeController_GetView(&cv);
     ASSERT(cv.state == CHARGE_CTRL_STATE_FAULT, "controller should FAULT on BMS offline");
     ASSERT(cv.stop_reason == CHARGE_STOP_BMS_OFFLINE, "stop reason should be BMS_OFFLINE");
+    ASSERT(!ChargeController_ResetFaultIfSafe(mock_tick),
+           "Home/normal-charge reset must reject an offline BMS fault");
+
+    g_sim_bms.transmitting = true;
+    drive_ms(200U);
+    ASSERT(ChargeController_ResetFaultIfSafe(mock_tick),
+           "BMS offline fault should reset after the link recovers");
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_IDLE &&
+           cv.fault_flags == CHARGE_CTRL_FAULT_NONE,
+           "recovered BMS reset must return to IDLE without fault");
 
     printf("[PASS] test_bms_offline\n");
     return true;
@@ -1695,6 +1706,17 @@ static bool test_precharge_fault_reset_requires_safe_conditions(void)
     ASSERT(!ChargeController_ResetFaultIfSafe(mock_tick),
            "reset must be rejected while the module condition persists");
 
+    /* RESET is intentionally idempotent while the root cause remains. A
+     * repeated press must not clear the controller or start any output. */
+    ChargeCtrlState_t state_after_failed_reset = cv.state;
+    uint32_t faults_after_failed_reset = cv.fault_flags;
+    ASSERT(!ChargeController_ResetFaultIfSafe(mock_tick),
+           "repeated reset must remain rejected while the fault persists");
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == state_after_failed_reset &&
+           cv.fault_flags == faults_after_failed_reset,
+           "repeated reset must not change state or fault flags");
+
     /* Let the module recover while the controller remains faulted. Reset is
      * then allowed without using ChargeController_Stop() as an unconditional
      * fault bypass. */
@@ -1705,6 +1727,8 @@ static bool test_precharge_fault_reset_requires_safe_conditions(void)
     ChargeController_GetView(&cv);
     ASSERT(cv.state == CHARGE_CTRL_STATE_IDLE, "safe reset must return to IDLE");
     ASSERT(cv.fault_flags == CHARGE_CTRL_FAULT_NONE, "safe reset must clear controller fault");
+    ASSERT(!ChargeController_ResetFaultIfSafe(mock_tick),
+           "reset after recovery must be harmless while already IDLE");
 
     /* Emergency stop is intentionally not an ordinary pre-charge retry. */
     ChargeController_EmergencyStop(mock_tick);
@@ -1828,6 +1852,13 @@ static bool test_precharge_bms_critical_fault_injection(void)
     ChargeController_GetView(&cv);
     ASSERT(cv.state == CHARGE_CTRL_STATE_FAULT, "Critical BMS alarm must trip FAULT immediately");
     ASSERT((cv.fault_flags & CHARGE_CTRL_FAULT_BMS_ALARM) != 0, "fault must be BMS_ALARM");
+
+    /* A critical BMS fault cannot be reset after the BMS goes stale: without
+     * fresh BATT_ST1 + CELL_VOLT, the controller cannot prove the cause gone. */
+    g_sim_bms.transmitting = false;
+    drive_ms(BMS_OFFLINE_TIMEOUT_MS + 500U);
+    ASSERT(!ChargeController_ResetFaultIfSafe(mock_tick),
+           "stale/offline BMS must reject reset of a critical BMS fault");
 
     ChargeController_Stop(mock_tick);
     drive_ms(100U);

@@ -19,7 +19,7 @@
 // --- 3. DASHBOARD - BATTERY (0x1010) ---
 // All three battery values are Text Displays, 8 bytes / 4 VP each.
 #define VP_BAT_PACK_VOLT       0x1010  // Text: pack voltage value, e.g. "52.8"
-#define VP_BAT_CELL_VOLT       0x1014  // Text: max cell voltage in mV, e.g. "3315"
+#define VP_BAT_CELL_VOLT       0x1014  // Text: max cell voltage in volts, 3 decimals, e.g. "3.315"
 #define VP_BAT_CHARGED_AH      0x1018  // Text: remaining capacity, e.g. "82.0"
 
 // --- 4. DASHBOARD - INPUT AC (0x1020) ---

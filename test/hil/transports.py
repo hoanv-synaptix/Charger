@@ -158,9 +158,9 @@ class DryRunBackend:
             elif self.bms_soc <= 30:
                 soc_color = 0xFD20
             elif self.bms_soc <= 60:
-                soc_color = 0xFFE0
+                soc_color = 0xD520
             else:
-                soc_color = 0x07E0
+                soc_color = 0x2CEA
         snap = Snapshot(
             controller_state=("FAULT" if self.fault else
                               ("COMPLETE" if self.dwin_status == 3 else

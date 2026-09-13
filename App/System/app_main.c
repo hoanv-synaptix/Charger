@@ -48,6 +48,8 @@
 #define DWIN_BOOT_DELAY_MS           3000U   /* Wait for DWIN panel to finish boot */
 #define DWIN_HEARTBEAT_INTERVAL_MS   5000U   /* Periodic force-full-refresh interval */
 #define DWIN_UPDATE_INTERVAL_MS      50U     /* Field scatter cadence (50ms per group) */
+#define DWIN_RESET_INTERVAL_MS       (12U * 60U * 60U * 1000U)
+#define DWIN_REBOOT_WAIT_MS          3000U   /* Wait for panel after SW reset */
 
 #include <string.h>
 #include <math.h>
@@ -59,6 +61,7 @@ static uint32_t last_process_tick   = 0;
 static uint32_t last_led_tick       = 0;
 static uint32_t last_dwin_tick      = 0;
 static uint32_t last_dwin_full_tick = 0;
+static uint32_t last_dwin_reset_tick = 0;
 static uint32_t last_main_log       = 0;
 static uint32_t last_can_diag_log   = 0;
 /* Button debounce -- single toggle button (BUTTON_1/PA15), see App_Loop()
@@ -146,6 +149,19 @@ static bool     dwin_precharge_exit_pending = false;
 static bool     dwin_precharge_seen_active = false;
 static bool     dwin_precharge_error_hold = false;
 static AlarmCode_t dwin_precharge_error_code = ALARM_NONE;
+
+typedef enum {
+    DWIN_RECOVERY_RUNNING = 0,
+    DWIN_RECOVERY_WAIT_BOOT,
+    DWIN_RECOVERY_RESTORE_PENDING,
+} DwinRecoveryState_e;
+
+static DwinRecoveryState_e dwin_recovery_state = DWIN_RECOVERY_RUNNING;
+static uint32_t dwin_recovery_start_tick = 0U;
+static uint32_t dwin_reset_requested_count = 0U;
+static uint32_t dwin_reset_completed_count = 0U;
+static uint32_t dwin_replay_count = 0U;
+static uint32_t dwin_rx_suppressed_bytes = 0U;
 static double   s_total_charged_ah;
 static double   s_total_energy_kwh;
 static uint32_t s_last_energy_tick;
@@ -230,6 +246,49 @@ static void dwin_end_precharge_session(void)
     dwin_precharge_exit_pending = false;
     dwin_precharge_seen_active = false;
     dwin_login_clear();
+}
+
+static DwinPageId_e dwin_page_after_panel_reset(void)
+{
+    return dwin_precharge_session ? DWIN_PAGE_PRECHARGE : DWIN_PAGE_DASH;
+}
+
+static void dwin_send_identity_and_page(uint32_t now)
+{
+    const char *hw_str = ChargeCycleConfig_GetHwRev();
+
+    if (strncmp(hw_str, "HW ", 3) == 0) {
+        hw_str += 3;
+    } else if (strncmp(hw_str, "HW", 2) == 0) {
+        hw_str += 2;
+    }
+
+    DWIN_SendSettingStrings(hw_str, FW_VERSION_STRING,
+                            ChargeCycleConfig_GetDeviceId());
+    DWIN_SetPage(dwin_page_after_panel_reset());
+    DWIN_ForceFullRefresh();
+    last_dwin_full_tick = now;
+}
+
+static void dwin_service_recovery(uint32_t now)
+{
+    if (dwin_recovery_state == DWIN_RECOVERY_RUNNING) {
+        if (dwin_boot_sent &&
+            (uint32_t)(now - last_dwin_reset_tick) >= DWIN_RESET_INTERVAL_MS) {
+            /* This is a panel-only reset. The MCU-owned controller, relay,
+             * CAN state and charger operation are intentionally untouched. */
+            DWIN_InvalidateSyncState();
+            DWIN_SendSoftwareReset();
+            dwin_recovery_start_tick = now;
+            dwin_recovery_state = DWIN_RECOVERY_WAIT_BOOT;
+            dwin_reset_requested_count++;
+            LOG("DWIN: software reset requested count=%lu\r\n",
+                (unsigned long)dwin_reset_requested_count);
+        }
+    } else if (dwin_recovery_state == DWIN_RECOVERY_WAIT_BOOT &&
+               (uint32_t)(now - dwin_recovery_start_tick) >= DWIN_REBOOT_WAIT_MS) {
+        dwin_recovery_state = DWIN_RECOVERY_RESTORE_PENDING;
+    }
 }
 
 static void dwin_set_soc_unavailable(char *text, size_t text_size)
@@ -401,7 +460,7 @@ static uint16_t dwin_current_status(void)
 }
 
 /* Shared by the physical BUTTON_1/PA15 handler and the DWIN screen button:
- * one press starts / stops / acknowledges, decided by the state the button
+ * one press starts / stops / resets-if-safe, decided by the state the button
  * is currently showing -- NOT by which surface the press came from. */
 static void app_action_button(uint16_t dwin_status, uint32_t now)
 {
@@ -416,9 +475,12 @@ static void app_action_button(uint16_t dwin_status, uint32_t now)
             ChargeController_Stop(now);
             break;
         case DWIN_STATUS_ERROR:
-            LOG("App: button (ERROR) -> clear fault\r\n");
+            LOG("App: button (ERROR) -> reset if safe\r\n");
             Alarm_Acknowledge(now);      /* clear latched alarms whose cause is gone */
-            ChargeController_Stop(now);   /* from FAULT: clears fault -> IDLE */
+            /* The controller, not the HMI, decides whether the root cause and
+             * output path are safe enough to clear. A failed reset is a
+             * deliberate no-op and leaves ERROR visible. */
+            (void)ChargeController_ResetFaultIfSafe(now);
             break;
         case DWIN_STATUS_COMPLETE:
             LOG("App: button (COMPLETE) -> acknowledge, back to READY\r\n");
@@ -526,6 +588,11 @@ void App_Loop(void)
 {
     uint32_t now = BSP_GetTick();
 
+    /* Schedule/recover the DWIN panel independently of the MCU and charging
+     * state. This state machine is non-blocking so the MCU watchdog and all
+     * safety/control processing continue during the panel reboot window. */
+    dwin_service_recovery(now);
+
     if (now - last_main_log >= 2000) {
         last_main_log = now;
         LOG("[MAIN_LOOP] running tick=%lu\r\n", now);
@@ -612,12 +679,20 @@ void App_Loop(void)
     
     /* DWIN HMI: drain RX + parse; pump any queued bench-debug frame first
      * (no-op unless CHG_DEBUG_DWIN). */
-    AppDwinDebug_Pump();
+    if (dwin_recovery_state == DWIN_RECOVERY_RUNNING) {
+        AppDwinDebug_Pump();
+    }
     uint8_t rs485_buf[64];
     uint16_t rs485_len = BSP_RS485_Read(rs485_buf, sizeof(rs485_buf));
     if (rs485_len > 0) {
-        DWIN_ParseRX(rs485_buf, rs485_len);
-        AppDwinDebug_CaptureRx(rs485_buf, rs485_len);
+        if (dwin_recovery_state != DWIN_RECOVERY_RUNNING) {
+            /* Ignore stale/boot bytes so a panel restart cannot replay a
+             * touch command as an unintended charger action. */
+            dwin_rx_suppressed_bytes += rs485_len;
+        } else {
+            DWIN_ParseRX(rs485_buf, rs485_len);
+            AppDwinDebug_CaptureRx(rs485_buf, rs485_len);
+        }
     }
 
     /* (2) Button handling with debounce -- single toggle button (BUTTON_1/
@@ -676,6 +751,20 @@ void App_Loop(void)
      * loop. */
     if ((now - last_dwin_tick) >= DWIN_UPDATE_INTERVAL_MS) {
         last_dwin_tick = now;
+
+        if (dwin_recovery_state != DWIN_RECOVERY_WAIT_BOOT) {
+            if (dwin_recovery_state == DWIN_RECOVERY_RESTORE_PENDING) {
+                dwin_send_identity_and_page(now);
+                dwin_recovery_state = DWIN_RECOVERY_RUNNING;
+                last_dwin_reset_tick = now;
+                dwin_reset_completed_count++;
+                dwin_replay_count++;
+                LOG("DWIN: software reset restored page=%u complete=%lu replay=%lu suppressed=%lu\r\n",
+                    (unsigned)dwin_page_after_panel_reset(),
+                    (unsigned long)dwin_reset_completed_count,
+                    (unsigned long)dwin_replay_count,
+                    (unsigned long)dwin_rx_suppressed_bytes);
+            }
 
         ChargeCtrlView_t cc_view;
         ChargeController_GetView(&cc_view);
@@ -738,21 +827,12 @@ void App_Loop(void)
          * dashboard page (DWIN_SetPage self-suppresses, so this never fights
          * the operator navigating to Setting/Alarm via the footer). */
         if (!dwin_boot_sent && now > DWIN_BOOT_DELAY_MS) {
-            const char *hw_str = ChargeCycleConfig_GetHwRev();
-            if (strncmp(hw_str, "HW ", 3) == 0) {
-                hw_str += 3;
-            } else if (strncmp(hw_str, "HW", 2) == 0) {
-                hw_str += 2;
-            }
-            DWIN_SendSettingStrings(hw_str, FW_VERSION_STRING,
-                                    ChargeCycleConfig_GetDeviceId());
-            DWIN_SetPage(DWIN_PAGE_DASH);
+            dwin_send_identity_and_page(now);
             /* Panel just got its page + strings -- push every data field to
              * it now (the first scatter cycle ran at t~=400ms, before the
              * panel was listening). */
-            DWIN_ForceFullRefresh();
-            last_dwin_full_tick = now;
             dwin_boot_sent = true;
+            last_dwin_reset_tick = now;
             /* Fires exactly once -- safe outside the 50ms LOG-blocking budget. */
             LOG("DWIN: HMI init sent (HW/FW/ID strings + dashboard page).\r\n");
         }
@@ -818,12 +898,13 @@ void App_Loop(void)
                 !dwin_format_fixed(dd.bat_pack_volt_text, sizeof(dd.bat_pack_volt_text), bms.batt_voltage, 1U, ""))
                 dwin_set_unavailable(dd.bat_pack_volt_text, sizeof(dd.bat_pack_volt_text));
 
-            /* DWIN owns this field as text. Keep the BMS millivolt value
-             * intact instead of converting to volts and rounding to two
-             * decimal places (3315 mV must remain visible as "3315"). */
+            /* Home displays the max cell voltage in volts with millivolt
+             * precision. Keep the conversion integer-based so 3315 mV is
+             * transmitted exactly as "3.315" without float printf support. */
             if (bms.max_cell_volt == 0U ||
                 snprintf(dd.bat_cell_volt_text, sizeof(dd.bat_cell_volt_text),
-                         "%04u", (unsigned)bms.max_cell_volt) < 0)
+                         "%u.%03u", (unsigned)(bms.max_cell_volt / 1000U),
+                         (unsigned)(bms.max_cell_volt % 1000U)) < 0)
                 dwin_set_unavailable(dd.bat_cell_volt_text, sizeof(dd.bat_cell_volt_text));
 
             if (!dwin_format_fixed(dd.bat_cap_text, sizeof(dd.bat_cap_text),
@@ -1025,6 +1106,7 @@ void App_Loop(void)
 
         DWIN_UpdateData(&dd);
     }
+        }
 
     /* (5) Refresh IWDG — main loop only, never in ISR (~1s timeout) */
     MX_IWDG_Refresh();

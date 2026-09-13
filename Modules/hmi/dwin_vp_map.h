@@ -19,6 +19,7 @@
 
 /* --- System VPs (guide sec 5.1) --- */
 #define VP_SYS_PIC_SET       0x0084U  /* page switch: write word 0x5A01 then the page id */
+#define VP_SYS_RESET         0x0004U  /* T5L software reset: write 0x55AA, 0x5AA5 */
 #define VP_SYS_RTC_SET       0x009CU  /* RTC set (needs a panel RTC IC) -- see DWIN_SetRTC() */
 #define VP_SYS_BUZZER        0x00A0U  /* Music_Play_Set: low byte = beep duration x 8 ms */
 
@@ -34,7 +35,7 @@
 
 /* --- Dashboard: Battery (0x1010) --- */
 #define VP_BAT_PACK_VOLT_TEXT  0x1010U  /* Text GBK/ASCII, 8 bytes, 0x1010..1013 */
-#define VP_BAT_CELL_VOLT_TEXT  0x1014U  /* Text GBK/ASCII, 8 bytes: max cell voltage in 4-digit mV (e.g. "3315") */
+#define VP_BAT_CELL_VOLT_TEXT  0x1014U  /* Text GBK/ASCII, 8 bytes: max cell voltage in volts with 3 decimals (e.g. "3.315") */
 #define VP_BAT_CHARGED_AH_TEXT 0x1018U  /* Text GBK/ASCII, 8 bytes, 0x1018..101B */
 
 /* --- Dashboard: Input AC (0x1020) --- */
@@ -64,8 +65,8 @@
 #define DWIN_SOC_COLOR_RGB565_UNAVAILABLE 0x8410U /* neutral gray */
 #define DWIN_SOC_COLOR_RGB565_CRITICAL    0xF800U /* red */
 #define DWIN_SOC_COLOR_RGB565_LOW         0xFD20U /* orange */
-#define DWIN_SOC_COLOR_RGB565_MEDIUM      0xFFE0U /* yellow */
-#define DWIN_SOC_COLOR_RGB565_NORMAL      0x07E0U /* green */
+#define DWIN_SOC_COLOR_RGB565_MEDIUM      0xD520U /* muted amber */
+#define DWIN_SOC_COLOR_RGB565_NORMAL      0x2CEAU /* muted green */
 
 typedef enum {
     DWIN_SOC_COLOR_UNAVAILABLE = 0,

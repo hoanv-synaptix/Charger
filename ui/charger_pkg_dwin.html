@@ -1209,7 +1209,9 @@
         } else if (prechargeState === "CHARGING") {
             applyPrechargeState("READY");
         } else if (prechargeState === "ERROR") {
-            applyPrechargeState("READY");
+            /* RESET is safe and idempotent: the firmware keeps ERROR until
+             * the root cause has cleared; this simulator must not fake READY. */
+            applyPrechargeState("ERROR");
         }
     }
 </script>

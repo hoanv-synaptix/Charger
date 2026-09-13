@@ -22,6 +22,13 @@ extern void UART_Transmit_To_DWIN(uint8_t *data, uint16_t len);
  * payload longer than this is noise. */
 #define DWIN_RX_MAX_LEN    32U
 
+/* MCU-side synchronization state. These caches must be invalidated when the
+ * panel restarts independently of the MCU. */
+static int32_t s_last_page = -1;
+static uint8_t s_update_step = 0U;
+static DWIN_SystemData_t s_prev_data;
+static bool s_have_prev_data = false;
+
 /* ===================== TX: low-level framing ===================== */
 
 static void dwin_write_frame(uint16_t vp, const uint8_t *payload, uint8_t payload_len)
@@ -88,17 +95,24 @@ void DWIN_Init(void)
 
 void DWIN_SetPage(DwinPageId_e page)
 {
-    static int32_t last_page = -1;
     uint16_t w[2];
 
-    if ((int32_t)page == last_page) {
+    if ((int32_t)page == s_last_page) {
         return;
     }
-    last_page = (int32_t)page;
+    s_last_page = (int32_t)page;
 
     w[0] = 0x5A01U;              /* D3=0x5A arm, D2=0x01 "page switch" */
     w[1] = (uint16_t)page;
     DWIN_SendWords(VP_SYS_PIC_SET, w, 2);
+}
+
+void DWIN_SendSoftwareReset(void)
+{
+    /* T5L DGUS-II system variable 0x0004. The documented payload is
+     * 0x55AA followed by 0x5AA5; the project header remains A5 5A. */
+    const uint16_t reset_words[2] = { 0x55AAU, 0x5AA5U };
+    DWIN_SendWords(VP_SYS_RESET, reset_words, 2U);
 }
 
 void DWIN_SendSettingStrings(const char *hw_ver, const char *fw_ver,
@@ -251,81 +265,89 @@ void DWIN_ForceFullRefresh(void)
     s_soc_color_valid = false;
 }
 
+void DWIN_InvalidateSyncState(void)
+{
+    /* A panel reboot loses its page/VP RAM state, while the MCU-side caches
+     * still contain the pre-reboot values. Make the next restore replay all
+     * state and force the page command even if the page number is unchanged. */
+    s_last_page = -1;
+    s_update_step = 0U;
+    s_have_prev_data = false;
+    DWIN_ForceFullRefresh();
+}
+
 void DWIN_UpdateData(const DWIN_SystemData_t *d)
 {
-    static uint8_t step = 0;
-    static DWIN_SystemData_t prev;
-    static bool have_prev = false;
     bool first;
 
     if (d == NULL) {
         return;
     }
 
-    first = !have_prev || (s_force_steps > 0U);
+    first = !s_have_prev_data || (s_force_steps > 0U);
     if (s_force_steps > 0U) {
         s_force_steps--;
     }
 
-    switch (step) {
+    switch (s_update_step) {
     case STEP_DC:
-        if (first || strncmp(prev.dc_voltage_text, d->dc_voltage_text, sizeof(d->dc_voltage_text)) != 0)
+        if (first || strncmp(s_prev_data.dc_voltage_text, d->dc_voltage_text, sizeof(d->dc_voltage_text)) != 0)
             DWIN_SendString(VP_DC_VOLTAGE, d->dc_voltage_text, DWIN_TEXT_8_BYTES_WORDS);
-        if (first || strncmp(prev.dc_current_text, d->dc_current_text, sizeof(d->dc_current_text)) != 0)
+        if (first || strncmp(s_prev_data.dc_current_text, d->dc_current_text, sizeof(d->dc_current_text)) != 0)
             DWIN_SendString(VP_DC_CURRENT, d->dc_current_text, DWIN_TEXT_8_BYTES_WORDS);
-        if (first || strncmp(prev.dc_power_text, d->dc_power_text, sizeof(d->dc_power_text)) != 0)
+        if (first || strncmp(s_prev_data.dc_power_text, d->dc_power_text, sizeof(d->dc_power_text)) != 0)
             DWIN_SendString(VP_DC_POWER, d->dc_power_text, DWIN_TEXT_8_BYTES_WORDS);
         break;
 
     case STEP_BATT_V:
-        if (first || strncmp(prev.bat_pack_volt_text, d->bat_pack_volt_text, sizeof(d->bat_pack_volt_text)) != 0) {
+        if (first || strncmp(s_prev_data.bat_pack_volt_text, d->bat_pack_volt_text, sizeof(d->bat_pack_volt_text)) != 0) {
             DWIN_SendString(VP_BAT_PACK_VOLT_TEXT, d->bat_pack_volt_text, DWIN_TEXT_8_BYTES_WORDS);
         }
-        if (first || strncmp(prev.bat_cell_volt_text, d->bat_cell_volt_text, sizeof(d->bat_cell_volt_text)) != 0) {
+        if (first || strncmp(s_prev_data.bat_cell_volt_text, d->bat_cell_volt_text, sizeof(d->bat_cell_volt_text)) != 0) {
             DWIN_SendString(VP_BAT_CELL_VOLT_TEXT, d->bat_cell_volt_text, DWIN_TEXT_8_BYTES_WORDS);
         }
-        if (first || strncmp(prev.bat_cap_text, d->bat_cap_text, sizeof(d->bat_cap_text)) != 0)
+        if (first || strncmp(s_prev_data.bat_cap_text, d->bat_cap_text, sizeof(d->bat_cap_text)) != 0)
             DWIN_SendString(VP_BAT_CHARGED_AH_TEXT, d->bat_cap_text, DWIN_TEXT_8_BYTES_WORDS);
         break;
 
     case STEP_AC:
-        if (first || strncmp(prev.ac_l1_text, d->ac_l1_text, sizeof(d->ac_l1_text)) != 0)
+        if (first || strncmp(s_prev_data.ac_l1_text, d->ac_l1_text, sizeof(d->ac_l1_text)) != 0)
             DWIN_SendString(VP_AC_PHASE_L1, d->ac_l1_text, DWIN_TEXT_8_BYTES_WORDS);
-        if (first || strncmp(prev.ac_l2_text, d->ac_l2_text, sizeof(d->ac_l2_text)) != 0)
+        if (first || strncmp(s_prev_data.ac_l2_text, d->ac_l2_text, sizeof(d->ac_l2_text)) != 0)
             DWIN_SendString(VP_AC_PHASE_L2, d->ac_l2_text, DWIN_TEXT_8_BYTES_WORDS);
-        if (first || strncmp(prev.ac_l3_text, d->ac_l3_text, sizeof(d->ac_l3_text)) != 0)
+        if (first || strncmp(s_prev_data.ac_l3_text, d->ac_l3_text, sizeof(d->ac_l3_text)) != 0)
             DWIN_SendString(VP_AC_PHASE_L3, d->ac_l3_text, DWIN_TEXT_8_BYTES_WORDS);
         break;
 
     case STEP_TEMP:
-        if (first || strncmp(prev.temp_battery_text, d->temp_battery_text, sizeof(d->temp_battery_text)) != 0) {
+        if (first || strncmp(s_prev_data.temp_battery_text, d->temp_battery_text, sizeof(d->temp_battery_text)) != 0) {
             DWIN_SendString(VP_TEMP_BATTERY_TEXT, d->temp_battery_text, DWIN_TEXT_8_BYTES_WORDS);
         }
-        if (first || strncmp(prev.temp_charge_text, d->temp_charge_text, sizeof(d->temp_charge_text)) != 0)
+        if (first || strncmp(s_prev_data.temp_charge_text, d->temp_charge_text, sizeof(d->temp_charge_text)) != 0)
             DWIN_SendString(VP_TEMP_CHARGE_TEXT, d->temp_charge_text, DWIN_TEXT_8_BYTES_WORDS);
-        if (first || strncmp(prev.temp_jack_text, d->temp_jack_text, sizeof(d->temp_jack_text)) != 0)
+        if (first || strncmp(s_prev_data.temp_jack_text, d->temp_jack_text, sizeof(d->temp_jack_text)) != 0)
             DWIN_SendString(VP_TEMP_JACK_TEXT, d->temp_jack_text, DWIN_TEXT_8_BYTES_WORDS);
         break;
 
     case STEP_SOC_STATUS:
-        if (first || prev.status_icon != d->status_icon) {
+        if (first || s_prev_data.status_icon != d->status_icon) {
             uint16_t status = d->status_icon;
             DWIN_SendWords(VP_SYS_STATUS_ICON, &status, 1);
         }
-        if (first || strncmp(prev.soc_text, d->soc_text, sizeof(d->soc_text)) != 0) {
+        if (first || strncmp(s_prev_data.soc_text, d->soc_text, sizeof(d->soc_text)) != 0) {
             DWIN_SendString(DWIN_SOC_TEXT_VP, d->soc_text, DWIN_TEXT_8_BYTES_WORDS);
         }
         break;
 
     case STEP_BTN_MODE:
-        if (first || prev.btn_mode != d->btn_mode) {
+        if (first || s_prev_data.btn_mode != d->btn_mode) {
             uint16_t w = d->btn_mode;
             DWIN_SendWords(VP_SYS_BTN_ICON, &w, 1);
         }
         break;
 
     case STEP_TOPBAR_FAULT:
-        if (first || strncmp(prev.topbar_fault_code, d->topbar_fault_code, sizeof(d->topbar_fault_code)) != 0) {
+        if (first || strncmp(s_prev_data.topbar_fault_code, d->topbar_fault_code, sizeof(d->topbar_fault_code)) != 0) {
             DWIN_SendString(VP_TOPBAR_FAULT_CODE, d->topbar_fault_code, 4);
         }
         break;
@@ -343,17 +365,17 @@ void DWIN_UpdateData(const DWIN_SystemData_t *d)
             (void)snprintf(dur_str, sizeof(dur_str), "%02u:%02u:%02u",
                            (unsigned)h, (unsigned)m, (unsigned)sec);
         }
-        if (first || prev.charge_duration_s != d->charge_duration_s ||
-            strncmp(prev.footer_time_str, d->footer_time_str, sizeof(d->footer_time_str)) != 0) {
+        if (first || s_prev_data.charge_duration_s != d->charge_duration_s ||
+            strncmp(s_prev_data.footer_time_str, d->footer_time_str, sizeof(d->footer_time_str)) != 0) {
             DWIN_SendString(VP_CHG_DURATION, dur_str, 8);
         }
         break;
     }
 
     case STEP_SETTING_STATS:
-        if (first || prev.uptime_s != d->uptime_s ||
-            prev.total_charged_ah_x10 != d->total_charged_ah_x10 ||
-            prev.total_energy_kwh_x10 != d->total_energy_kwh_x10) {
+        if (first || s_prev_data.uptime_s != d->uptime_s ||
+            s_prev_data.total_charged_ah_x10 != d->total_charged_ah_x10 ||
+            s_prev_data.total_energy_kwh_x10 != d->total_energy_kwh_x10) {
             char str[16];
             (void)snprintf(str, sizeof(str), "%lu.%u Ah",
                            (unsigned long)(d->total_charged_ah_x10 / 10U),
@@ -376,21 +398,21 @@ void DWIN_UpdateData(const DWIN_SystemData_t *d)
         break;
 
     case STEP_PRECHARGE:
-        if (first || strncmp(prev.precharge_voltage_text, d->precharge_voltage_text,
+        if (first || strncmp(s_prev_data.precharge_voltage_text, d->precharge_voltage_text,
                              sizeof(d->precharge_voltage_text)) != 0) {
             DWIN_SendString(VP_PRECHARGE_VOLTAGE_TEXT, d->precharge_voltage_text,
                             DWIN_TEXT_8_BYTES_WORDS);
         }
-        if (first || strncmp(prev.precharge_current_text, d->precharge_current_text,
+        if (first || strncmp(s_prev_data.precharge_current_text, d->precharge_current_text,
                              sizeof(d->precharge_current_text)) != 0) {
             DWIN_SendString(VP_PRECHARGE_CURRENT_TEXT, d->precharge_current_text,
                             DWIN_TEXT_8_BYTES_WORDS);
         }
-        if (first || prev.precharge_status_mode != d->precharge_status_mode) {
+        if (first || s_prev_data.precharge_status_mode != d->precharge_status_mode) {
             uint16_t status = d->precharge_status_mode;
             DWIN_SendWords(VP_PRECHARGE_STATUS_ICON, &status, 1U);
         }
-        if (first || prev.precharge_btn_mode != d->precharge_btn_mode) {
+        if (first || s_prev_data.precharge_btn_mode != d->precharge_btn_mode) {
             uint16_t button = d->precharge_btn_mode;
             DWIN_SendWords(VP_PRECHARGE_BTN_ICON, &button, 1U);
         }
@@ -412,11 +434,11 @@ void DWIN_UpdateData(const DWIN_SystemData_t *d)
         break;
     }
 
-    step++;
-    if (step >= STEP_COUNT) {
-        step = 0;
-        prev = *d;
-        have_prev = true;
+    s_update_step++;
+    if (s_update_step >= STEP_COUNT) {
+        s_update_step = 0U;
+        s_prev_data = *d;
+        s_have_prev_data = true;
     }
 }
 

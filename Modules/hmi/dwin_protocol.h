@@ -88,6 +88,12 @@ void DWIN_SendString(uint16_t vp, const char *str, uint8_t field_words);
  */
 void DWIN_SetPage(DwinPageId_e page);
 
+/** Send the panel's T5L software-reset command. */
+void DWIN_SendSoftwareReset(void);
+
+/** Invalidate MCU-side synchronization caches after a panel restart. */
+void DWIN_InvalidateSyncState(void);
+
 /** One-shot: push the three identity strings on the Setting screen. */
 void DWIN_SendSettingStrings(const char *hw_ver, const char *fw_ver,
                              const char *device_id);

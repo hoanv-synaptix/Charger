@@ -273,7 +273,7 @@ online; chỉ frame BMS hợp lệ mới refresh watchdog. Queue overflow/FIFO l
 | FR-HMI-09 | Contract Page 06/07: `VP_LOGIN_PIN_TEXT=0x1500` Text 8B; `VP_LOGIN_KEY=0x1504`; `VP_PRECHARGE_VOLTAGE_TEXT=0x1510` Text 8B; `VP_PRECHARGE_CURRENT_TEXT=0x1514` Text 8B; `VP_PRECHARGE_STATUS_ICON=0x1518`; `VP_PRECHARGE_BTN_ICON=0x1519`; `VP_PRECHARGE_ACTION_KEY=0x151A`. Digit key `0x0030..0x0039`, DEL/OK/Back `0x00F0/0x00F1/0x00F2`, Action/Back `0x0001/0x0002`. Page 07 uses `CHG_LIB_SystemSummary.voltage/total_current`; invalid/offline is `---`; mã lỗi dùng lại `VP_TOPBAR_FAULT_CODE=0x1044`, không thêm VP mới. | M |
 | FR-HMI-02 | RX ring-buffer ISR, drain `BSP_RS485_Read()`; re-arm sau lỗi UART; `DWIN_ParseRX()` state-machine byte-wise có resync | M |
 | FR-HMI-03 | Update dữ liệu HMI trong main loop 50ms: scatter 8 nhóm field (DC/battery/AC/temp/SOC+status/btn/uptime), diff-suppressed; chuỗi định danh + trang DASH gửi 1 lần sau khi panel boot | M |
-| FR-HMI-04 | Nút DWIN: nhấn upload keycode cố định ở `0x1043` (panel→MCU); nhãn nút (VAR Icon) ở `0x1042` (MCU→panel). `app_action_button(dwin_status)` (dùng chung với nút PA15): READY→Start, STARTING/CHARGING→Stop, ERROR→Stop (xoá fault), **COMPLETE→`ChargeController_AcknowledgeCompletion()`** (về READY, không sạc lại), OFFLINE→bỏ qua. Sau khi xử lý, MCU ghi ngay nhãn mới vào `0x1042` | S |
+| FR-HMI-04 | Nút DWIN: nhấn upload keycode cố định ở `0x1043` (panel→MCU); nhãn nút (VAR Icon) ở `0x1042` (MCU→panel). `app_action_button(dwin_status)` (dùng chung với nút PA15): READY→Start, STARTING/CHARGING→Stop, ERROR→`Alarm_Acknowledge()` + `ChargeController_ResetFaultIfSafe()` (chỉ reset khi nguyên nhân đã hết và output an toàn; nếu chưa đạt vẫn ERROR + RESET), **COMPLETE→`ChargeController_AcknowledgeCompletion()`** (về READY, không sạc lại), OFFLINE→bỏ qua. Sau khi xử lý, MCU ghi ngay nhãn mới vào `0x1042` | S |
 | FR-HMI-05 | `VP_SYS_STATUS_ICON 0x1041` (0..5) + nhãn nút `VP_SYS_BTN_ICON 0x1042` (0..3) do `dwin_status_from_state()` / `dwin_btn_mode_from_status()` dẫn xuất. Nút chạm upload ở `VP_SYS_BTN_KEY 0x1043` (MCU không ghi VP này) | S |
 | FR-HMI-06 | Bảng Alarm (VP `0x1200+`) — Phase 2, cần module event-log | C (chưa làm) |
 | FR-HMI-07 | RTC (`VP_SYS_RTC_SET 0x009C`): panel tự giữ giờ; `DWIN_SetRTC()` có sẵn nhưng chưa gọi (chờ `BSP_RTC`) | C (chưa làm) |
@@ -446,7 +446,7 @@ Frame RX được feed tới driver đang active qua `CHG_LIB_FeedCanFrame()`.
   | `0x1004..0x1007` | DC current | Text Display, 8 bytes / 4 VP, ví dụ `12.0`; đơn vị do DWIN vẽ; không có module → `---` |
   | `0x1008..0x100B` | DC power | Text Display, 8 bytes / 4 VP, ví dụ `6.3`; đơn vị do DWIN vẽ; không có module → `---` |
   | `0x1010..0x1013` | BMS pack V | Text Display, 8 bytes / 4 VP, chỉ gửi value; BMS offline → `---` |
-  | `0x1014..0x1017` | BMS max cell voltage | Text Display, 8 bytes / 4 VP, ASCII decimal 4 chữ số theo mV (ví dụ `3315` cho 3315 mV); `---` khi BMS offline/giá trị không hợp lệ |
+  | `0x1014..0x1017` | BMS max cell voltage | Text Display, 8 bytes / 4 VP, ASCII volts với 3 chữ số thập phân (ví dụ `3.315` cho 3315 mV); `---` khi BMS offline/giá trị không hợp lệ |
   | `0x1018..0x101B` | BMS Ah | Text Display, 8 bytes / 4 VP, chỉ gửi value; BMS offline → `---` |
   | `0x1020..0x1023` | AC L1 | Text Display, 8 bytes / 4 VP, chỉ gửi value; module offline/field invalid → `---` |
   | `0x1024..0x1027` | AC L2 | Text Display, 8 bytes / 4 VP, chỉ gửi value; module offline/field invalid → `---` |
@@ -458,7 +458,7 @@ Frame RX được feed tới driver đang active qua `CHG_LIB_FeedCanFrame()`.
   | `0x1042` | nhãn nút (MCU→panel) | 0 START 1 STOP 2 RESET 3 DISABLED — VAR Icon |
   | `0x1043` | nút chạm (panel→MCU) | Return-Key-Code upload khi nhấn; MCU không ghi VP này |
   | `0x1048..0x104B` | SOC | Text Display, 8 bytes / 4 VP; BMS online ví dụ `50%`, offline → `--%` |
-  | `0x8003` | SOC Text Color | SP `0x8000` + 3 WORD; RGB565: unavailable `0x8410`, critical `0xF800`, low `0xFD20`, medium `0xFFE0`, normal `0x07E0` |
+  | `0x8003` | SOC Text Color | SP `0x8000` + 3 WORD; RGB565: unavailable `0x8410`, critical `0xF800`, low `0xFD20`, medium `0xD520` (muted amber), normal `0x2CEA` (muted green) |
   | `0x1100/1108/1110` | HW ver / FW ver / Device ID | ASCII 8 VP / 16 ký tự |
   | `0x1118` | uptime | u32 (0x1118–19) giây |
   | `0x009C` | RTC set | *chưa dùng — panel tự giữ giờ* |

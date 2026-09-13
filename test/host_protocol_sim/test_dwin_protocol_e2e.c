@@ -189,6 +189,33 @@ static bool test_set_page_diff_suppressed(void)
     return true;
 }
 
+static bool test_software_reset_and_sync_invalidation(void)
+{
+    printf("Running test_software_reset_and_sync_invalidation...\n");
+    reset_capture();
+
+    DWIN_InvalidateSyncState();
+    DWIN_SetPage(DWIN_PAGE_SETTING);
+    ASSERT(g_tx_count == 1, "invalidated page cache must emit unchanged page");
+
+    reset_capture();
+    DWIN_SendSoftwareReset();
+    ASSERT(g_tx_count == 1, "software reset emits one frame");
+    ASSERT(g_tx_len[0] == 10, "software reset frame length");
+    ASSERT(g_tx[0][0] == DWIN_HEADER_1 && g_tx[0][1] == DWIN_HEADER_2,
+           "software reset uses project header");
+    ASSERT(g_tx[0][2] == 0x07 && g_tx[0][3] == DWIN_CMD_WRITE,
+           "software reset command and length");
+    ASSERT(g_tx[0][4] == 0x00 && g_tx[0][5] == 0x04,
+           "software reset targets system VP 0x0004");
+    ASSERT(g_tx[0][6] == 0x55 && g_tx[0][7] == 0xAA &&
+           g_tx[0][8] == 0x5A && g_tx[0][9] == 0xA5,
+           "software reset payload is 55 AA 5A A5");
+
+    printf("[PASS] test_software_reset_and_sync_invalidation\n");
+    return true;
+}
+
 static bool test_parse_rx_dispatches(void)
 {
     printf("Running test_parse_rx_dispatches...\n");
@@ -321,7 +348,7 @@ static bool test_update_data_scatter(void)
     strncpy(d.dc_current_text, "12.0 A", sizeof(d.dc_current_text) - 1U);
     strncpy(d.dc_power_text, "6.3 kW", sizeof(d.dc_power_text) - 1U);
     memcpy(d.bat_pack_volt_text, "400.0 V", 7U);
-    strncpy(d.bat_cell_volt_text, "3.20 V", sizeof(d.bat_cell_volt_text) - 1U);
+    strncpy(d.bat_cell_volt_text, "3.315", sizeof(d.bat_cell_volt_text) - 1U);
     strncpy(d.bat_cap_text, "50.0 Ah", sizeof(d.bat_cap_text) - 1U);
     strncpy(d.ac_l1_text, "220 V", sizeof(d.ac_l1_text) - 1U);
     strncpy(d.ac_l2_text, "221 V", sizeof(d.ac_l2_text) - 1U);
@@ -337,6 +364,7 @@ static bool test_update_data_scatter(void)
     d.uptime_s = 3600;
 
     const int steps = 12;
+    bool found_cell_voltage = false;
 
     /* First full cycle: every step sends (no previous snapshot). */
     int frames_first_cycle = 0;
@@ -344,9 +372,29 @@ static bool test_update_data_scatter(void)
         reset_capture();
         DWIN_UpdateData(&d);
         frames_first_cycle += g_tx_count;
+        for (int frame = 0; frame < g_tx_count && frame < MAX_FRAMES; frame++) {
+            uint16_t vp = ((uint16_t)g_tx[frame][4] << 8) | g_tx[frame][5];
+            if (vp == VP_BAT_CELL_VOLT_TEXT) {
+                ASSERT(g_tx[frame][6] == '3' && g_tx[frame][7] == '.' &&
+                       g_tx[frame][8] == '3' && g_tx[frame][9] == '1' &&
+                       g_tx[frame][10] == '5',
+                       "cell voltage text must carry 3.315");
+                found_cell_voltage = true;
+            }
+        }
         ASSERT(g_tx_count <= 4, "reasonable frame count per call");
     }
     ASSERT(frames_first_cycle >= 8, "first cycle pushes field groups");
+    ASSERT(found_cell_voltage, "first full cycle pushes cell voltage text");
+
+    /* The sync invalidation test before this case marks the alarm table dirty
+     * as a panel-recovery replay would. Drain those bounded row updates before
+     * asserting that an unchanged steady-state snapshot is quiet. */
+    for (int cycle = 0; cycle < (int)VP_ALARM_ROW_COUNT; cycle++) {
+        for (int i = 0; i < steps; i++) {
+            DWIN_UpdateData(&d);
+        }
+    }
 
     /* Second cycle, unchanged data: nothing is re-sent. */
     int frames_second_cycle = 0;
@@ -480,12 +528,12 @@ static bool test_soc_color_write_and_cache(void)
            "SOC low color is RGB565 orange");
     reset_capture();
     DWIN_SetSocColor(DWIN_SOC_COLOR_MEDIUM);
-    ASSERT(g_tx_count == 1 && g_tx[0][6] == 0xFF && g_tx[0][7] == 0xE0,
-           "SOC medium color is RGB565 yellow");
+    ASSERT(g_tx_count == 1 && g_tx[0][6] == 0xD5 && g_tx[0][7] == 0x20,
+           "SOC medium color is RGB565 muted amber");
     reset_capture();
     DWIN_SetSocColor(DWIN_SOC_COLOR_NORMAL);
-    ASSERT(g_tx_count == 1 && g_tx[0][6] == 0x07 && g_tx[0][7] == 0xE0,
-           "SOC normal color is RGB565 green");
+    ASSERT(g_tx_count == 1 && g_tx[0][6] == 0x2C && g_tx[0][7] == 0xEA,
+           "SOC normal color is RGB565 muted green");
     reset_capture();
     DWIN_SetSocColor(DWIN_SOC_COLOR_UNAVAILABLE);
     ASSERT(g_tx_count == 1 && g_tx[0][6] == 0x84 && g_tx[0][7] == 0x10,
@@ -644,6 +692,7 @@ int main(void)
     pass &= test_send_words_multi();
     pass &= test_send_string_pads_field();
     pass &= test_set_page_diff_suppressed();
+    pass &= test_software_reset_and_sync_invalidation();
     pass &= test_parse_rx_dispatches();
     pass &= test_parse_rx_byte_by_byte();
     pass &= test_parse_rx_ignores_zero_and_other_vp();

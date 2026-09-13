@@ -10,7 +10,7 @@
 - **Station-policy-derived**: chính sách cấp trạm dựa trên alarm CAN của module (`E026` từ `W011`).
 - **Data-status**: `BMS_IsDataStale()` là chất lượng dữ liệu nội bộ, không phải alarm và không tạo DWIN code.
 - **DWIN khi IDLE/chưa có CAN**: controller giữ trạng thái `IDLE/READY`, không tạo alarm chỉ vì BMS/module chưa online. Các trường đo lường chưa có dữ liệu (DC, AC, nhiệt độ và BMS) hiển thị dạng Text Display `---`; SOC offline hiển thị `--%`, SOC online hiển thị dạng text, ví dụ `50%`. `0` không được dùng để biểu diễn dữ liệu chưa tồn tại.
-- **Màu SOC trên DWIN**: SOC Text Display dùng SP `0x8000`; Text Color nằm tại `0x8003` (offset +3 WORD). RGB565: unavailable `0x8410`, critical `0xF800` (0–10%), low `0xFD20` (11–30%), medium `0xFFE0` (31–60%), normal `0x07E0` (61–100%). Màu chỉ phục vụ hiển thị, không tạo alarm.
+- **Màu SOC trên DWIN**: SOC Text Display dùng SP `0x8000`; Text Color nằm tại `0x8003` (offset +3 WORD). RGB565: unavailable `0x8410`, critical `0xF800` (0–10%), low `0xFD20` (11–30%), medium `0xD520` (31–60%, amber dịu), normal `0x2CEA` (61–100%, xanh lá dịu). Màu chỉ phục vụ hiển thị, không tạo alarm.
 
 | Lỗi từ | Lỗi | Mã lỗi | Hiển thị | Hành vi | Nguyên nhân | Logic phát hiện trong Code (Không suy diễn) |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |

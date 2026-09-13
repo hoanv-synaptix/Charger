@@ -162,8 +162,8 @@ def scenario_module_telemetry(backend: ClosedLoopBackend) -> Dict[str, Any]:
 
 def scenario_soc_color_boundaries(backend: ClosedLoopBackend) -> Dict[str, Any]:
     expected = ((0, 0xF800), (10, 0xF800), (11, 0xFD20),
-                (30, 0xFD20), (31, 0xFFE0), (60, 0xFFE0),
-                (61, 0x07E0), (100, 0x07E0))
+                (30, 0xFD20), (31, 0xD520), (60, 0xD520),
+                (61, 0x2CEA), (100, 0x2CEA))
     backend.set_sources_online(True, False)
     for soc, color in expected:
         backend.inject_bms(soc=soc)
