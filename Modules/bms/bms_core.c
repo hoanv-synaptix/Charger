@@ -171,50 +171,48 @@ static void update_view_from_data(void)
 
 /* ============== Private: map alarm severity ============== */
 
-static BMS_AlarmFlag_t map_alarm_field(uint8_t sev, BMS_AlarmFlag_t flag)
+static void map_alarm_field(uint8_t sev, BMS_AlarmFlag_t flag,
+                            BMS_AlarmFlag_t *warning_flags,
+                            BMS_AlarmFlag_t *fault_flags)
 {
-    /* BUGFIX BUG-09: per bms_protocol.h's own documented ALM_INFO severity
-     * scale (0=none, 1=warning, 2=fault, 3=severe), a mere "warning" is not
-     * an actionable fault condition -- but this used to treat sev>=1 the
-     * same as sev==2/3, so a BMS-side warning on any of the flags in
-     * bms_critical_alarm_mask() (e.g. HIGH_CELL_VOLT, TEMP_HIGH_CHG) would
-     * trip BMS_STATE_FAULT and refuse the charge relay just like a real
-     * fault would. Require fault-or-severe (sev >= 2). */
-    if (sev >= 2U) {
-        return flag;
+    if (sev == 1U) {
+        *warning_flags |= flag;
+    } else if (sev >= 2U) {
+        /* Only fault/severe BMS reports may affect charging safety. */
+        *fault_flags |= flag;
     }
-    return BMS_ALARM_NONE;
 }
 
 static void update_alarm_flags(void)
 {
     /* BMS_ALARM_BMS_OFFLINE is owned by BMS_Process() (main loop), not by
-     * this ISR-context ALM_INFO parse.
-     * This used to be a full overwrite of g_bms_view.alarm_flags, so every
-     * incoming ALM_INFO frame (every ~100ms per protocol) silently clobbered
+     * this frame update. This used to be a full overwrite of
+     * g_bms_view.alarm_flags, so every incoming ALM_INFO frame silently clobbered
      * whichever bit BMS_Process had set -- not a rare timing race, a
      * guaranteed clobber on every frame. Preserve it explicitly. */
-    BMS_AlarmFlag_t flags = BMS_ALARM_NONE;
+    BMS_AlarmFlag_t warning_flags = BMS_ALARM_NONE;
+    BMS_AlarmFlag_t fault_flags = BMS_ALARM_NONE;
     const volatile BMS_AlmInfo_t *a = &g_bms_data.alm_info;
     const BMS_AlarmFlag_t preserve_mask = BMS_ALARM_BMS_OFFLINE;
 
     if (a->valid) {
-        flags |= map_alarm_field(a->low_pack_volt,      BMS_ALARM_LOW_PACK_VOLT);
-        flags |= map_alarm_field(a->low_cell_volt,      BMS_ALARM_LOW_CELL_VOLT);
-        flags |= map_alarm_field(a->high_pack_volt,     BMS_ALARM_HIGH_PACK_VOLT);
-        flags |= map_alarm_field(a->high_cell_volt,     BMS_ALARM_HIGH_CELL_VOLT);
-        flags |= map_alarm_field(a->temp_cell_high_chg,  BMS_ALARM_TEMP_HIGH_CHG);
-        flags |= map_alarm_field(a->temp_cell_high_dchg, BMS_ALARM_TEMP_HIGH_DCHG);
-        flags |= map_alarm_field(a->temp_cell_low_chg,  BMS_ALARM_TEMP_LOW_CHG);
-        flags |= map_alarm_field(a->temp_cell_low_dchg, BMS_ALARM_TEMP_LOW_DCHG);
-        flags |= map_alarm_field(a->temp_relay_high,    BMS_ALARM_TEMP_RELAY_HIGH);
-        flags |= map_alarm_field(a->over_chg_curr,      BMS_ALARM_OVER_CHG_CURR);
-        flags |= map_alarm_field(a->over_dchg_curr,     BMS_ALARM_OVER_DCHG_CURR);
-        flags |= map_alarm_field(a->cell_volt_diff,    BMS_ALARM_CELL_VOLT_DIFF);
-        flags |= map_alarm_field(a->low_soc,            BMS_ALARM_LOW_SOC);
+        map_alarm_field(a->low_pack_volt,      BMS_ALARM_LOW_PACK_VOLT, &warning_flags, &fault_flags);
+        map_alarm_field(a->low_cell_volt,      BMS_ALARM_LOW_CELL_VOLT, &warning_flags, &fault_flags);
+        map_alarm_field(a->high_pack_volt,     BMS_ALARM_HIGH_PACK_VOLT, &warning_flags, &fault_flags);
+        map_alarm_field(a->high_cell_volt,     BMS_ALARM_HIGH_CELL_VOLT, &warning_flags, &fault_flags);
+        map_alarm_field(a->temp_cell_high_chg,  BMS_ALARM_TEMP_HIGH_CHG, &warning_flags, &fault_flags);
+        map_alarm_field(a->temp_cell_high_dchg, BMS_ALARM_TEMP_HIGH_DCHG, &warning_flags, &fault_flags);
+        map_alarm_field(a->temp_cell_low_chg,  BMS_ALARM_TEMP_LOW_CHG, &warning_flags, &fault_flags);
+        map_alarm_field(a->temp_cell_low_dchg, BMS_ALARM_TEMP_LOW_DCHG, &warning_flags, &fault_flags);
+        map_alarm_field(a->temp_relay_high,    BMS_ALARM_TEMP_RELAY_HIGH, &warning_flags, &fault_flags);
+        map_alarm_field(a->over_chg_curr,      BMS_ALARM_OVER_CHG_CURR, &warning_flags, &fault_flags);
+        map_alarm_field(a->over_dchg_curr,     BMS_ALARM_OVER_DCHG_CURR, &warning_flags, &fault_flags);
+        map_alarm_field(a->cell_volt_diff,    BMS_ALARM_CELL_VOLT_DIFF, &warning_flags, &fault_flags);
+        map_alarm_field(a->low_soc,            BMS_ALARM_LOW_SOC, &warning_flags, &fault_flags);
     }
 
-    g_bms_view.alarm_flags = (BMS_AlarmFlag_t)(flags | (g_bms_view.alarm_flags & preserve_mask));
+    g_bms_view.warning_flags = warning_flags;
+    g_bms_view.alarm_flags = (BMS_AlarmFlag_t)(fault_flags | (g_bms_view.alarm_flags & preserve_mask));
 }
 
 /* ============== Private: CAN TX wrapper (forward decl) ============== */
@@ -456,7 +454,7 @@ void BMS_Process(uint32_t now_tick)
             int req_i_abs = (req_i_x10 < 0) ? -req_i_x10 : req_i_x10;
             LOG("[BMS SNAP] online=%u V=%d.%d I=%s%d.%d SOC=%u%% "
                 "Cell=%u/%u mV Temp=%s%d.%d/%s%d.%d C Relay=%u/%u "
-                "Req=%s%d.%dV/%s%d.%dA alarms=0x%08lX\r\n",
+                "Req=%s%d.%dV/%s%d.%dA fault=0x%08lX warn=0x%08lX\r\n",
                 snap.online ? 1U : 0U,
                 batt_v_x10 / 10, batt_v_x10 % 10,
                 (batt_i_x10 < 0) ? "-" : "", batt_i_abs / 10, batt_i_abs % 10,
@@ -468,7 +466,8 @@ void BMS_Process(uint32_t now_tick)
                 snap.discharge_relay_closed ? 1U : 0U,
                 (req_v_x10 < 0) ? "-" : "", req_v_abs / 10, req_v_abs % 10,
                 (req_i_x10 < 0) ? "-" : "", req_i_abs / 10, req_i_abs % 10,
-                (unsigned long)snap.alarm_flags);
+                 (unsigned long)snap.alarm_flags,
+                 (unsigned long)snap.warning_flags);
         }
     }
 

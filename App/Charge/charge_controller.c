@@ -59,6 +59,7 @@
 #define CHARGE_CTRL_VOLTAGE_RAMP_V_PER_S             2.0f   /* post-relay-close: e.g. dV 100V -> 50s */
 #define CHARGE_CTRL_VOLTAGE_PRECLOSE_RAMP_V_PER_S    10.0f  /* pre-relay-close: bring the module up to the pack voltage FAST relative to the post-close ramp. Module is unloaded here, but this still delays relay arming by ~(0.9 * pack_V) / rate (e.g. 400V pack -> ~36s). */
 #define CHARGE_CTRL_CURRENT_RAMP_A_PER_S             5.0f   /* per module; e.g. 0->100A -> 20s */
+#define CHARGE_CTRL_BELOW_MIN_CONFIRM_MS             500U   /* In-flight glitch debounce: confirm cell below min for 500ms before inhibit */
 
 /* ============== Private State ============== */
 
@@ -103,6 +104,7 @@ static struct {
     /* Forward transition debounce timers for cell voltage and SOC (Delta t). */
     ChargeStageBand_t cell_candidate_band;
     uint32_t cell_candidate_start_tick;
+    uint32_t cell_below_min_start_tick;
     ChargeStageBand_t soc_candidate_band;
     uint32_t soc_candidate_start_tick;
 
@@ -711,10 +713,12 @@ static void stop_charging(void) {
     g_ctrl.protect_jack_temp_trip_timer_tick = 0;
     g_ctrl.ramp_tick = 0;
     g_ctrl.last_running = 0;
+    g_ctrl.last_inhibit = 0;
     g_ctrl.precharge_hold_active = false;
     g_ctrl.precharge_hold_start_tick = 0;
     g_ctrl.cell_candidate_start_tick = 0;
     g_ctrl.cell_candidate_band = CHARGE_STAGE_BAND_NONE;
+    g_ctrl.cell_below_min_start_tick = 0;
     g_ctrl.soc_candidate_start_tick = 0;
     g_ctrl.soc_candidate_band = CHARGE_STAGE_BAND_NONE;
 }
@@ -990,14 +994,40 @@ static ChargeStageEval_t eval_cell_stage(const ChargeCycleConfig_t *cfg, const B
 
     g_ctrl.last_cell_band = measured_band;
 
-    /* Cell voltage is below min: immediate block without erasing progress */
+    /* Cell voltage is below min: immediate block at startup, debounced in-flight */
     if (measured_band == CHARGE_STAGE_BAND_BELOW_MIN) {
+        if (g_ctrl.max_cell_band == CHARGE_STAGE_BAND_NONE) {
+            /* Startup / pre-cycle: immediate inhibit into depleted battery */
+            g_ctrl.cell_candidate_start_tick = 0U;
+            g_ctrl.cell_candidate_band = CHARGE_STAGE_BAND_NONE;
+            g_ctrl.cell_below_min_start_tick = 0U;
+            apply_band_current_limit(CHARGE_STAGE_BAND_BELOW_MIN, cfg->cell_curr_1_c, cfg->cell_curr_2_c,
+                                     cfg->cell_curr_3_c, cfg->cell_curr_4_c, &eval);
+            return eval;
+        }
+
+        /* In-flight: require persistent reading below min for CHARGE_CTRL_BELOW_MIN_CONFIRM_MS */
+        if (g_ctrl.cell_below_min_start_tick == 0U) {
+            g_ctrl.cell_below_min_start_tick = now_tick;
+        }
+        if ((now_tick - g_ctrl.cell_below_min_start_tick) >= CHARGE_CTRL_BELOW_MIN_CONFIRM_MS) {
+            /* Persistently below min: genuine cell collapse, trip inhibit */
+            apply_band_current_limit(CHARGE_STAGE_BAND_BELOW_MIN, cfg->cell_curr_1_c, cfg->cell_curr_2_c,
+                                     cfg->cell_curr_3_c, cfg->cell_curr_4_c, &eval);
+            return eval;
+        }
+
+        /* Transient dip / glitch < 500ms: maintain current max band progress */
         g_ctrl.cell_candidate_start_tick = 0U;
         g_ctrl.cell_candidate_band = CHARGE_STAGE_BAND_NONE;
-        apply_band_current_limit(CHARGE_STAGE_BAND_BELOW_MIN, cfg->cell_curr_1_c, cfg->cell_curr_2_c,
+        ChargeStageBand_t effective_band = g_ctrl.cell_full_latched ? CHARGE_STAGE_BAND_ABOVE_MAX : g_ctrl.max_cell_band;
+        apply_band_current_limit(effective_band, cfg->cell_curr_1_c, cfg->cell_curr_2_c,
                                  cfg->cell_curr_3_c, cfg->cell_curr_4_c, &eval);
         return eval;
     }
+
+    /* Normal reading (>= min threshold): clear below-min confirmation timer */
+    g_ctrl.cell_below_min_start_tick = 0U;
 
     if (g_ctrl.cell_full_latched) {
         apply_band_current_limit(CHARGE_STAGE_BAND_ABOVE_MAX, cfg->cell_curr_1_c, cfg->cell_curr_2_c,
@@ -1494,6 +1524,21 @@ static void run_bms_controlled_mode(uint32_t now_tick) {
     g_ctrl.active_stage_band = stage_band;
     g_ctrl.active_limit_current_c = stage_limit_c;
 
+    if (g_ctrl.inhibit != g_ctrl.last_inhibit) {
+        if (g_ctrl.inhibit) {
+            LOG("CC: INHIBIT 0->1 src=%u band=%u max_cv=%u soc=%u mod_cnt=%u\r\n",
+                (unsigned)g_ctrl.active_limit_source, (unsigned)g_ctrl.active_stage_band,
+                (unsigned)bms.max_cell_volt, (unsigned)bms.soc,
+                (unsigned)g_ctrl.actual_module_count);
+        } else {
+            LOG("CC: INHIBIT 1->0 src=%u band=%u max_cv=%u soc=%u mod_cnt=%u\r\n",
+                (unsigned)g_ctrl.active_limit_source, (unsigned)g_ctrl.active_stage_band,
+                (unsigned)bms.max_cell_volt, (unsigned)bms.soc,
+                (unsigned)g_ctrl.actual_module_count);
+        }
+        g_ctrl.last_inhibit = g_ctrl.inhibit;
+    }
+
     /* Calculate current */
     if (g_ctrl.inhibit) {
         g_ctrl.target_current_total_a = 0.0f;
@@ -1817,9 +1862,11 @@ bool ChargeController_Start(ChargeCtrlOwner_t owner, bool manual_mode, uint32_t 
     g_ctrl.soc_full_latched = false;
     g_ctrl.cell_candidate_start_tick = 0U;
     g_ctrl.cell_candidate_band = CHARGE_STAGE_BAND_NONE;
+    g_ctrl.cell_below_min_start_tick = 0U;
     g_ctrl.soc_candidate_start_tick = 0U;
     g_ctrl.soc_candidate_band = CHARGE_STAGE_BAND_NONE;
     g_ctrl.last_running = 0;
+    g_ctrl.last_inhibit = 0;
 
     clear_fault();
 

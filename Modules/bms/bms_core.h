@@ -120,8 +120,10 @@ typedef struct {
     float  chg_volt_request;  /* V */
     float  chg_curr_request;  /* A */
 
-    /* Alarms */
+    /* Alarms: fault/actionable flags (severity >= 2). */
     BMS_AlarmFlag_t alarm_flags;
+    /* Reporting-only flags (severity == 1); never used for safety actions. */
+    BMS_AlarmFlag_t warning_flags;
 
     /* Timing */
     uint32_t last_rx_tick;

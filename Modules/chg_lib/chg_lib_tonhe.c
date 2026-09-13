@@ -410,17 +410,17 @@ static void parse_ac_phase(const uint8_t *data, uint8_t src_addr, uint32_t now)
     }
     if (mod == NULL) return;
 
-    /* Byte 1-2: A-phase voltage (0.1V/bit, LE) */
+    /* Byte 1-2: A-phase voltage (0.1V/bit, LE) -> Line-to-Line voltage (x1.73) */
     uint16_t va = ((uint16_t)data[0] | ((uint16_t)data[1] << 8));
-    mod->view.ac_phase_a_voltage = (float)va * TONHE_VOLTAGE_SCALE;
+    mod->view.ac_phase_a_voltage = (float)va * TONHE_AC_LINE_VOLTAGE_SCALE;
 
-    /* Byte 3-4: B-phase voltage (0.1V/bit, LE) */
+    /* Byte 3-4: B-phase voltage (0.1V/bit, LE) -> Line-to-Line voltage (x1.73) */
     uint16_t vb = ((uint16_t)data[2] | ((uint16_t)data[3] << 8));
-    mod->view.ac_phase_b_voltage = (float)vb * TONHE_VOLTAGE_SCALE;
+    mod->view.ac_phase_b_voltage = (float)vb * TONHE_AC_LINE_VOLTAGE_SCALE;
 
-    /* Byte 5-6: C-phase voltage (0.1V/bit, LE) */
+    /* Byte 5-6: C-phase voltage (0.1V/bit, LE) -> Line-to-Line voltage (x1.73) */
     uint16_t vc = ((uint16_t)data[4] | ((uint16_t)data[5] << 8));
-    mod->view.ac_phase_c_voltage = (float)vc * TONHE_VOLTAGE_SCALE;
+    mod->view.ac_phase_c_voltage = (float)vc * TONHE_AC_LINE_VOLTAGE_SCALE;
 
     /* Byte 7-8: Ambient temperature */
     uint16_t temp_raw = ((uint16_t)data[6] | ((uint16_t)data[7] << 8));

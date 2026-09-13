@@ -51,6 +51,7 @@
 /* ============== Scale Factors ============== */
 
 #define TONHE_VOLTAGE_SCALE   0.1f      /* V per bit */
+#define TONHE_AC_LINE_VOLTAGE_SCALE  0.173f  /* V per bit: 0.1V/bit * 1.73 (phase-to-line conversion) */
 #define TONHE_CURRENT_SCALE   0.01f     /* A per bit */
 #define TONHE_TEMP_SCALE      1.0f      /* °C per bit */
 

@@ -678,7 +678,10 @@ void PC_Protocol_SendStatus(void)
     report.bms_current   = bms_view.batt_current;
     report.bms_chg_v_req = bms_view.chg_volt_request;
     report.bms_chg_i_req = bms_view.chg_curr_request;
-    report.bms_alarm     = bms_view.alarm_flags;
+    /* Report both BMS warnings (severity 1) and actionable faults
+     * (severity >= 2). Safety decisions remain owned by the controller and
+     * BMS_HasCriticalAlarm(), not by this telemetry field. */
+    report.bms_alarm     = bms_view.alarm_flags | bms_view.warning_flags;
     report.bms_soc       = bms_view.soc;
     report.bms_state     = (uint8_t)bms_view.state;
     report.btn_start      = 0; /* Sẽ cập nhật từ GPIO */
@@ -726,7 +729,6 @@ bool PC_Protocol_PeekTxFrame(uint8_t index, uint8_t *cmd, uint8_t *payload, uint
     }
     return true;
 }
-
 
 
 

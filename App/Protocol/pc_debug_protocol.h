@@ -87,7 +87,7 @@ typedef struct __attribute__((packed)) {
 
     /* Alarms (5 bytes) */
     uint32_t alarm_status;        /**< Raw alarm bits from module */
-    uint32_t alarm_flags;        /**< Standardized alarm flags */
+    uint32_t alarm_flags;        /**< Reported standardized flags (warning + fault) */
     uint8_t  pfc_fault;          /**< PFC fault byte (TonHe M_C_1 byte 8) */
 
     /* Address (2 bytes) */

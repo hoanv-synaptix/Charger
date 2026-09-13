@@ -317,7 +317,10 @@ uint16_t DebugProtocol_BuildBMSData(uint8_t *data, uint16_t max_len)
     memcpy(&data[written], &bms.chg_curr_request, sizeof(float)); written += 4;
 
     /* Alarms + timing (8 bytes) */
-    uint32_t alarm = (uint32_t)bms.alarm_flags;
+    /* Preserve the existing wire layout while exposing both reporting-only
+     * warnings and actionable BMS faults. Safety logic does not consume this
+     * serialized field. */
+    uint32_t alarm = (uint32_t)(bms.alarm_flags | bms.warning_flags);
     memcpy(&data[written], &alarm, sizeof(uint32_t)); written += 4;
     memcpy(&data[written], &bms.last_rx_tick, sizeof(uint32_t)); written += 4;
 

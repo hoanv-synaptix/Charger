@@ -140,6 +140,8 @@ static bool test_bms_alm_info_raw_e005(void)
     BMS_GetView(&view);
     ASSERT((view.alarm_flags & BMS_ALARM_TEMP_HIGH_CHG) == 0U,
            "ALM_INFO warning severity must not set E005 fault flag");
+    ASSERT((view.warning_flags & BMS_ALARM_TEMP_HIGH_CHG) != 0U,
+           "ALM_INFO warning severity must set E005 warning flag");
 
     frame[1] = 0x03U; /* severity=severe */
     BMS_FeedFrame(0U, BMS_ID_ALM_INFO, frame, 8U);
@@ -239,8 +241,8 @@ static bool test_all_bms_alm_info_fields_from_pdf(void)
                "BMS alarm action mismatch");
     }
 
-    /* Severity 1 is a BMS warning and must not be promoted to any E/W alarm
-     * flag by this firmware's documented fault threshold (>=2). */
+    /* Severity 1 is a BMS warning: it must be reported without being
+     * promoted to a fault or stopping an active charge. */
     ASSERT(setup(NULL), "setup warning threshold");
     healthy_bms(400.0f);
     ASSERT(start_running(), "controller never RUNNING for warning threshold");
@@ -250,6 +252,33 @@ static bool test_all_bms_alm_info_fields_from_pdf(void)
     BMS_GetView(&warning_view);
     ASSERT(warning_view.alarm_flags == BMS_ALARM_NONE,
            "severity 1 ALM_INFO was incorrectly promoted to fault flags");
+    ASSERT(warning_view.warning_flags == (BMS_AlarmFlag_t)((1U << 13) - 1U),
+           "severity 1 ALM_INFO did not populate all warning flags");
+
+    AlarmView_t warning_alarm;
+    Alarm_GetView(&warning_alarm);
+    ASSERT(warning_alarm.active_count == 13U,
+           "all severity 1 BMS warnings must reach unified alarm view");
+    ASSERT(warning_alarm.highest_action == ALARM_ACT_INFO,
+           "severity 1 BMS warnings must remain INFO");
+    ChargeCtrlView_t warning_ctrl;
+    ChargeController_GetView(&warning_ctrl);
+    ASSERT(warning_ctrl.state == CHARGE_CTRL_STATE_RUNNING,
+           "severity 1 BMS warnings must not stop charging");
+
+    /* Raise one of the same active bits to severity 2. The boolean alarm
+     * condition remains true, so the safety action must still upgrade from
+     * INFO to STOP without relying on a new active edge. */
+    g_sim_bms.high_cell_volt = 2U;
+    drive_ms(200U);
+    BMS_GetView(&warning_view);
+    ASSERT((warning_view.warning_flags & BMS_ALARM_HIGH_CELL_VOLT) == 0U,
+           "severity transition must remove the old warning flag");
+    ASSERT((warning_view.alarm_flags & BMS_ALARM_HIGH_CELL_VOLT) != 0U,
+           "severity transition must set the fault flag");
+    Alarm_GetView(&warning_alarm);
+    ASSERT(warning_alarm.highest_action == ALARM_ACT_STOP,
+           "warning-to-fault transition must upgrade to STOP");
 
     printf("[PASS] test_all_bms_alm_info_fields_from_pdf\n");
     return true;

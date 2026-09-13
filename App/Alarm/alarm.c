@@ -122,7 +122,23 @@ static bool ev_bms(const AlarmInputs_t *in, uint32_t bit) {
         !BMS_HasFreshPrechargeData(in->now)) {
         return false;
     }
-    return (in->bms.alarm_flags & bit) != 0U;
+    return ((in->bms.alarm_flags | in->bms.warning_flags) & bit) != 0U;
+}
+
+/* BMS severity-1 reports use the same existing AlarmCode_t as their
+ * severity-2/3 counterpart, but are reporting-only. Keep the static table
+ * action for fault flags and downgrade only a warning-only BMS mirror to INFO.
+ * Other alarm rows also use a `param` bit, so identify BMS rows by their
+ * evaluator rather than applying warning_flags to unrelated sources. */
+static AlarmAction_t effective_action(const AlarmSpec_t *sp,
+                                      const AlarmInputs_t *in)
+{
+    if ((sp->eval == ev_bms) &&
+        ((in->bms.warning_flags & sp->param) != 0U) &&
+        ((in->bms.alarm_flags & sp->param) == 0U)) {
+        return ALARM_ACT_INFO;
+    }
+    return sp->action;
 }
 static bool ev_mod(const AlarmInputs_t *in, uint32_t bit) {
     return (in->mod_alarm_or & bit) != 0U;
@@ -381,7 +397,7 @@ static void run_debounce(uint32_t now, const AlarmInputs_t *in, AlarmEdgeTally_t
             if (rt->latched) rt->latched = false; /* condition returned -- genuinely active */
             if (!rt->active && held >= sp->set_ms) {
                 rt->active = true;
-                log_edge(now, sp->code, sp->action, true);
+                log_edge(now, sp->code, effective_action(sp, in), true);
                 if (tally->raised++ == 0U) tally->first_raised_desc = sp->desc;
             }
         } else {
@@ -390,7 +406,7 @@ static void run_debounce(uint32_t now, const AlarmInputs_t *in, AlarmEdgeTally_t
                     rt->latched = true;    /* keep active until Alarm_Acknowledge */
                 } else {
                     rt->active = false;
-                    log_edge(now, sp->code, sp->action, false);
+                    log_edge(now, sp->code, effective_action(sp, in), false);
                     if (tally->cleared++ == 0U) tally->first_cleared_desc = sp->desc;
                 }
             }
@@ -433,7 +449,7 @@ static uint8_t alarm_severity(AlarmCode_t code, AlarmAction_t action) {
     }
 }
 
-static void aggregate_view(void) {
+static void aggregate_view(const AlarmInputs_t *in) {
     AlarmView_t v;
     memset(&v, 0, sizeof(v));
     v.highest_action = ALARM_ACT_INFO;
@@ -450,11 +466,12 @@ static void aggregate_view(void) {
         v.active_count++;
         if (rt->latched) v.latched_mask |= (1ULL << sp->code);
 
-        if (sp->action > v.highest_action) {
-            v.highest_action = sp->action;
+        AlarmAction_t action = effective_action(sp, in);
+        if (action > v.highest_action) {
+            v.highest_action = action;
         }
 
-        uint8_t sev = alarm_severity(sp->code, sp->action);
+        uint8_t sev = alarm_severity(sp->code, action);
         if (sev > highest_sev) {
             highest_sev = sev;
             v.worst_code = sp->code;
@@ -521,7 +538,7 @@ void Alarm_Process(uint32_t now_tick) {
 
     AlarmEdgeTally_t tally = {0};
     run_debounce(now_tick, &in, &tally);
-    aggregate_view();
+    aggregate_view(&in);
     dispatch_action(now_tick);
     log_tally(now_tick, &tally);
 }
@@ -544,11 +561,11 @@ void Alarm_Acknowledge(uint32_t now_tick) {
         rt->latched = false;
         rt->active = false;
         rt->raw_prev = false;
-        log_edge(now_tick, sp->code, sp->action, false);
+        log_edge(now_tick, sp->code, effective_action(sp, &in), false);
         acked++;
     }
     if (acked > 0U) LOG("ALARM: %u latched cleared by ack\r\n", (unsigned)acked);
-    aggregate_view();
+    aggregate_view(&in);
     /* let dispatch_action re-arm on the next tick once nothing STOP-level remains */
 }
 

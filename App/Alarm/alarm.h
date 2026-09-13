@@ -3,7 +3,7 @@
  * @brief Unified station-level alarm/error subsystem.
  *
  * One code space over every fault source in the system:
- *   - BMS-reported   (mirror of BMS_ALARM_* bits from BMS_View_t)
+ *   - BMS-reported   (mirror of fault + warning BMS_ALARM_* bits from BMS_View_t)
  *   - module-reported (mirror of CHG_LIB_ALARM_* bits, aggregated over modules)
  *   - controller      (mirror of CHARGE_CTRL_FAULT_* -- report/log only)
  *   - controller-derived  safety decisions from valid telemetry (E022);
@@ -21,6 +21,8 @@
  *   ALARM_ACT_ESTOP -- Alarm_Process() calls ChargeController_EmergencyStop()
  * The action is edge-triggered (issued once per activation), keeping a single
  * stop path through the charge controller.
+ * BMS severity 1 uses the existing alarm code with INFO action; only BMS
+ * severity >=2 reaches the fault/actionable alarm_flags path.
  */
 #ifndef APP_ALARM_ALARM_H
 #define APP_ALARM_ALARM_H

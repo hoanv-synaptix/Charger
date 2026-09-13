@@ -62,7 +62,7 @@ typedef struct {
     float    bms_current;    
     float    bms_chg_v_req;  
     float    bms_chg_i_req;  
-    uint32_t bms_alarm;      /* Mapped BMS_AlarmFlag_t */
+    uint32_t bms_alarm;      /* Reported BMS flags: warning + fault */
     uint8_t  bms_soc;        
     uint8_t  bms_state;      
     

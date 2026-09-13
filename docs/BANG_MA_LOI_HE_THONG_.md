@@ -2,6 +2,10 @@
   
 ## BẢNG TRA CỨU MÃ LỖI HỆ THỐNG CHI TIẾT
 
+### Quy ước severity BMS
+
+Trong `ALM_INFO`: severity `0` là không cảnh báo, `1` là warning chỉ để hiển thị/log, `2..3` là fault/severe có thể kích hoạt hành vi an toàn. Severity 1 vẫn dùng mã `AlarmCode_t` hiện có nhưng action luôn là `INFO`; chỉ severity từ 2 trở lên mới được phép STOP/ESTOP. Các dòng mô tả `severity >= 2` bên dưới là điều kiện safety, không phải điều kiện duy nhất để reporting. Ở firmware, `ev_bms()` kiểm tra cả `warning_flags` và `alarm_flags`; các quyết định an toàn chỉ đọc `alarm_flags`.
+
 ### Quy ước nguồn gốc alarm
 
 - **CAN**: BMS/module tự phát hiện, gửi raw field qua CAN; firmware parse và mirror.
