@@ -79,8 +79,6 @@ typedef struct {
     float    mod_voltage_min;   /* -1 if none reporting */
     uint32_t mod_alarm_or;
     uint8_t  mod_pfc_fault_or;
-    bool     ac_phase_loss;
-    bool     ac_undervolt;
 
     float    cfg_vmax_v;
     uint8_t  cfg_source_mode;
@@ -158,8 +156,6 @@ static bool ev_bms_comm_lost(const AlarmInputs_t *in, uint32_t param);
 static bool ev_bms_no_pack_voltage(const AlarmInputs_t *in, uint32_t param);
 static bool ev_dc_load_lost(const AlarmInputs_t *in, uint32_t param);
 static bool ev_dc_out_not_established(const AlarmInputs_t *in, uint32_t param);
-static bool ev_ac_phase_loss(const AlarmInputs_t *in, uint32_t param);
-static bool ev_ac_undervolt(const AlarmInputs_t *in, uint32_t param);
 
 /* BMS severity: bits that gate the charge relay in bms_core.c
  * (bms_critical_alarm_mask). Keep this list in sync with that function --
@@ -185,8 +181,6 @@ static const AlarmSpec_t k_specs[] = {
     { ALARM_BMS_TEMP_RELAY_HIGH, ALARM_ACT_INFO,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms, BMS_ALARM_TEMP_RELAY_HIGH, "BMS relay over-temp" },
     { ALARM_BMS_OVER_CHG_CURR,   ALARM_ACT_STOP,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms, BMS_ALARM_OVER_CHG_CURR,   "BMS over charge current" },
     { ALARM_BMS_OVER_DCHG_CURR,  ALARM_ACT_INFO,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms, BMS_ALARM_OVER_DCHG_CURR,  "BMS over discharge current" },
-    { ALARM_BMS_CELL_VOLT_DIFF,  ALARM_ACT_INFO,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms, BMS_ALARM_CELL_VOLT_DIFF,  "BMS cell voltage imbalance" },
-    { ALARM_BMS_LOW_SOC,         ALARM_ACT_INFO,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms, BMS_ALARM_LOW_SOC,         "BMS low SOC" },
 
     /* --- module-reported --- */
     { ALARM_MOD_HW_FAULT,        ALARM_ACT_STOP,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_HW_FAULT,         "Module hardware fault" },
@@ -206,15 +200,12 @@ static const AlarmSpec_t k_specs[] = {
     { ALARM_CTRL_INVALID_CONFIG,  ALARM_ACT_INFO, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_ctrl, CHARGE_CTRL_FAULT_INVALID_CONFIG,        "Invalid charge config" },
     { ALARM_CTRL_JACK_OVER_V,     ALARM_ACT_STOP, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_ctrl, CHARGE_CTRL_FAULT_PROTECT_JACK_V,        "Connector over-voltage protect" },
     { ALARM_CTRL_JACK_OVER_TEMP,  ALARM_ACT_STOP, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_ctrl, CHARGE_CTRL_FAULT_PROTECT_JACK_TEMP,     "Connector over-temp protect" },
-    { ALARM_CTRL_EMERGENCY_STOP,  ALARM_ACT_INFO, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_ctrl, CHARGE_CTRL_FAULT_EMERGENCY_STOP,        "Emergency stop" },
 
     /* --- derived / station-level --- */
     { ALARM_BMS_COMM_LOST,          ALARM_ACT_INFO, false, ALARM_DB_COMM_SET_MS,    ALARM_DB_COMM_CLEAR_MS,    ev_bms_comm_lost,          0, "BMS link lost during charge" },
     { ALARM_BMS_NO_PACK_VOLTAGE,    ALARM_ACT_STOP, false, ALARM_DB_NO_PACK_SET_MS, ALARM_DB_NO_PACK_CLEAR_MS, ev_bms_no_pack_voltage,    0, "No pack voltage" },
     { ALARM_DC_LOAD_LOST,           ALARM_ACT_STOP, false, ALARM_LOAD_LOST_MS,      ALARM_DB_LOAD_LOST_CLEAR_MS, ev_dc_load_lost,           0, "DC load lost" },
     { ALARM_DC_OUT_NOT_ESTABLISHED, ALARM_ACT_STOP, false, 0,                       ALARM_DB_LOAD_LOST_CLEAR_MS, ev_dc_out_not_established, 0, "DC output not established" },
-    { ALARM_AC_PHASE_LOSS,          ALARM_ACT_STOP, false, ALARM_DB_AC_MS,          ALARM_DB_AC_MS,              ev_ac_phase_loss,          0, "AC input phase loss" },
-    { ALARM_AC_UNDERVOLT,           ALARM_ACT_STOP, false, ALARM_DB_AC_MS,          ALARM_DB_AC_MS,              ev_ac_undervolt,           0, "AC input under-voltage" },
     { ALARM_MOD_FAN_FAULT,          ALARM_ACT_STOP, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_FAN_FAULT,    "Module fan fault" },
     { ALARM_MOD_AC_OVER_VOLT,       ALARM_ACT_STOP, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_AC_OVER_VOLT, "Module AC input over-voltage" },
 };
@@ -329,16 +320,6 @@ static bool ev_dc_out_not_established(const AlarmInputs_t *in, uint32_t param) {
     return (in->mod_current_max >= 0.0f) && (in->mod_current_max < ALARM_I_LOAD_MIN_A);
 }
 
-static bool ev_ac_phase_loss(const AlarmInputs_t *in, uint32_t param) {
-    (void)param;
-    return in->ac_phase_loss;
-}
-
-static bool ev_ac_undervolt(const AlarmInputs_t *in, uint32_t param) {
-    (void)param;
-    return in->ac_undervolt;
-}
-
 /* ============== Inputs gather ============== */
 
 static void gather_inputs(uint32_t now, AlarmInputs_t *in) {
@@ -378,14 +359,6 @@ static void gather_inputs(uint32_t now, AlarmInputs_t *in) {
             (in->mod_voltage_min < 0.0f || mv.voltage < in->mod_voltage_min)) {
             in->mod_voltage_min = mv.voltage;
         }
-    }
-
-    /* AC alarms: purely driven by module CAN alarm flags (no synthetic voltage inference) */
-    if (in->mod_alarm_or & CHG_LIB_ALARM_AC_PHASE_LOSS) {
-        in->ac_phase_loss = true;
-    }
-    if (in->mod_alarm_or & CHG_LIB_ALARM_AC_UNDER_VOLT) {
-        in->ac_undervolt = true;
     }
 }
 
@@ -454,7 +427,7 @@ static void log_tally(uint32_t now, const AlarmEdgeTally_t *t) {
 }
 
 static uint8_t alarm_severity(AlarmCode_t code, AlarmAction_t action) {
-    if (action == ALARM_ACT_ESTOP || code == ALARM_CTRL_EMERGENCY_STOP) {
+    if (action == ALARM_ACT_ESTOP) {
         return 4U;
     }
     if (action == ALARM_ACT_STOP) {

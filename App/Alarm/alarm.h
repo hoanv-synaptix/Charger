@@ -7,7 +7,6 @@
  *   - module-reported (mirror of CHG_LIB_ALARM_* bits, aggregated over modules)
  *   - controller      (mirror of CHARGE_CTRL_FAULT_* -- report/log only)
  *   - controller-derived  safety decisions from valid telemetry (E022);
- *   - station-policy-derived decisions from a module CAN alarm (E026);
  *   - connection-derived alarms from communication timeout (E021/W010);
  *   - data-quality status is not represented in this alarm space.
  *
@@ -39,7 +38,7 @@ extern "C" {
 typedef enum {
     ALARM_NONE = 0,
 
-    /* --- BMS-reported (1:1 with BMS_ALARM_* bits 0..12) --- */
+    /* --- BMS-reported (1:1 with BMS_ALARM_* bits 0..10) --- */
     ALARM_BMS_LOW_PACK_VOLT,
     ALARM_BMS_LOW_CELL_VOLT,
     ALARM_BMS_HIGH_PACK_VOLT,
@@ -51,8 +50,6 @@ typedef enum {
     ALARM_BMS_TEMP_RELAY_HIGH,
     ALARM_BMS_OVER_CHG_CURR,
     ALARM_BMS_OVER_DCHG_CURR,
-    ALARM_BMS_CELL_VOLT_DIFF,
-    ALARM_BMS_LOW_SOC,
 
     /* --- module-reported (any active module raising the bit) --- */
     ALARM_MOD_HW_FAULT,
@@ -70,15 +67,12 @@ typedef enum {
     ALARM_CTRL_INVALID_CONFIG,
     ALARM_CTRL_JACK_OVER_V,
     ALARM_CTRL_JACK_OVER_TEMP,
-    ALARM_CTRL_EMERGENCY_STOP,
 
     /* --- controller/station decisions; inputs remain explicit below --- */
     ALARM_BMS_COMM_LOST,            /* connection-derived: BMS timeout         */
     ALARM_BMS_NO_PACK_VOLTAGE,      /* BMS telemetry CAN -> controller E022   */
     ALARM_DC_LOAD_LOST,             /* current collapsed while commanded high  */
     ALARM_DC_OUT_NOT_ESTABLISHED,   /* relay closed, no current within window  */
-    ALARM_AC_PHASE_LOSS,            /* module CAN phase-loss flag               */
-    ALARM_AC_UNDERVOLT,             /* module W011 CAN -> station policy E026  */
 
     /* Appended to preserve existing active_mask bit positions. */
     ALARM_MOD_FAN_FAULT,

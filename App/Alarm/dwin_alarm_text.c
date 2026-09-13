@@ -74,16 +74,6 @@ static const DwinAlarmEntry_t s_alarm_entries[ALARM_CODE_COUNT] = {
         "W004",
         (const uint16_t *)u"Quá dòng xả BMS"
     },
-    [ALARM_BMS_CELL_VOLT_DIFF] = {
-        ALARM_BMS_CELL_VOLT_DIFF,
-        "W005",
-        (const uint16_t *)u"Lệch điện áp cell BMS"
-    },
-    [ALARM_BMS_LOW_SOC] = {
-        ALARM_BMS_LOW_SOC,
-        "W006",
-        (const uint16_t *)u"Mức pin BMS thấp"
-    },
     [ALARM_MOD_HW_FAULT] = {
         ALARM_MOD_HW_FAULT,
         "E010",
@@ -149,11 +139,6 @@ static const DwinAlarmEntry_t s_alarm_entries[ALARM_CODE_COUNT] = {
         "E031",
         (const uint16_t *)u"Bảo vệ quá nhiệt jack cắm"
     },
-    [ALARM_CTRL_EMERGENCY_STOP] = {
-        ALARM_CTRL_EMERGENCY_STOP,
-        "E020",
-        (const uint16_t *)u"Dừng khẩn cấp (E-Stop)"
-    },
     [ALARM_BMS_COMM_LOST] = {
         ALARM_BMS_COMM_LOST,
         "E021",
@@ -173,16 +158,6 @@ static const DwinAlarmEntry_t s_alarm_entries[ALARM_CODE_COUNT] = {
         ALARM_DC_OUT_NOT_ESTABLISHED,
         "E024",
         (const uint16_t *)u"Chưa thiết lập đầu ra DC"
-    },
-    [ALARM_AC_PHASE_LOSS] = {
-        ALARM_AC_PHASE_LOSS,
-        "E025",
-        (const uint16_t *)u"Mất pha điện áp AC vào"
-    },
-    [ALARM_AC_UNDERVOLT] = {
-        ALARM_AC_UNDERVOLT,
-        "E026",
-        (const uint16_t *)u"Sụt áp nguồn AC đầu vào"
     },
     [ALARM_MOD_FAN_FAULT] = {
         ALARM_MOD_FAN_FAULT,

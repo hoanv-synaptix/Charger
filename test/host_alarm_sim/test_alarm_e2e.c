@@ -161,17 +161,20 @@ static bool test_alarm_log_sequence_survives_full_ring(void)
     healthy_bms(400.0f);
     ASSERT(start_running(), "controller never RUNNING");
 
-    /* Raise all 13 BMS alarm fields, then clear them. This creates 26 edges
-     * through the real alarm path without repeatedly restarting the charge
+    /* Raise all BMS alarm fields, then clear them. Repeat twice so that 44 edges
+     * easily exceed the 24-entry ring buffer depth (ALARM_LOG_DEPTH). This creates
+     * edges through the real alarm path without repeatedly restarting the charge
      * controller after a critical alarm stops it. */
-    for (uint8_t field = 0U; field < 13U; field++) {
-        set_bms_alarm_severity(field, 2U);
+    for (int pass = 0; pass < 2; pass++) {
+        for (uint8_t field = 0U; field < 13U; field++) {
+            set_bms_alarm_severity(field, 2U);
+        }
+        drive_ms(800U);
+        for (uint8_t field = 0U; field < 13U; field++) {
+            set_bms_alarm_severity(field, 0U);
+        }
+        drive_ms(800U);
     }
-    drive_ms(800U);
-    for (uint8_t field = 0U; field < 13U; field++) {
-        set_bms_alarm_severity(field, 0U);
-    }
-    drive_ms(800U);
 
     AlarmLogEntry_t log[ALARM_LOG_DEPTH];
     uint8_t count = Alarm_GetLog(log, ALARM_LOG_DEPTH);
@@ -215,8 +218,6 @@ static bool test_all_bms_alm_info_fields_from_pdf(void)
         {8U,  BMS_ALARM_TEMP_RELAY_HIGH, ALARM_BMS_TEMP_RELAY_HIGH, "W003", ALARM_ACT_INFO},
         {9U,  BMS_ALARM_OVER_CHG_CURR,   ALARM_BMS_OVER_CHG_CURR,   "E007", ALARM_ACT_STOP},
         {10U, BMS_ALARM_OVER_DCHG_CURR,  ALARM_BMS_OVER_DCHG_CURR,  "W004", ALARM_ACT_INFO},
-        {11U, BMS_ALARM_CELL_VOLT_DIFF,  ALARM_BMS_CELL_VOLT_DIFF,  "W005", ALARM_ACT_INFO},
-        {12U, BMS_ALARM_LOW_SOC,         ALARM_BMS_LOW_SOC,         "W006", ALARM_ACT_INFO},
     };
 
     for (size_t i = 0U; i < sizeof(cases) / sizeof(cases[0]); i++) {
@@ -257,8 +258,8 @@ static bool test_all_bms_alm_info_fields_from_pdf(void)
 
     AlarmView_t warning_alarm;
     Alarm_GetView(&warning_alarm);
-    ASSERT(warning_alarm.active_count == 13U,
-           "all severity 1 BMS warnings must reach unified alarm view");
+    ASSERT(warning_alarm.active_count == 11U,
+           "all active severity 1 BMS warnings must reach unified alarm view");
     ASSERT(warning_alarm.highest_action == ALARM_ACT_INFO,
            "severity 1 BMS warnings must remain INFO");
     ChargeCtrlView_t warning_ctrl;
@@ -706,23 +707,34 @@ static bool test_module_ac_undervolt_mirrored_and_derived(void)
     healthy_bms(400.0f);
     ASSERT(start_running(), "controller never RUNNING");
 
-    /* 1. AC input drops -> both module and derived AC_UNDERVOLT trip */
+    /* 1. AC input drops -> module AC_UNDER_VOLT mirror trips (W011, INFO only) */
     g_sim_module.tonhe_fault_bits = (1U << 0);   /* input undervoltage */
     drive_ms(1500U);
 
     ASSERT(alarm_logged_raise(ALARM_MOD_AC_UNDER_VOLT), "module AC-undervolt mirror missing");
-    ASSERT(alarm_logged_raise(ALARM_AC_UNDERVOLT), "derived AC_UNDERVOLT missing");
-    ASSERT(alarm_active(ALARM_AC_UNDERVOLT), "derived AC_UNDERVOLT must be active");
+    ASSERT(alarm_active(ALARM_MOD_AC_UNDER_VOLT), "module AC-undervolt mirror must be active");
 
-    /* 2. AC grid recovers -> both alarms auto-clear after debounce */
+    /* Controller must remain RUNNING since E026 was removed */
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "AC under-voltage warning must not stop charge");
+
+    /* 2. AC grid recovers -> module alarm auto-clears after debounce */
     g_sim_module.tonhe_fault_bits = 0;
     drive_ms(1500U);
 
-    ASSERT(!alarm_active(ALARM_AC_UNDERVOLT), "derived AC_UNDERVOLT must clear after AC recovers");
     ASSERT(!alarm_active(ALARM_MOD_AC_UNDER_VOLT), "module AC-undervolt mirror must clear after AC recovers");
     AlarmView_t av;
     Alarm_GetView(&av);
     ASSERT(av.worst_code == ALARM_NONE, "worst_code must return to ALARM_NONE (0000)");
+
+    /* 3. Verify E025 (AC phase loss) is completely removed: phase loss bit does not trip alarm */
+    g_sim_module.tonhe_fault_bits = (1U << 1);
+    drive_ms(1500U);
+    Alarm_GetView(&av);
+    ASSERT(av.active_count == 0U, "AC phase loss must be completely ignored");
+    g_sim_module.tonhe_fault_bits = 0;
+    drive_ms(200U);
 
     printf("[PASS] test_module_ac_undervolt_mirrored_and_derived\n");
     return true;
