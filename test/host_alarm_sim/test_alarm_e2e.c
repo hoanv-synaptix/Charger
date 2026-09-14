@@ -135,13 +135,21 @@ static bool test_bms_alm_info_raw_e005(void)
     ASSERT((view.alarm_flags & BMS_ALARM_TEMP_HIGH_CHG) != 0U,
            "ALM_INFO byte1 severity 2 must set TEMP_HIGH_CHG");
 
-    frame[1] = 0x40U; /* warning only: (1 << 6), not an E005 fault */
+    frame[1] = 0x40U; /* severity=1: now sets fault flag per spec */
+    BMS_FeedFrame(0U, BMS_ID_ALM_INFO, frame, 8U);
+    BMS_GetView(&view);
+    ASSERT((view.alarm_flags & BMS_ALARM_TEMP_HIGH_CHG) != 0U,
+           "ALM_INFO severity 1 must set E005 fault flag");
+    ASSERT((view.warning_flags & BMS_ALARM_TEMP_HIGH_CHG) != 0U,
+           "ALM_INFO severity 1 must set E005 warning flag");
+
+    frame[1] = 0x00U; /* severity=0: cleared */
     BMS_FeedFrame(0U, BMS_ID_ALM_INFO, frame, 8U);
     BMS_GetView(&view);
     ASSERT((view.alarm_flags & BMS_ALARM_TEMP_HIGH_CHG) == 0U,
-           "ALM_INFO warning severity must not set E005 fault flag");
-    ASSERT((view.warning_flags & BMS_ALARM_TEMP_HIGH_CHG) != 0U,
-           "ALM_INFO warning severity must set E005 warning flag");
+           "ALM_INFO severity 0 must clear E005 fault flag");
+    ASSERT((view.warning_flags & BMS_ALARM_TEMP_HIGH_CHG) == 0U,
+           "ALM_INFO severity 0 must clear E005 warning flag");
 
     frame[1] = 0xC0U; /* severity=3 (severe): (3 << 6) */
     BMS_FeedFrame(0U, BMS_ID_ALM_INFO, frame, 8U);
@@ -242,8 +250,8 @@ static bool test_all_bms_alm_info_fields_from_pdf(void)
                "BMS alarm action mismatch");
     }
 
-    /* Severity 1 is a BMS warning: it must be reported without being
-     * promoted to a fault or stopping an active charge. */
+    /* Severity 1 is now a BMS fault per spec: it must populate both
+     * alarm_flags and warning_flags, triggering STOP action on fault fields. */
     ASSERT(setup(NULL), "setup warning threshold");
     healthy_bms(400.0f);
     ASSERT(start_running(), "controller never RUNNING for warning threshold");
@@ -251,35 +259,26 @@ static bool test_all_bms_alm_info_fields_from_pdf(void)
     drive_ms(800U);
     BMS_View_t warning_view;
     BMS_GetView(&warning_view);
-    ASSERT(warning_view.alarm_flags == BMS_ALARM_NONE,
-           "severity 1 ALM_INFO was incorrectly promoted to fault flags");
+    ASSERT(warning_view.alarm_flags == (BMS_AlarmFlag_t)((1U << 13) - 1U),
+           "severity 1 ALM_INFO must populate all alarm fault flags");
     ASSERT(warning_view.warning_flags == (BMS_AlarmFlag_t)((1U << 13) - 1U),
-           "severity 1 ALM_INFO did not populate all warning flags");
+           "severity 1 ALM_INFO must populate all warning flags");
 
     AlarmView_t warning_alarm;
     Alarm_GetView(&warning_alarm);
     ASSERT(warning_alarm.active_count == 11U,
-           "all active severity 1 BMS warnings must reach unified alarm view");
-    ASSERT(warning_alarm.highest_action == ALARM_ACT_INFO,
-           "severity 1 BMS warnings must remain INFO");
-    ChargeCtrlView_t warning_ctrl;
-    ChargeController_GetView(&warning_ctrl);
-    ASSERT(warning_ctrl.state == CHARGE_CTRL_STATE_RUNNING,
-           "severity 1 BMS warnings must not stop charging");
-
-    /* Raise one of the same active bits to severity 2. The boolean alarm
-     * condition remains true, so the safety action must still upgrade from
-     * INFO to STOP without relying on a new active edge. */
-    g_sim_bms.high_cell_volt = 2U;
-    drive_ms(200U);
-    BMS_GetView(&warning_view);
-    ASSERT((warning_view.warning_flags & BMS_ALARM_HIGH_CELL_VOLT) == 0U,
-           "severity transition must remove the old warning flag");
-    ASSERT((warning_view.alarm_flags & BMS_ALARM_HIGH_CELL_VOLT) != 0U,
-           "severity transition must set the fault flag");
-    Alarm_GetView(&warning_alarm);
+           "all active severity 1 BMS alarms must reach unified alarm view");
     ASSERT(warning_alarm.highest_action == ALARM_ACT_STOP,
-           "warning-to-fault transition must upgrade to STOP");
+           "severity 1 BMS alarms with stop action must trigger ALARM_ACT_STOP");
+
+    /* Clearing all fields (severity 0) clears both flags */
+    for (uint8_t field = 0U; field < 13U; field++) set_bms_alarm_severity(field, 0U);
+    drive_ms(800U);
+    BMS_GetView(&warning_view);
+    ASSERT(warning_view.alarm_flags == BMS_ALARM_NONE,
+           "severity 0 must clear all fault flags");
+    ASSERT(warning_view.warning_flags == BMS_ALARM_NONE,
+           "severity 0 must clear all warning flags");
 
     printf("[PASS] test_all_bms_alm_info_fields_from_pdf\n");
     return true;
@@ -649,7 +648,7 @@ static bool test_controller_temperature_inhibit_suppresses_load_lost(void)
 
     /* Temperature cools down to 50.0C (< 55.0C - 1.0C = 54.0C): auto-recovery */
     g_sim_bms.max_cell_temp_c = 50.0f;
-    drive_ms(600U);
+    drive_ms(3500U);
 
     ChargeController_GetView(&cv);
     ASSERT(cv.inhibit == 0U, "inhibit must clear upon cooling below hysteresis");
@@ -673,6 +672,96 @@ static bool test_controller_temperature_inhibit_suppresses_load_lost(void)
     ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "charging continues uninterrupted");
 
     printf("[PASS] test_controller_temperature_inhibit_suppresses_load_lost\n");
+    return true;
+}
+
+static bool test_stage_thermal_trip_limit_halts_on_4th(void)
+{
+    printf("Running test_stage_thermal_trip_limit_halts_on_4th...\n");
+    ChargeCycleConfig_t cfg;
+    ASSERT(setup(&cfg), "setup");
+
+    cfg.temp_enabled = 1U;
+    cfg.temp_delta_c = 1.0f;
+    cfg.temp_1_c = 10.0f;
+    cfg.temp_2_c = 20.0f;
+    cfg.temp_3_c = 40.0f;
+    cfg.temp_4_c = 50.0f;
+    cfg.temp_5_c = 55.0f;
+    cfg.temp_curr_1_c = 1.0f;
+    cfg.temp_curr_2_c = 0.8f;
+    cfg.temp_curr_3_c = 0.5f;
+    cfg.temp_curr_4_c = 0.2f;
+    ASSERT(ChargeCycleConfig_Set(&cfg), "temperature config rejected");
+
+    healthy_bms(400.0f);
+    ASSERT(start_running(), "controller never RUNNING");
+    establish_load(400.0f, 40.0f);
+
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.bms_temp_trip_count == 0U, "initial trip count must be 0");
+
+    /* Trip 1, 2, 3: Over-temperature stage (60.0C >= temp_5_c 55.0C) inhibits to 0A and recovers */
+    for (uint8_t trip = 1U; trip <= 3U; trip++) {
+        g_sim_bms.max_cell_temp_c = 60.0f;
+        drive_ms(1000U);
+
+        ChargeController_GetView(&cv);
+        ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "controller must stay RUNNING during recoverable stage trip");
+        ASSERT(cv.inhibit != 0U && cv.applied_current_per_module_a == 0.0f, "current must be clamped to 0A");
+        ASSERT(cv.bms_temp_trip_count == trip, "trip count mismatch for stage overtemp");
+
+        /* Cool down to 50.0C (< 55.0C - 1.0C = 54.0C) and wait for recovery confirmation (3000ms) */
+        g_sim_bms.max_cell_temp_c = 50.0f;
+        drive_ms(3500U);
+
+        ChargeController_GetView(&cv);
+        ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "controller must recover to RUNNING");
+        ASSERT(cv.inhibit == 0U, "inhibit must clear on recovery");
+        ASSERT(cv.bms_temp_trip_count == trip, "trip count must persist across recoveries");
+
+        /* Re-establish load for next cycle */
+        establish_load(400.0f, 40.0f);
+    }
+
+    /* Trip 4: Must halt charge completely (STATE_FAULT), not auto-recover */
+    g_sim_bms.max_cell_temp_c = 60.0f;
+    drive_ms(1000U);
+
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_FAULT, "controller must enter FAULT state on 4th stage trip");
+    ASSERT(cv.bms_temp_trip_count == 4U, "trip count must be 4 on 4th stage trip");
+    ASSERT(cv.stop_reason == CHARGE_STOP_BMS_ALARM, "stop_reason must be BMS_ALARM");
+
+    /* Module stops and current settles to 0A -> contactor opens safely */
+    g_sim_module.current = 0.0f;
+    g_sim_bms.pack_current_a = 0.0f;
+    drive_ms(200U);
+    ChargeController_GetView(&cv);
+    ASSERT(!cv.relay_should_close, "contactor must open once current settles");
+
+    /* Even if battery cools down, controller must NOT auto-recover from FAULT */
+    g_sim_bms.max_cell_temp_c = 40.0f;
+    drive_ms(5000U);
+
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_FAULT, "controller must remain in FAULT even after cooling down");
+
+    /* While still hot, reset must be rejected */
+    g_sim_bms.max_cell_temp_c = 60.0f;
+    drive_ms(600U);
+    ASSERT(!ChargeController_ResetFaultIfSafe(mock_tick), "reset fault must fail while temperature is high");
+
+    /* Once cooled down, reset clears fault and resets trip count to 0 */
+    g_sim_bms.max_cell_temp_c = 40.0f;
+    drive_ms(600U);
+    ASSERT(ChargeController_ResetFaultIfSafe(mock_tick), "reset fault should succeed once temperature is safe");
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_IDLE, "controller must return to IDLE after reset");
+    ASSERT(cv.bms_temp_trip_count == 0U, "trip count must reset to 0 after fault clear");
+
+    printf("[PASS] test_stage_thermal_trip_limit_halts_on_4th\n");
     return true;
 }
 
@@ -892,8 +981,8 @@ static bool test_bms_alarm_timeout_auto_recovers_to_0000(void)
            "E005 string check");
 
     /* 2. Over-temperature clears: per vendor PDF §5.4, BMS stops sending 0x07F4.
-     * Advance time past BMS_ALM_INFO_TIMEOUT_MS (1000ms) + 100ms debounce clear. */
-    drive_ms(1200U);
+     * Advance time past BMS_ALM_INFO_TIMEOUT_MS (1000ms) + 3000ms recovery window + debounce clear. */
+    drive_ms(4500U);
 
     /* 3. Verify ALM_INFO timed out and alarm auto-recovered */
     BMS_GetView(&bms_view);
@@ -990,6 +1079,7 @@ int main(void)
     ok &= test_bms_thermal_warning_suppresses_load_lost();
     ok &= test_bms_thermal_fault_recovers_without_e023();
     ok &= test_bms_thermal_trip_limit_halts_on_4th();
+    ok &= test_stage_thermal_trip_limit_halts_on_4th();
     ok &= test_controller_temperature_inhibit_suppresses_load_lost();
     ok &= test_dc_out_not_established();
     ok &= test_bms_comm_lost_mid_charge();

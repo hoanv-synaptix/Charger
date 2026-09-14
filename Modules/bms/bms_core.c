@@ -175,10 +175,9 @@ static void map_alarm_field(uint8_t sev, BMS_AlarmFlag_t flag,
                             BMS_AlarmFlag_t *warning_flags,
                             BMS_AlarmFlag_t *fault_flags)
 {
-    if (sev == 1U) {
+    if (sev >= 1U) {
+        /* User confirmed 2026-09-14: Severity >= 1 is treated as actionable fault/fail */
         *warning_flags |= flag;
-    } else if (sev >= 2U) {
-        /* Only fault/severe BMS reports may affect charging safety. */
         *fault_flags |= flag;
     }
 }

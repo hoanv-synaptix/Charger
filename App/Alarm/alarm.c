@@ -125,6 +125,19 @@ static bool ev_bms(const AlarmInputs_t *in, uint32_t bit) {
     return ((in->bms.alarm_flags | in->bms.warning_flags) & bit) != 0U;
 }
 
+static bool ev_bms_temp_high(const AlarmInputs_t *in, uint32_t bit) {
+    if (ev_bms(in, bit)) return true;
+    if (in->cc.bms_temp_trip_count >= 4U &&
+        (in->cc.fault_flags & CHARGE_CTRL_FAULT_BMS_ALARM) != 0U) {
+        return true;
+    }
+    if (in->cc.active_limit_source == CHARGE_LIMIT_SOURCE_TEMPERATURE &&
+        in->cc.active_stage_band == CHARGE_STAGE_BAND_ABOVE_MAX) {
+        return true;
+    }
+    return false;
+}
+
 /* BMS severity-1 reports use the same existing AlarmCode_t as their
  * severity-2/3 counterpart, but are reporting-only. Keep the static table
  * action for fault flags and downgrade only a warning-only BMS mirror to INFO.
@@ -133,7 +146,7 @@ static bool ev_bms(const AlarmInputs_t *in, uint32_t bit) {
 static AlarmAction_t effective_action(const AlarmSpec_t *sp,
                                       const AlarmInputs_t *in)
 {
-    if ((sp->eval == ev_bms) &&
+    if (((sp->eval == ev_bms) || (sp->eval == ev_bms_temp_high)) &&
         ((in->bms.warning_flags & sp->param) != 0U) &&
         ((in->bms.alarm_flags & sp->param) == 0U)) {
         return ALARM_ACT_INFO;
@@ -176,7 +189,7 @@ static const AlarmSpec_t k_specs[] = {
      * after fresh, stable BMS recovery. Do not dispatch a second generic
      * ChargeController_Stop() here, because that would erase the session and
      * make automatic thermal recovery impossible. */
-    { ALARM_BMS_TEMP_HIGH_CHG,   ALARM_ACT_INFO,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms, BMS_ALARM_TEMP_HIGH_CHG,   "BMS charge over-temp" },
+    { ALARM_BMS_TEMP_HIGH_CHG,   ALARM_ACT_INFO,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms_temp_high, BMS_ALARM_TEMP_HIGH_CHG,   "BMS charge over-temp" },
     { ALARM_BMS_TEMP_HIGH_DCHG,  ALARM_ACT_INFO,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms, BMS_ALARM_TEMP_HIGH_DCHG,  "BMS discharge over-temp" },
     { ALARM_BMS_TEMP_LOW_CHG,    ALARM_ACT_STOP,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms, BMS_ALARM_TEMP_LOW_CHG,    "BMS charge under-temp" },
     { ALARM_BMS_TEMP_LOW_DCHG,   ALARM_ACT_INFO,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms, BMS_ALARM_TEMP_LOW_DCHG,   "BMS discharge under-temp" },

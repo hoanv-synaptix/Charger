@@ -2127,9 +2127,9 @@ static bool test_temp_stage_asymmetric_hysteresis(void)
     ASSERT(cv.active_stage_band == CHARGE_STAGE_BAND_ABOVE_MAX, "cooling to 58C must stay in ABOVE_MAX (delta not met)");
     ASSERT(g_sim_module.actually_on, "module must remain ON while still inhibited");
 
-    /* 7. Cool down to exactly 57.0C (lower_thresh - delta): must recover to band 4_5 */
+    /* 7. Cool down to exactly 57.0C (lower_thresh - delta): must recover to band 4_5 after confirmation */
     g_sim_bms.max_cell_temp_c = 57.0f;
-    drive_ms(600U);
+    drive_ms(3500U);
     ChargeController_GetView(&cv);
     ASSERT(cv.active_stage_band == CHARGE_STAGE_BAND_4_5, "cooling to exactly 57C must recover from ABOVE_MAX to band 4_5");
     ASSERT(cv.inhibit == 0, "inhibit must clear on recovery");

@@ -223,7 +223,7 @@ static uint32_t check_precharge_faults(void);
 static void apply_charge_targets(uint32_t now_tick);
 static void stop_charging(void);
 static float get_existing_current_baseline(uint32_t now_tick, bool *active_out);
-static bool handle_bms_temperature_inhibit(const BMS_View_t *bms, uint32_t now_tick);
+static bool handle_bms_temperature_inhibit(const ChargeCycleConfig_t *cfg, const BMS_View_t *bms, uint32_t now_tick);
 
 /* Stage evaluation */
 static ChargeStageEval_t eval_cell_stage(const ChargeCycleConfig_t *cfg, const BMS_View_t *bms, uint32_t now_tick);
@@ -274,15 +274,20 @@ static void clear_fault(void) {
     g_ctrl.bms_temp_trip_count = 0U;
 }
 
-static bool handle_bms_temperature_inhibit(const BMS_View_t *bms, uint32_t now_tick)
+static bool handle_bms_temperature_inhibit(const ChargeCycleConfig_t *cfg, const BMS_View_t *bms, uint32_t now_tick)
 {
-    const bool temp_alarm = (bms->alarm_flags & BMS_ALARM_TEMP_HIGH_CHG) != 0U;
+    const bool can_alarm = (bms->alarm_flags & BMS_ALARM_TEMP_HIGH_CHG) != 0U;
+    const bool stage_overtemp = (cfg != NULL && cfg->temp_enabled != 0U) &&
+                                ((float)bms->max_cell_temp >= cfg->temp_5_c);
+    const bool temp_alarm = can_alarm || stage_overtemp;
 
     if (temp_alarm) {
         if (!g_ctrl.bms_temp_inhibit_active) {
             g_ctrl.bms_temp_trip_count++;
-            LOG("CC: BMS temperature trip #%u active alarm=0x%08lX\r\n",
+            LOG("CC: BMS temperature trip #%u active (can=%u stage=%u temp=%.1fC alm=0x%08lX)\r\n",
                 (unsigned)g_ctrl.bms_temp_trip_count,
+                can_alarm ? 1U : 0U, stage_overtemp ? 1U : 0U,
+                (double)bms->max_cell_temp,
                 (unsigned long)bms->alarm_flags);
 
             if (g_ctrl.bms_temp_trip_count > CHARGE_CTRL_BMS_TEMP_MAX_TRIPS) {
@@ -290,16 +295,26 @@ static bool handle_bms_temperature_inhibit(const BMS_View_t *bms, uint32_t now_t
                     (unsigned)g_ctrl.bms_temp_trip_count,
                     (unsigned)CHARGE_CTRL_BMS_TEMP_MAX_TRIPS);
                 set_fault(CHARGE_CTRL_FAULT_BMS_ALARM, now_tick);
+                stop_charging();
                 return true;
             }
         }
         g_ctrl.bms_temp_inhibit_active = true;
         g_ctrl.bms_temp_recovery_start_tick = 0U;
     } else if (g_ctrl.bms_temp_inhibit_active) {
+        /* Recovery condition: CAN alarm must be clear AND cell temperature must have cooled
+         * below hysteresis threshold (temp_5_c - temp_delta_c). */
+        bool temp_clear = !can_alarm;
+        if (cfg != NULL && cfg->temp_enabled != 0U) {
+            if ((float)bms->max_cell_temp > (cfg->temp_5_c - cfg->temp_delta_c)) {
+                temp_clear = false;
+            }
+        }
+
         /* Alarm clear alone is not sufficient. Require fresh battery status
          * and cell voltage data so a stale/partial BMS snapshot cannot
          * release the charger after a thermal trip. */
-        if (!bms->online || BMS_IsDataStale() ||
+        if (!temp_clear || !bms->online || BMS_IsDataStale() ||
             !BMS_HasFreshPrechargeData(now_tick)) {
             g_ctrl.bms_temp_recovery_start_tick = 0U;
         } else {
@@ -1689,7 +1704,7 @@ static void run_bms_controlled_mode(uint32_t now_tick) {
         set_fault(CHARGE_CTRL_FAULT_BMS_ALARM, now_tick);
         return;
     }
-    if (handle_bms_temperature_inhibit(&bms, now_tick)) {
+    if (handle_bms_temperature_inhibit(&cfg, &bms, now_tick)) {
         return;
     }
 
@@ -1930,7 +1945,7 @@ static void run_precharge_mode(uint32_t now_tick)
         set_fault(CHARGE_CTRL_FAULT_BMS_ALARM, now_tick);
         return;
     }
-    if (handle_bms_temperature_inhibit(&bms, now_tick)) {
+    if (handle_bms_temperature_inhibit(&cfg, &bms, now_tick)) {
         return;
     }
 
@@ -2319,8 +2334,12 @@ bool ChargeController_ResetFaultIfSafe(uint32_t now_tick)
     if ((g_ctrl.fault_flags & CHARGE_CTRL_FAULT_BMS_ALARM) != 0U) {
         /* A lost/stale BMS cannot prove that the alarm has cleared. Require
          * both recovery frames to be fresh and the critical mask to be clear
-         * before allowing the operator to retry pre-charge. */
+         * before allowing the operator to retry. Also check that temperature
+         * has cooled below stage limit if enabled. */
         if (!BMS_HasFreshPrechargeData(now_tick) || BMS_HasCriticalAlarm()) {
+            return false;
+        }
+        if (cfg.temp_enabled != 0U && (float)bms.max_cell_temp >= cfg.temp_5_c) {
             return false;
         }
     }

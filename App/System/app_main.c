@@ -1052,6 +1052,11 @@ void App_Loop(void)
             if (dwin_precharge_error_hold && dwin_precharge_error_code != ALARM_NONE) {
                 const char *c_str = DWIN_Alarm_GetCodeString(dwin_precharge_error_code);
                 strncpy(dd.topbar_fault_code, c_str, sizeof(dd.topbar_fault_code) - 1U);
+            } else if (cc_view.state == CHARGE_CTRL_STATE_FAULT &&
+                       ((cc_view.fault_flags & CHARGE_CTRL_FAULT_BMS_ALARM) != 0U ||
+                        cc_view.stop_reason == CHARGE_STOP_BMS_ALARM)) {
+                const char *c_str = DWIN_Alarm_GetCodeString(ALARM_BMS_TEMP_HIGH_CHG);
+                strncpy(dd.topbar_fault_code, c_str, sizeof(dd.topbar_fault_code) - 1U);
             } else {
                 strncpy(dd.topbar_fault_code, "0000", sizeof(dd.topbar_fault_code) - 1U);
             }
