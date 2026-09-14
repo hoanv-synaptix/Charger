@@ -164,8 +164,8 @@ typedef enum {
  * 00 logo, 01 dashboard, 02 setting, 03..05 alarm, 06 login, 07 pre-charge. */
 /* --- Charge Configuration (Pages 08..11) --- */
 #define VP_CFG_HOURS               0x1600U /* DataText / Inc: 0..99 */
-#define VP_CFG_MINUTES             0x1602U /* DataText / Inc: 0..59 */
-#define VP_CFG_APPLY_KEY           0x1604U /* Return Key: 1: Fast+On, 2: Fast+Off, 3: Norm+On, 4: Norm+Off */
+#define VP_CFG_MINUTES             0x1601U /* DataText / Inc: 0..59 */
+#define VP_CFG_APPLY_KEY           0x1602U /* Return Key: 1: Fast+On, 2: Fast+Off, 3: Norm+On, 4: Norm+Off */
 #define VP_TIME_MODE_KEY           0x1130U /* panel->MCU: Return Key on Page 02 -> Time & Mode config */
 
 #define DWIN_CFG_KEY_FAST_ON       0x0001U

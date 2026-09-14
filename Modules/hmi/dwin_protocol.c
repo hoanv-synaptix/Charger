@@ -521,8 +521,8 @@ void DWIN_ParseRX(const uint8_t *buf, uint16_t len)
                             DWIN_OnActionButton(keyval);
                         } else if (vp == VP_CFG_HOURS || vp == VP_CFG_MINUTES) {
                             DWIN_OnKeyEvent(vp, keyval);
-                            if (vp == VP_CFG_HOURS && nw >= 3U) {
-                                uint16_t minval = (uint16_t)(((uint16_t)rx[11] << 8) | rx[12]);
+                            if (vp == VP_CFG_HOURS && nw >= 2U) {
+                                uint16_t minval = (uint16_t)(((uint16_t)rx[9] << 8) | rx[10]);
                                 DWIN_OnKeyEvent(VP_CFG_MINUTES, minval);
                             }
                         } else if ((vp == VP_SET_LOGIN_KEY || vp == VP_TIME_MODE_KEY ||

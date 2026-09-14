@@ -1157,8 +1157,8 @@ void DWIN_OnKeyEvent(uint16_t vp, uint16_t keyval)
                 (unsigned)s_cfg_hours, (unsigned)s_cfg_minutes);
             DWIN_InvalidateSyncState();
             DWIN_SetPage(target_page);
-            DWIN_SendWords(VP_CFG_HOURS, &s_cfg_hours, 1U);
-            DWIN_SendWords(VP_CFG_MINUTES, &s_cfg_minutes, 1U);
+            uint16_t time_vals[2] = { s_cfg_hours, s_cfg_minutes };
+            DWIN_SendWords(VP_CFG_HOURS, time_vals, 2U);
         }
         return;
     }
