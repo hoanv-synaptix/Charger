@@ -2365,6 +2365,146 @@ static bool test_delay_charge_stop_cancels_to_idle(void)
     return true;
 }
 
+static bool test_charge_mode_fast_vs_normal_current_limits(void)
+{
+    printf("Running test_charge_mode_fast_vs_normal_current_limits...\n");
+    ChargeCycleConfig_t fast_cfg, norm_cfg;
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_MAXWELL, &fast_cfg), "setup failed");
+    set_healthy_bms(400.0f, 50);
+
+    /* 1. Configure Fast Mode profile (imax_c = 1.0C -> 100A for 100Ah battery) */
+    fast_cfg.charge_mode = CHARGE_MODE_FAST;
+    fast_cfg.imax_c = 1.0f;
+    fast_cfg.delay_enabled = 0U;
+    ASSERT(ChargeCycleConfig_SetProfile(CHARGE_MODE_FAST, &fast_cfg), "SetProfile FAST failed");
+
+    /* 2. Configure Normal Mode profile (imax_c = 0.5C -> 50A for 100Ah battery) */
+    norm_cfg = fast_cfg;
+    norm_cfg.charge_mode = CHARGE_MODE_NORMAL;
+    norm_cfg.imax_c = 0.5f;
+    norm_cfg.delay_enabled = 0U;
+    ASSERT(ChargeCycleConfig_SetProfile(CHARGE_MODE_NORMAL, &norm_cfg), "SetProfile NORMAL failed");
+
+    /* 3. Run in FAST mode */
+    ASSERT(ChargeCycleConfig_SetActiveMode(CHARGE_MODE_FAST), "SetActiveMode FAST failed");
+    ASSERT(ChargeCycleConfig_GetActiveMode() == CHARGE_MODE_FAST, "active mode must be FAST");
+    ASSERT(warmup_and_start(1500U, 4000U), "module never reached RUNNING in FAST");
+
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "controller must be RUNNING in FAST");
+    ASSERT(cv.target_current_total_a == 100.0f, "Fast mode target current must be 100A (1.0C * 100Ah)");
+    ASSERT(cv.target_current_per_module_a == 100.0f, "Fast mode per-module target must be 100A");
+
+    drive_ms(2000U);
+    ChargeController_GetView(&cv);
+    ASSERT(cv.applied_current_per_module_a > 5.0f, "applied current must ramp up in FAST mode");
+
+    ChargeController_Stop(mock_tick);
+    drive_ms(1000U);
+
+    /* 4. Switch to NORMAL mode */
+    ASSERT(ChargeCycleConfig_SetActiveMode(CHARGE_MODE_NORMAL), "SetActiveMode NORMAL failed");
+    ASSERT(ChargeCycleConfig_GetActiveMode() == CHARGE_MODE_NORMAL, "active mode must be NORMAL");
+
+    /* Verify Fast profile was NOT overwritten by Normal profile */
+    ChargeCycleConfig_t check_fast;
+    ChargeCycleConfig_GetProfile(CHARGE_MODE_FAST, &check_fast);
+    ASSERT(check_fast.imax_c == 1.0f, "Fast profile imax_c must remain 1.0C");
+
+    ASSERT(warmup_and_start(500U, 4000U), "module never reached RUNNING in NORMAL");
+
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "controller must be RUNNING in NORMAL");
+    ASSERT(cv.target_current_total_a == 50.0f, "Normal mode target current must be 50A (0.5C * 100Ah)");
+    ASSERT(cv.target_current_per_module_a == 50.0f, "Normal mode per-module target must be 50A");
+
+    drive_ms(2000U);
+    ChargeController_GetView(&cv);
+    ASSERT(cv.applied_current_per_module_a > 5.0f && cv.applied_current_per_module_a <= 50.0f,
+           "applied current must be within 50A limit");
+
+    ChargeController_Stop(mock_tick);
+    drive_ms(1000U);
+
+    /* Restore FAST as default */
+    ChargeCycleConfig_SetActiveMode(CHARGE_MODE_FAST);
+    printf("[PASS] test_charge_mode_fast_vs_normal_current_limits\n");
+    return true;
+}
+
+static bool test_delay_charge_minutes_only(void)
+{
+    printf("Running test_delay_charge_minutes_only...\n");
+    ChargeCycleConfig_t cfg;
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_MAXWELL, &cfg), "setup failed");
+    set_healthy_bms(400.0f, 50);
+
+    /* 15 minutes delay only, 0 hours */
+    cfg.delay_enabled = 1U;
+    cfg.delay_hours = 0U;
+    cfg.delay_minutes = 15U;
+    ChargeCycleConfig_Set(&cfg);
+
+    drive_ms(1500U);
+
+    ASSERT(ChargeController_Start(CHARGE_CTRL_OWNER_DWIN, false, mock_tick), "Start should succeed");
+
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_DELAY, "must enter DELAY state");
+    ASSERT(cv.is_delaying, "is_delaying must be true");
+    ASSERT(cv.delay_duration_s == 900U, "delay duration must be 900s (15 min)");
+    ASSERT(cv.delay_remaining_s == 900U, "delay remaining must start at 900s");
+    ASSERT(cv.relay_should_close == 0, "contactor must stay open");
+
+    /* Advance 450s (7.5 minutes) */
+    drive_ms(450000U);
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_DELAY, "must still be in DELAY");
+    ASSERT(cv.delay_remaining_s == 450U, "delay remaining must be 450s");
+
+    /* Advance remaining 451s -> should start */
+    drive_ms(451000U);
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state != CHARGE_CTRL_STATE_DELAY, "should exit DELAY");
+    ASSERT(!cv.is_delaying, "is_delaying must be false");
+
+    ChargeController_Stop(mock_tick);
+    printf("[PASS] test_delay_charge_minutes_only\n");
+    return true;
+}
+
+static bool test_delay_charge_manual_mode_bypasses_delay(void)
+{
+    printf("Running test_delay_charge_manual_mode_bypasses_delay...\n");
+    ChargeCycleConfig_t cfg;
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_MAXWELL, &cfg), "setup failed");
+    set_healthy_bms(400.0f, 50);
+
+    /* Delay configured for 2 hours */
+    cfg.delay_enabled = 1U;
+    cfg.delay_hours = 2U;
+    cfg.delay_minutes = 0U;
+    ChargeCycleConfig_Set(&cfg);
+
+    drive_ms(1500U);
+
+    /* Manual mode = true must bypass DELAY and start immediately */
+    ASSERT(ChargeController_Start(CHARGE_CTRL_OWNER_DWIN, true, mock_tick), "Manual start should succeed");
+
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state != CHARGE_CTRL_STATE_DELAY, "manual mode must NOT enter DELAY state");
+    ASSERT(!cv.is_delaying, "is_delaying must be false");
+    ASSERT(cv.state == CHARGE_CTRL_STATE_READY || cv.state == CHARGE_CTRL_STATE_RUNNING,
+           "manual mode must proceed to READY or RUNNING");
+
+    ChargeController_Stop(mock_tick);
+    printf("[PASS] test_delay_charge_manual_mode_bypasses_delay\n");
+    return true;
+}
+
 int main(void)
 {
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -2429,6 +2569,9 @@ int main(void)
     pass &= test_multi_module_timing_budget();
     pass &= test_delay_charge_countdown_and_start();
     pass &= test_delay_charge_stop_cancels_to_idle();
+    pass &= test_charge_mode_fast_vs_normal_current_limits();
+    pass &= test_delay_charge_minutes_only();
+    pass &= test_delay_charge_manual_mode_bypasses_delay();
 
     if (pass) {
         printf("ALL TESTS PASSED.\n");
