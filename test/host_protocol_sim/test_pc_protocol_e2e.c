@@ -551,6 +551,44 @@ static bool test_debug_set_charge_cfg_valid_config_persists(void)
     return true;
 }
 
+static bool test_debug_set_charge_cfg_v6_compat_persists(void)
+{
+    printf("Running test_debug_set_charge_cfg_v6_compat_persists...\n");
+    ASSERT(setup_scenario(), "setup failed");
+    PC_Protocol_ResetTx();
+
+    ChargeCycleConfig_t curr_cfg;
+    ChargeCycleConfig_GetDefaults(&curr_cfg);
+    curr_cfg.charge_mode = 1U; /* NORMAL */
+    curr_cfg.delay_enabled = 1U;
+    curr_cfg.delay_hours = 2U;
+    curr_cfg.delay_minutes = 30U;
+    ChargeCycleConfig_Set(&curr_cfg);
+
+    /* Simulate an older C# app sending 243 bytes (v6 payload) */
+    uint8_t v6_payload[243];
+    memcpy(v6_payload, &curr_cfg, 243);
+    ChargeCycleConfig_t *p_v6 = (ChargeCycleConfig_t *)v6_payload;
+    p_v6->battery_capacity_ah = 120.0f;
+
+    send_pc_frame(DEBUG_CMD_SET_CHARGE_CFG, v6_payload, 243U);
+    uint8_t cmd, resp[255], len;
+    ASSERT(only_tx_frame(&cmd, resp, &len), "expected exactly one response");
+    ASSERT(cmd == DEBUG_RSP_CHARGE_CFG, "v6 config should succeed and echo back DEBUG_RSP_CHARGE_CFG");
+    ASSERT(g_storage_save_called, "v6 config should reach ChargeCycleStorage_Save()");
+
+    ChargeCycleConfig_t stored;
+    ChargeCycleConfig_Get(&stored);
+    ASSERT(stored.battery_capacity_ah == 120.0f, "v6 battery_capacity_ah should be updated");
+    ASSERT(stored.charge_mode == 1U, "charge_mode must be preserved");
+    ASSERT(stored.delay_enabled == 1, "delay_enabled must be preserved");
+    ASSERT(stored.delay_hours == 2 && stored.delay_minutes == 30, "delay timer must be preserved");
+    ASSERT(stored.version == CHARGE_CYCLE_CONFIG_VERSION, "version must be bumped to current version");
+
+    printf("[PASS] test_debug_set_charge_cfg_v6_compat_persists\n");
+    return true;
+}
+
 static bool test_debug_set_charge_cfg_wrong_length_rejected(void)
 {
     printf("Running test_debug_set_charge_cfg_wrong_length_rejected...\n");
@@ -728,6 +766,7 @@ int main(void)
     pass &= test_debug_get_charge_cfg_roundtrip();
     pass &= test_debug_set_charge_cfg_rejects_invalid_config();
     pass &= test_debug_set_charge_cfg_valid_config_persists();
+    pass &= test_debug_set_charge_cfg_v6_compat_persists();
     pass &= test_debug_set_charge_cfg_wrong_length_rejected();
     pass &= test_debug_get_system_info_matches_wire_struct();
     pass &= test_debug_get_alarm_info_wire_contract();

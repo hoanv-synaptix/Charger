@@ -557,13 +557,25 @@ bool DebugProtocol_HandleCommand(uint8_t cmd, const uint8_t *payload, uint16_t l
     case DEBUG_CMD_SET_CHARGE_CFG: {
         ChargeCycleConfig_t config;
 
-        if (len != sizeof(config)) {
+        if (len == sizeof(config)) {
+            memcpy(&config, payload, sizeof(config));
+        } else if (len == 243U) {
+            /* v6 payload backward compatibility (e.g. from older C# PC app) */
+            ChargeCycleConfig_Get(&config);
+            memcpy(&config, payload, 243U);
+            config.version = CHARGE_CYCLE_CONFIG_VERSION;
+            /* Preserve existing charge_mode, delay_enabled, delay_hours, delay_minutes */
+        } else if (len == 239U) {
+            /* v5 payload backward compatibility */
+            ChargeCycleConfig_Get(&config);
+            memcpy(&config, payload, 239U);
+            config.version = CHARGE_CYCLE_CONFIG_VERSION;
+            config.admin_pin = DEFAULT_ADMIN_PIN;
+        } else {
             reply[0] = 0x01; /* BAD_PARAM */
             PC_Protocol_SendFrame(DEBUG_RSP_ERROR, reply, 1);
             return true;
         }
-
-        memcpy(&config, payload, sizeof(config));
 
         /* Validate and set to RAM */
         if (!ChargeCycleConfig_Set(&config)) {
