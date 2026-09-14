@@ -33,6 +33,7 @@ bool ChargeCycleStorage_Load(ChargeCycleConfig_t *config);
  * @return true if saved successfully, false on error
  */
 bool ChargeCycleStorage_Save(const ChargeCycleConfig_t *config);
+bool ChargeCycleStorage_SaveProfile(uint8_t mode, const ChargeCycleConfig_t *config);
 
 #ifdef __cplusplus
 }

@@ -124,6 +124,34 @@ int main(void)
                  reloaded.delay_hours == 5U && reloaded.delay_minutes == 45U,
                  "v7 native fields roundtrip intact");
 
+    /* Test Dual Profile independent saving and re-packing */
+    ChargeCycleConfig_t fast_in, norm_in;
+    ChargeCycleConfig_GetDefaults(&fast_in);
+    fast_in.charge_mode = CHARGE_MODE_FAST;
+    fast_in.battery_capacity_ah = 150.0f;
+    fast_in.imax_c = 1.0f;
+    ok &= expect(ChargeCycleStorage_SaveProfile(CHARGE_MODE_FAST, &fast_in), "Save Fast profile succeeds");
+
+    ChargeCycleConfig_GetDefaults(&norm_in);
+    norm_in.charge_mode = CHARGE_MODE_NORMAL;
+    norm_in.battery_capacity_ah = 80.0f;
+    norm_in.imax_c = 0.4f;
+    ok &= expect(ChargeCycleStorage_SaveProfile(CHARGE_MODE_NORMAL, &norm_in), "Save Normal profile succeeds");
+
+    ChargeCycleConfig_Init();
+    ChargeCycleStorage_Init();
+
+    ChargeCycleConfig_t fast_out, norm_out;
+    ChargeCycleConfig_GetProfile(CHARGE_MODE_FAST, &fast_out);
+    ChargeCycleConfig_GetProfile(CHARGE_MODE_NORMAL, &norm_out);
+
+    ok &= expect(fast_out.battery_capacity_ah == 150.0f && fast_out.imax_c == 1.0f,
+                 "Fast profile preserved independently");
+    ok &= expect(norm_out.battery_capacity_ah == 80.0f && norm_out.imax_c == 0.4f,
+                 "Normal profile preserved independently");
+    ok &= expect(ChargeCycleConfig_GetActiveMode() == CHARGE_MODE_NORMAL,
+                 "Most recently written profile is active mode");
+
     printf(ok ? "ALL CONFIG STORAGE TESTS PASSED.\n"
               : "CONFIG STORAGE TESTS FAILED.\n");
     return ok ? 0 : 1;

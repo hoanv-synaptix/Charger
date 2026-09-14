@@ -100,112 +100,120 @@ static void read_record_at(ChargeCycleConfigRecord_t *rec, uint32_t offset) {
     memcpy(rec, src, CONFIG_RECORD_SIZE);
 }
 
-static bool load_latest_config(ChargeCycleConfig_t *config, uint32_t *latest_offset_out,
-                               bool *migrated_out) {
+static bool load_latest_configs(ChargeCycleConfig_t *fast_cfg, ChargeCycleConfig_t *norm_cfg,
+                                uint8_t *active_mode_out, bool *migrated_out) {
     ChargeCycleConfigRecord_t record;
-    int32_t latest_valid_offset = -1;
-    uint8_t latest_version = 7U;
+    int32_t latest_fast_offset = -1;
+    int32_t latest_norm_offset = -1;
+    int32_t last_valid_offset = -1;
+    uint8_t last_valid_mode = DEFAULT_CHARGE_MODE;
+    bool any_migrated = false;
 
     for (uint32_t offset = 0; offset <= (BSP_FLASH_PAGE_SIZE - ALIGNED_RECORD_SIZE); offset += ALIGNED_RECORD_SIZE) {
         read_record_at(&record, offset);
         if (validate_record(&record)) {
-            latest_valid_offset = (int32_t)offset;
-            latest_version = 7U;
+            last_valid_offset = (int32_t)offset;
+            if (record.payload.charge_mode == CHARGE_MODE_NORMAL) {
+                latest_norm_offset = (int32_t)offset;
+                last_valid_mode = CHARGE_MODE_NORMAL;
+                *norm_cfg = record.payload;
+            } else {
+                latest_fast_offset = (int32_t)offset;
+                last_valid_mode = CHARGE_MODE_FAST;
+                *fast_cfg = record.payload;
+            }
         } else if (validate_v6_record(&record)) {
-            latest_valid_offset = (int32_t)offset;
-            latest_version = 6U;
+            last_valid_offset = (int32_t)offset;
+            latest_fast_offset = (int32_t)offset;
+            last_valid_mode = CHARGE_MODE_FAST;
+            any_migrated = true;
+            ChargeCycleConfig_GetDefaults(fast_cfg);
+            memcpy(fast_cfg, &record.payload, CONFIG_V6_PAYLOAD_SIZE);
+            fast_cfg->version = CHARGE_CYCLE_CONFIG_VERSION;
+            fast_cfg->charge_mode = CHARGE_MODE_FAST;
+            fast_cfg->delay_enabled = DEFAULT_DELAY_ENABLED;
+            fast_cfg->delay_hours = DEFAULT_DELAY_HOURS;
+            fast_cfg->delay_minutes = DEFAULT_DELAY_MINUTES;
         } else if (validate_v5_record(&record)) {
-            latest_valid_offset = (int32_t)offset;
-            latest_version = 5U;
+            last_valid_offset = (int32_t)offset;
+            latest_fast_offset = (int32_t)offset;
+            last_valid_mode = CHARGE_MODE_FAST;
+            any_migrated = true;
+            ChargeCycleConfig_GetDefaults(fast_cfg);
+            memcpy(fast_cfg, &record.payload, CONFIG_V5_PAYLOAD_SIZE);
+            fast_cfg->version = CHARGE_CYCLE_CONFIG_VERSION;
+            fast_cfg->admin_pin = DEFAULT_ADMIN_PIN;
+            fast_cfg->charge_mode = CHARGE_MODE_FAST;
+            fast_cfg->delay_enabled = DEFAULT_DELAY_ENABLED;
+            fast_cfg->delay_hours = DEFAULT_DELAY_HOURS;
+            fast_cfg->delay_minutes = DEFAULT_DELAY_MINUTES;
         }
     }
 
-    if (latest_valid_offset < 0) return false;
-
-    read_record_at(&record, (uint32_t)latest_valid_offset);
-    if (latest_version == 6U) {
-        ChargeCycleConfig_GetDefaults(config);
-        memcpy(config, &record.payload, CONFIG_V6_PAYLOAD_SIZE);
-        config->version = CHARGE_CYCLE_CONFIG_VERSION;
-        config->charge_mode = DEFAULT_CHARGE_MODE;
-        config->delay_enabled = DEFAULT_DELAY_ENABLED;
-        config->delay_hours = DEFAULT_DELAY_HOURS;
-        config->delay_minutes = DEFAULT_DELAY_MINUTES;
-    } else if (latest_version == 5U) {
-        ChargeCycleConfig_GetDefaults(config);
-        memcpy(config, &record.payload, CONFIG_V5_PAYLOAD_SIZE);
-        config->version = CHARGE_CYCLE_CONFIG_VERSION;
-        config->admin_pin = DEFAULT_ADMIN_PIN;
-        config->charge_mode = DEFAULT_CHARGE_MODE;
-        config->delay_enabled = DEFAULT_DELAY_ENABLED;
-        config->delay_hours = DEFAULT_DELAY_HOURS;
-        config->delay_minutes = DEFAULT_DELAY_MINUTES;
-    } else {
-        *config = record.payload;
+    if (last_valid_offset < 0) {
+        return false;
     }
 
-    if (latest_offset_out != NULL) {
-        *latest_offset_out = (uint32_t)latest_valid_offset;
+    if (latest_fast_offset < 0) {
+        ChargeCycleConfig_GetDefaults(fast_cfg);
+        fast_cfg->charge_mode = CHARGE_MODE_FAST;
+    }
+
+    if (latest_norm_offset < 0) {
+        ChargeCycleConfig_GetDefaults(norm_cfg);
+        norm_cfg->charge_mode = CHARGE_MODE_NORMAL;
+        norm_cfg->imax_c = 0.5f;
+    }
+
+    if (active_mode_out != NULL) {
+        *active_mode_out = last_valid_mode;
     }
     if (migrated_out != NULL) {
-        *migrated_out = (latest_version < 7U);
+        *migrated_out = any_migrated;
     }
     return true;
 }
 
 void ChargeCycleStorage_Init(void) {
-    ChargeCycleConfig_t config;
-    uint32_t offset = 0;
+    ChargeCycleConfig_t fast_cfg;
+    ChargeCycleConfig_t norm_cfg;
+    uint8_t active_mode = DEFAULT_CHARGE_MODE;
     bool migrated = false;
 
-    if (load_latest_config(&config, &offset, &migrated)) {
-        LOG("ChargeCycleStorage: Loaded from flash offset %u\r\n", (unsigned)offset);
-        ChargeCycleConfig_Set(&config);
+    if (load_latest_configs(&fast_cfg, &norm_cfg, &active_mode, &migrated)) {
+        LOG("ChargeCycleStorage: Loaded configs from flash (active_mode=%u)\r\n", (unsigned)active_mode);
+        ChargeCycleConfig_SetProfile(CHARGE_MODE_FAST, &fast_cfg);
+        ChargeCycleConfig_SetProfile(CHARGE_MODE_NORMAL, &norm_cfg);
+        ChargeCycleConfig_SetActiveMode(active_mode);
         if (migrated) {
             LOG("ChargeCycleStorage: Migrated config to v%u\r\n", (unsigned)CHARGE_CYCLE_CONFIG_VERSION);
-            if (!ChargeCycleStorage_Save(&config)) {
-                LOG("ChargeCycleStorage: v%u migration save failed\r\n", (unsigned)CHARGE_CYCLE_CONFIG_VERSION);
-            }
+            (void)ChargeCycleStorage_SaveProfile(CHARGE_MODE_FAST, &fast_cfg);
+            (void)ChargeCycleStorage_SaveProfile(CHARGE_MODE_NORMAL, &norm_cfg);
         }
     } else {
         LOG("ChargeCycleStorage: Using default config\r\n");
-        /* BUGFIX: still run the RAM defaults through ChargeCycleConfig_Set()
-         * so its module_type -> driver_id mapping and module
-         * auto-registration side effects apply on a genuinely blank-flash
-         * first boot too, not just the "loaded a real record" path above.
-         * Previously this branch left the driver unselected
-         * (CHG_LIB_GetActiveDriverId() == CHG_LIB_DRV_NONE) and zero
-         * modules registered: ChargeCycleConfig_GetDefaults() sets
-         * module_type = CHARGE_MODULE_TYPE_EVR_10KW_100A_100V, and only
-         * ChargeCycleConfig_Set()'s own switch statement knows that maps
-         * to CHG_LIB_DRV_TONHE -- App_Init() (app_main.c) used to
-         * re-implement a narrower module_type range check that silently
-         * excluded exactly that value, so it never ran. Calling Set() here
-         * makes this the single source of truth for that mapping; the
-         * app_main.c workaround has been removed. */
-        ChargeCycleConfig_Get(&config);
-        ChargeCycleConfig_Set(&config);
+        ChargeCycleConfig_Init();
+        ChargeCycleConfig_Get(&fast_cfg);
+        ChargeCycleConfig_Set(&fast_cfg);
     }
 }
 
 bool ChargeCycleStorage_Load(ChargeCycleConfig_t *config) {
-    uint32_t offset = 0;
-    return load_latest_config(config, &offset, NULL);
+    ChargeCycleConfig_t fast_cfg;
+    ChargeCycleConfig_t norm_cfg;
+    uint8_t active_mode = DEFAULT_CHARGE_MODE;
+    if (!load_latest_configs(&fast_cfg, &norm_cfg, &active_mode, NULL)) {
+        return false;
+    }
+    if (config != NULL) {
+        *config = (active_mode == CHARGE_MODE_NORMAL) ? norm_cfg : fast_cfg;
+    }
+    return true;
 }
 
-bool ChargeCycleStorage_Save(const ChargeCycleConfig_t *config) {
+static bool write_single_record(uint32_t offset, const ChargeCycleConfig_t *config) {
     ChargeCycleConfigRecord_t record;
-    /* BUG-02 fix: ChargeCycleConfigRecord_t is CONFIG_RECORD_SIZE (251B:
-     * 12B header + 239B payload) packed bytes, but flash writes must be
-     * ALIGNED_RECORD_SIZE (256B, rounded up to the G0 double-word boundary).
-     * Writing directly from &record for ALIGNED_RECORD_SIZE bytes reads past
-     * the end of the local `record` variable (stack OOB read, UB) and burns
-     * whatever
-     * garbage happened to be there into flash instead of well-defined
-     * padding. Stage the write in a correctly-sized, blank-initialized
-     * buffer instead. */
     uint8_t write_buf[ALIGNED_RECORD_SIZE];
-    int32_t write_offset;
 
     record.magic = CONFIG_MAGIC;
     record.version = CONFIG_RECORD_VERSION;
@@ -216,29 +224,63 @@ bool ChargeCycleStorage_Save(const ChargeCycleConfig_t *config) {
     memset(write_buf, FLASH_BLANK_BYTE, sizeof(write_buf));
     memcpy(write_buf, &record, CONFIG_RECORD_SIZE);
 
-    write_offset = find_blank_offset();
-
-    if (write_offset < 0) {
-        LOG("ChargeCycleStorage: Page full, erasing...\r\n");
-        if (!BSP_Flash_ErasePage(BSP_CONFIG_FLASH_PAGE_ADDR)) {
-            LOG("ChargeCycleStorage: Erase failed!\r\n");
-            return false;
-        }
-        write_offset = 0;
-    }
-
-    if (!BSP_Flash_WriteBlock(BSP_CONFIG_FLASH_PAGE_ADDR + write_offset, write_buf, ALIGNED_RECORD_SIZE)) {
-        LOG("ChargeCycleStorage: Write failed!\r\n");
+    if (!BSP_Flash_WriteBlock(BSP_CONFIG_FLASH_PAGE_ADDR + offset, write_buf, ALIGNED_RECORD_SIZE)) {
         return false;
     }
 
     ChargeCycleConfigRecord_t verify;
-    read_record_at(&verify, (uint32_t)write_offset);
-    if (!validate_record(&verify)) {
-        LOG("ChargeCycleStorage: Verification failed!\r\n");
+    read_record_at(&verify, offset);
+    return validate_record(&verify);
+}
+
+bool ChargeCycleStorage_SaveProfile(uint8_t mode, const ChargeCycleConfig_t *config) {
+    if (config == NULL) {
         return false;
     }
 
-    LOG("ChargeCycleStorage: Saved successfully\r\n");
+    ChargeCycleConfig_t to_write = *config;
+    to_write.charge_mode = (mode == CHARGE_MODE_NORMAL) ? CHARGE_MODE_NORMAL : CHARGE_MODE_FAST;
+
+    int32_t write_offset = find_blank_offset();
+
+    if (write_offset < 0) {
+        LOG("ChargeCycleStorage: Page full, erasing and re-packing dual profiles...\r\n");
+        if (!BSP_Flash_ErasePage(BSP_CONFIG_FLASH_PAGE_ADDR)) {
+            LOG("ChargeCycleStorage: Erase failed!\r\n");
+            return false;
+        }
+
+        /* Preserve the other mode */
+        uint8_t other_mode = (to_write.charge_mode == CHARGE_MODE_NORMAL) ? CHARGE_MODE_FAST : CHARGE_MODE_NORMAL;
+        ChargeCycleConfig_t other_cfg;
+        ChargeCycleConfig_GetProfile(other_mode, &other_cfg);
+
+        if (!write_single_record(0, &other_cfg)) {
+            LOG("ChargeCycleStorage: Write other profile failed!\r\n");
+            return false;
+        }
+
+        if (!write_single_record(ALIGNED_RECORD_SIZE, &to_write)) {
+            LOG("ChargeCycleStorage: Write target profile failed!\r\n");
+            return false;
+        }
+
+        LOG("ChargeCycleStorage: Dual profiles re-packed successfully\r\n");
+        return true;
+    }
+
+    if (!write_single_record((uint32_t)write_offset, &to_write)) {
+        LOG("ChargeCycleStorage: Write failed!\r\n");
+        return false;
+    }
+
+    LOG("ChargeCycleStorage: Saved profile %u successfully\r\n", (unsigned)to_write.charge_mode);
     return true;
+}
+
+bool ChargeCycleStorage_Save(const ChargeCycleConfig_t *config) {
+    if (config == NULL) {
+        return false;
+    }
+    return ChargeCycleStorage_SaveProfile(config->charge_mode, config);
 }

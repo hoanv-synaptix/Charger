@@ -281,6 +281,7 @@ uint16_t DebugProtocol_BuildCommStats(uint8_t idx, uint8_t *data);
  * @return Bytes written
  */
 uint16_t DebugProtocol_BuildChargeConfig(uint8_t *data, uint16_t max_len);
+uint16_t DebugProtocol_BuildChargeConfigProfile(uint8_t mode, uint8_t *data, uint16_t max_len);
 
 /**
  * @brief Build the unified alarm state + event-log snapshot

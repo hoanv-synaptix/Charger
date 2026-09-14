@@ -147,10 +147,18 @@ typedef struct __attribute__((packed)) {
 
 _Static_assert(sizeof(ChargeCycleConfig_t) == 249, "ChargeCycleConfig_t must stay 249 bytes");
 
+#define CHARGE_MODE_FAST                      0U
+#define CHARGE_MODE_NORMAL                    1U
+
 void ChargeCycleConfig_Init(void);
 void ChargeCycleConfig_Get(ChargeCycleConfig_t *config);
 bool ChargeCycleConfig_Set(const ChargeCycleConfig_t *config);
 void ChargeCycleConfig_GetDefaults(ChargeCycleConfig_t *config);
+
+void ChargeCycleConfig_GetProfile(uint8_t mode, ChargeCycleConfig_t *config);
+bool ChargeCycleConfig_SetProfile(uint8_t mode, const ChargeCycleConfig_t *config);
+uint8_t ChargeCycleConfig_GetActiveMode(void);
+bool ChargeCycleConfig_SetActiveMode(uint8_t mode);
 
 /** Identity strings (always NUL-terminated). Never NULL. */
 const char *ChargeCycleConfig_GetDeviceId(void);

@@ -349,7 +349,7 @@ uint16_t DebugProtocol_BuildCommStats(uint8_t idx, uint8_t *data)
     return written;
 }
 
-uint16_t DebugProtocol_BuildChargeConfig(uint8_t *data, uint16_t max_len)
+uint16_t DebugProtocol_BuildChargeConfigProfile(uint8_t mode, uint8_t *data, uint16_t max_len)
 {
     ChargeCycleConfig_t config;
 
@@ -357,10 +357,15 @@ uint16_t DebugProtocol_BuildChargeConfig(uint8_t *data, uint16_t max_len)
         return 0;
     }
 
-    ChargeCycleConfig_Get(&config);
+    ChargeCycleConfig_GetProfile(mode, &config);
     config.version = CHARGE_CYCLE_CONFIG_VERSION;
     memcpy(data, &config, sizeof(config));
     return sizeof(config);
+}
+
+uint16_t DebugProtocol_BuildChargeConfig(uint8_t *data, uint16_t max_len)
+{
+    return DebugProtocol_BuildChargeConfigProfile(ChargeCycleConfig_GetActiveMode(), data, max_len);
 }
 
 _Static_assert(sizeof(AlarmLogEntry_t) == 8, "AlarmLogEntry_t wire size must be 8 bytes");
@@ -543,8 +548,12 @@ bool DebugProtocol_HandleCommand(uint8_t cmd, const uint8_t *payload, uint16_t l
     }
 
     case DEBUG_CMD_GET_CHARGE_CFG: {
-        /* No LOG here — keep protocol dispatch lightweight. */
-        uint16_t data_len = DebugProtocol_BuildChargeConfig(reply, sizeof(reply));
+        /* If payload has mode byte, return that profile; otherwise return active profile */
+        uint8_t mode = (len >= 1U) ? payload[0] : ChargeCycleConfig_GetActiveMode();
+        if (mode > 1U) {
+            mode = ChargeCycleConfig_GetActiveMode();
+        }
+        uint16_t data_len = DebugProtocol_BuildChargeConfigProfile(mode, reply, sizeof(reply));
         if (data_len > 0) {
             PC_Protocol_SendFrame(DEBUG_RSP_CHARGE_CFG, reply, data_len);
         } else {
@@ -556,18 +565,28 @@ bool DebugProtocol_HandleCommand(uint8_t cmd, const uint8_t *payload, uint16_t l
 
     case DEBUG_CMD_SET_CHARGE_CFG: {
         ChargeCycleConfig_t config;
+        uint8_t target_mode = ChargeCycleConfig_GetActiveMode();
 
         if (len == sizeof(config)) {
             memcpy(&config, payload, sizeof(config));
+            target_mode = (config.charge_mode <= 1U) ? config.charge_mode : ChargeCycleConfig_GetActiveMode();
+            /* Preserve existing delay settings for this mode from MCU */
+            ChargeCycleConfig_t curr;
+            ChargeCycleConfig_GetProfile(target_mode, &curr);
+            config.delay_enabled = curr.delay_enabled;
+            config.delay_hours = curr.delay_hours;
+            config.delay_minutes = curr.delay_minutes;
         } else if (len == 243U) {
             /* v6 payload backward compatibility (e.g. from older C# PC app) */
-            ChargeCycleConfig_Get(&config);
+            target_mode = ChargeCycleConfig_GetActiveMode();
+            ChargeCycleConfig_GetProfile(target_mode, &config);
             memcpy(&config, payload, 243U);
             config.version = CHARGE_CYCLE_CONFIG_VERSION;
             /* Preserve existing charge_mode, delay_enabled, delay_hours, delay_minutes */
         } else if (len == 239U) {
             /* v5 payload backward compatibility */
-            ChargeCycleConfig_Get(&config);
+            target_mode = ChargeCycleConfig_GetActiveMode();
+            ChargeCycleConfig_GetProfile(target_mode, &config);
             memcpy(&config, payload, 239U);
             config.version = CHARGE_CYCLE_CONFIG_VERSION;
             config.admin_pin = DEFAULT_ADMIN_PIN;
@@ -578,20 +597,20 @@ bool DebugProtocol_HandleCommand(uint8_t cmd, const uint8_t *payload, uint16_t l
         }
 
         /* Validate and set to RAM */
-        if (!ChargeCycleConfig_Set(&config)) {
+        if (!ChargeCycleConfig_SetProfile(target_mode, &config)) {
             reply[0] = 0x01; /* BAD_PARAM */
             PC_Protocol_SendFrame(DEBUG_RSP_ERROR, reply, 1);
             return true;
         }
 
         /* Save to flash */
-        if (!ChargeCycleStorage_Save(&config)) {
+        if (!ChargeCycleStorage_SaveProfile(target_mode, &config)) {
             reply[0] = 0x04; /* FLASH_SAVE_FAIL */
             PC_Protocol_SendFrame(DEBUG_RSP_ERROR, reply, 1);
             return true;
         }
 
-        uint16_t data_len = DebugProtocol_BuildChargeConfig(reply, sizeof(reply));
+        uint16_t data_len = DebugProtocol_BuildChargeConfigProfile(target_mode, reply, sizeof(reply));
         if (data_len > 0) {
             PC_Protocol_SendFrame(DEBUG_RSP_CHARGE_CFG, reply, data_len);
         } else {

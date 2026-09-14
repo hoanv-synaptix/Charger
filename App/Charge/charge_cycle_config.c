@@ -5,6 +5,9 @@
 #include <math.h>
 
 static ChargeCycleConfig_t g_charge_cycle_config;
+static ChargeCycleConfig_t s_fast_config;
+static ChargeCycleConfig_t s_normal_config;
+static uint8_t s_active_mode = CHARGE_MODE_FAST;
 
 static bool value_is_invalid(float value)
 {
@@ -64,21 +67,7 @@ void ChargeCycleConfig_GetDefaults(ChargeCycleConfig_t *config)
     strncpy(config->hw_rev, DEFAULT_HW_REV, sizeof(config->hw_rev) - 1U);
 }
 
-void ChargeCycleConfig_Init(void)
-{
-    ChargeCycleConfig_GetDefaults(&g_charge_cycle_config);
-}
-
-void ChargeCycleConfig_Get(ChargeCycleConfig_t *config)
-{
-    if (config == NULL) {
-        return;
-    }
-
-    *config = g_charge_cycle_config;
-}
-
-bool ChargeCycleConfig_Set(const ChargeCycleConfig_t *config)
+static bool validate_config_struct(const ChargeCycleConfig_t *config)
 {
     if (config == NULL) {
         return false;
@@ -167,11 +156,6 @@ bool ChargeCycleConfig_Set(const ChargeCycleConfig_t *config)
         return false;
     }
 
-    /* An enabled stage must have five distinct thresholds.  Equal thresholds
-     * are technically monotonic, but band_from_thresholds() evaluates from
-     * the highest threshold down, so an equal pair silently removes one
-     * operating band.  Disabled stages keep accepting their unused zeroed
-     * defaults. */
     if (config->cell_volt_enabled &&
         !(config->cell_volt_1_v < config->cell_volt_2_v &&
           config->cell_volt_2_v < config->cell_volt_3_v &&
@@ -205,8 +189,6 @@ bool ChargeCycleConfig_Set(const ChargeCycleConfig_t *config)
         if (gap_34 < min_gap) min_gap = gap_34;
         if (gap_45 < min_gap) min_gap = gap_45;
 
-        /* At equality the recovery boundary lands exactly on the previous
-         * threshold; values below it still recover normally. */
         if (config->temp_delta_c > min_gap) {
             return false;
         }
@@ -224,18 +206,13 @@ bool ChargeCycleConfig_Set(const ChargeCycleConfig_t *config)
         return false;
     }
 
-    g_charge_cycle_config = *config;
-    g_charge_cycle_config.version = CHARGE_CYCLE_CONFIG_VERSION;
-    /* Defend the display/consumer side against a caller that filled the
-     * identity fields to the brim without a terminator. */
-    g_charge_cycle_config.device_id[sizeof(g_charge_cycle_config.device_id) - 1U] = '\0';
-    g_charge_cycle_config.hw_rev[sizeof(g_charge_cycle_config.hw_rev) - 1U] = '\0';
+    return true;
+}
 
-    if (g_charge_cycle_config.device_id[0] == '\0') {
-        strncpy(g_charge_cycle_config.device_id, DEFAULT_DEVICE_ID, sizeof(g_charge_cycle_config.device_id) - 1U);
-    }
-    if (g_charge_cycle_config.hw_rev[0] == '\0') {
-        strncpy(g_charge_cycle_config.hw_rev, DEFAULT_HW_REV, sizeof(g_charge_cycle_config.hw_rev) - 1U);
+static void apply_hardware_config(const ChargeCycleConfig_t *config)
+{
+    if (config == NULL) {
+        return;
     }
 
     CHG_LIB_DriverId_t drv_id = CHG_LIB_DRV_NONE;
@@ -260,21 +237,95 @@ bool ChargeCycleConfig_Set(const ChargeCycleConfig_t *config)
         CHG_LIB_Init();
         for (uint8_t i = 0; i < config->source_module_count; i++) {
             int8_t idx = CHG_LIB_AddModule((uint8_t)(i + 1), 0);
-            /* Seed the module's rated current from config immediately, so
-             * the very first current-limit command (sent as part of the
-             * start sequence, before the module has necessarily answered
-             * any poll yet) uses the real rating instead of transiently
-             * falling back to a hardcoded default. Drivers also read the
-             * module's own self-reported rated current over CAN once
-             * online (e.g. Maxwell register 0x0012) and prefer that once
-             * available -- this call only covers the brief window before
-             * that first response arrives. */
             if (idx >= 0 && config->module_i_max_a > 0.0f) {
                 CHG_LIB_SetModuleConfig((uint8_t)idx, config->module_i_max_a);
             }
         }
     }
+}
 
+void ChargeCycleConfig_Init(void)
+{
+    ChargeCycleConfig_GetDefaults(&s_fast_config);
+    s_fast_config.charge_mode = CHARGE_MODE_FAST;
+
+    ChargeCycleConfig_GetDefaults(&s_normal_config);
+    s_normal_config.charge_mode = CHARGE_MODE_NORMAL;
+    s_normal_config.imax_c = 0.5f; /* Sensible default distinction for normal mode */
+
+    s_active_mode = CHARGE_MODE_FAST;
+    g_charge_cycle_config = s_fast_config;
+}
+
+void ChargeCycleConfig_Get(ChargeCycleConfig_t *config)
+{
+    if (config == NULL) {
+        return;
+    }
+    *config = (s_active_mode == CHARGE_MODE_NORMAL) ? s_normal_config : s_fast_config;
+}
+
+void ChargeCycleConfig_GetProfile(uint8_t mode, ChargeCycleConfig_t *config)
+{
+    if (config == NULL) {
+        return;
+    }
+    *config = (mode == CHARGE_MODE_NORMAL) ? s_normal_config : s_fast_config;
+}
+
+bool ChargeCycleConfig_SetProfile(uint8_t mode, const ChargeCycleConfig_t *config)
+{
+    if (config == NULL || !validate_config_struct(config)) {
+        return false;
+    }
+
+    ChargeCycleConfig_t *dest = (mode == CHARGE_MODE_NORMAL) ? &s_normal_config : &s_fast_config;
+    *dest = *config;
+    dest->version = CHARGE_CYCLE_CONFIG_VERSION;
+    dest->charge_mode = (mode == CHARGE_MODE_NORMAL) ? CHARGE_MODE_NORMAL : CHARGE_MODE_FAST;
+    dest->device_id[sizeof(dest->device_id) - 1U] = '\0';
+    dest->hw_rev[sizeof(dest->hw_rev) - 1U] = '\0';
+
+    if (dest->device_id[0] == '\0') {
+        strncpy(dest->device_id, DEFAULT_DEVICE_ID, sizeof(dest->device_id) - 1U);
+    }
+    if (dest->hw_rev[0] == '\0') {
+        strncpy(dest->hw_rev, DEFAULT_HW_REV, sizeof(dest->hw_rev) - 1U);
+    }
+
+    if (mode == s_active_mode) {
+        g_charge_cycle_config = *dest;
+        apply_hardware_config(dest);
+    }
+    return true;
+}
+
+bool ChargeCycleConfig_Set(const ChargeCycleConfig_t *config)
+{
+    if (config == NULL) {
+        return false;
+    }
+    uint8_t mode = (config->charge_mode <= 1U) ? config->charge_mode : s_active_mode;
+    bool ok = ChargeCycleConfig_SetProfile(mode, config);
+    if (ok) {
+        ChargeCycleConfig_SetActiveMode(mode);
+    }
+    return ok;
+}
+
+uint8_t ChargeCycleConfig_GetActiveMode(void)
+{
+    return s_active_mode;
+}
+
+bool ChargeCycleConfig_SetActiveMode(uint8_t mode)
+{
+    if (mode > 1U) {
+        return false;
+    }
+    s_active_mode = mode;
+    g_charge_cycle_config = (s_active_mode == CHARGE_MODE_NORMAL) ? s_normal_config : s_fast_config;
+    apply_hardware_config(&g_charge_cycle_config);
     return true;
 }
 

@@ -133,6 +133,14 @@ bool ChargeCycleStorage_Save(const ChargeCycleConfig_t *config)
     return true;
 }
 
+bool ChargeCycleStorage_SaveProfile(uint8_t mode, const ChargeCycleConfig_t *config)
+{
+    (void)mode;
+    (void)config;
+    g_storage_save_called = true;
+    return true;
+}
+
 /* Mock RTC stubs for host test */
 #include "bsp_rtc.h"
 

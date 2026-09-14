@@ -605,6 +605,60 @@ static bool test_debug_set_charge_cfg_wrong_length_rejected(void)
     return true;
 }
 
+static bool test_debug_dual_profiles_protocol_roundtrip(void)
+{
+    printf("Running test_debug_dual_profiles_protocol_roundtrip...\n");
+    ASSERT(setup_scenario(), "setup failed");
+    PC_Protocol_ResetTx();
+
+    /* 1. Write Fast profile */
+    ChargeCycleConfig_t fast_cfg;
+    ChargeCycleConfig_GetDefaults(&fast_cfg);
+    fast_cfg.charge_mode = CHARGE_MODE_FAST;
+    fast_cfg.battery_capacity_ah = 200.0f;
+    fast_cfg.imax_c = 1.0f;
+    send_pc_frame(DEBUG_CMD_SET_CHARGE_CFG, (const uint8_t *)&fast_cfg, sizeof(fast_cfg));
+    uint8_t cmd, resp[255], len;
+    ASSERT(only_tx_frame(&cmd, resp, &len), "expected response for fast profile set");
+    ASSERT(cmd == DEBUG_RSP_CHARGE_CFG, "set fast profile should succeed");
+
+    /* 2. Write Normal profile */
+    PC_Protocol_ResetTx();
+    ChargeCycleConfig_t norm_cfg;
+    ChargeCycleConfig_GetDefaults(&norm_cfg);
+    norm_cfg.charge_mode = CHARGE_MODE_NORMAL;
+    norm_cfg.battery_capacity_ah = 100.0f;
+    norm_cfg.imax_c = 0.5f;
+    send_pc_frame(DEBUG_CMD_SET_CHARGE_CFG, (const uint8_t *)&norm_cfg, sizeof(norm_cfg));
+    ASSERT(only_tx_frame(&cmd, resp, &len), "expected response for normal profile set");
+    ASSERT(cmd == DEBUG_RSP_CHARGE_CFG, "set normal profile should succeed");
+
+    /* 3. Read Fast profile specifically with mode byte = 0 */
+    PC_Protocol_ResetTx();
+    uint8_t mode_fast = 0U;
+    send_pc_frame(DEBUG_CMD_GET_CHARGE_CFG, &mode_fast, 1U);
+    ASSERT(only_tx_frame(&cmd, resp, &len), "expected response for fast profile get");
+    ASSERT(cmd == DEBUG_RSP_CHARGE_CFG, "get fast profile should succeed");
+    ChargeCycleConfig_t read_fast;
+    memcpy(&read_fast, resp, sizeof(read_fast));
+    ASSERT(read_fast.charge_mode == CHARGE_MODE_FAST, "read_fast must have charge_mode = FAST");
+    ASSERT(read_fast.battery_capacity_ah == 200.0f, "read_fast must have 200.0 Ah");
+
+    /* 4. Read Normal profile specifically with mode byte = 1 */
+    PC_Protocol_ResetTx();
+    uint8_t mode_norm = 1U;
+    send_pc_frame(DEBUG_CMD_GET_CHARGE_CFG, &mode_norm, 1U);
+    ASSERT(only_tx_frame(&cmd, resp, &len), "expected response for normal profile get");
+    ASSERT(cmd == DEBUG_RSP_CHARGE_CFG, "get normal profile should succeed");
+    ChargeCycleConfig_t read_norm;
+    memcpy(&read_norm, resp, sizeof(read_norm));
+    ASSERT(read_norm.charge_mode == CHARGE_MODE_NORMAL, "read_norm must have charge_mode = NORMAL");
+    ASSERT(read_norm.battery_capacity_ah == 100.0f, "read_norm must have 100.0 Ah");
+
+    printf("[PASS] test_debug_dual_profiles_protocol_roundtrip\n");
+    return true;
+}
+
 static bool test_debug_get_system_info_matches_wire_struct(void)
 {
     printf("Running test_debug_get_system_info_matches_wire_struct...\n");
@@ -768,6 +822,7 @@ int main(void)
     pass &= test_debug_set_charge_cfg_valid_config_persists();
     pass &= test_debug_set_charge_cfg_v6_compat_persists();
     pass &= test_debug_set_charge_cfg_wrong_length_rejected();
+    pass &= test_debug_dual_profiles_protocol_roundtrip();
     pass &= test_debug_get_system_info_matches_wire_struct();
     pass &= test_debug_get_alarm_info_wire_contract();
     pass &= test_build_module_data_refuses_when_too_small();

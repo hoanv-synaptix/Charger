@@ -1192,25 +1192,33 @@ void DWIN_OnKeyEvent(uint16_t vp, uint16_t keyval)
     }
 
     if (vp == VP_CFG_APPLY_KEY) {
-        ChargeCycleConfig_t cfg;
-        ChargeCycleConfig_Get(&cfg);
+        uint8_t target_mode = CHARGE_MODE_FAST;
+        uint8_t delay_en = 0U;
         if (keyval == DWIN_CFG_KEY_FAST_ON) {
-            cfg.charge_mode = 0U;
-            cfg.delay_enabled = 1U;
+            target_mode = CHARGE_MODE_FAST;
+            delay_en = 1U;
         } else if (keyval == DWIN_CFG_KEY_FAST_OFF) {
-            cfg.charge_mode = 0U;
-            cfg.delay_enabled = 0U;
+            target_mode = CHARGE_MODE_FAST;
+            delay_en = 0U;
         } else if (keyval == DWIN_CFG_KEY_NORM_ON) {
-            cfg.charge_mode = 1U;
-            cfg.delay_enabled = 1U;
+            target_mode = CHARGE_MODE_NORMAL;
+            delay_en = 1U;
         } else if (keyval == DWIN_CFG_KEY_NORM_OFF) {
-            cfg.charge_mode = 1U;
-            cfg.delay_enabled = 0U;
+            target_mode = CHARGE_MODE_NORMAL;
+            delay_en = 0U;
         }
+
+        ChargeCycleConfig_t cfg;
+        ChargeCycleConfig_GetProfile(target_mode, &cfg);
+        cfg.charge_mode = target_mode;
+        cfg.delay_enabled = delay_en;
         cfg.delay_hours = s_cfg_hours;
         cfg.delay_minutes = s_cfg_minutes;
-        ChargeCycleConfig_Set(&cfg);
-        (void)ChargeCycleStorage_Save(&cfg);
+
+        ChargeCycleConfig_SetProfile(target_mode, &cfg);
+        ChargeCycleConfig_SetActiveMode(target_mode);
+        (void)ChargeCycleStorage_SaveProfile(target_mode, &cfg);
+
         LOG("DWIN: Charge config saved (mode=%u delay=%u %02u:%02u)\r\n",
             (unsigned)cfg.charge_mode, (unsigned)cfg.delay_enabled,
             (unsigned)cfg.delay_hours, (unsigned)cfg.delay_minutes);
