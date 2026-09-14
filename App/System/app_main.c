@@ -1171,7 +1171,6 @@ void DWIN_OnKeyEvent(uint16_t vp, uint16_t keyval)
             if (cfg.delay_hours != s_cfg_hours) {
                 cfg.delay_hours = s_cfg_hours;
                 ChargeCycleConfig_Set(&cfg);
-                (void)ChargeCycleStorage_Save(&cfg);
             }
         }
         return;
@@ -1185,7 +1184,6 @@ void DWIN_OnKeyEvent(uint16_t vp, uint16_t keyval)
             if (cfg.delay_minutes != s_cfg_minutes) {
                 cfg.delay_minutes = s_cfg_minutes;
                 ChargeCycleConfig_Set(&cfg);
-                (void)ChargeCycleStorage_Save(&cfg);
             }
         }
         return;
@@ -1222,7 +1220,6 @@ void DWIN_OnKeyEvent(uint16_t vp, uint16_t keyval)
         LOG("DWIN: Charge config saved (mode=%u delay=%u %02u:%02u)\r\n",
             (unsigned)cfg.charge_mode, (unsigned)cfg.delay_enabled,
             (unsigned)cfg.delay_hours, (unsigned)cfg.delay_minutes);
-        DWIN_SendReadRequest(VP_CFG_HOURS, 2U);
         return;
     }
 

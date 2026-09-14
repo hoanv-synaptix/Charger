@@ -723,6 +723,21 @@ static bool test_dwin_config_page_keys(void)
     ASSERT(g_tx[0][4] == 0x16 && g_tx[0][5] == 0x00, "VP is 0x1600");
     ASSERT(g_tx[0][6] == 0x02, "n_words is 2");
 
+    /* Multi-word read response check (3 words: 0x1600=hours, 0x1601=gap, 0x1602=minutes) */
+    uint8_t multi_f[] = {
+        DWIN_HEADER_1, DWIN_HEADER_2,
+        0x0A,
+        DWIN_CMD_READ,
+        0x16, 0x00,
+        0x03,       /* 3 words */
+        0x00, 0x03, /* Word 0 (0x1600): 3 hours */
+        0x00, 0x00, /* Word 1 (0x1601): 0 gap */
+        0x00, 0x1E  /* Word 2 (0x1602): 30 minutes */
+    };
+    DWIN_ParseRX(multi_f, sizeof(multi_f));
+    ASSERT(g_last_event_vp == VP_CFG_MINUTES, "Last event VP matches VP_CFG_MINUTES");
+    ASSERT(g_last_event_key == 30, "Minutes value 30 parsed from Word 2 (rx[11..12])");
+
     printf("[PASS] test_dwin_config_page_keys\n");
     return true;
 }
