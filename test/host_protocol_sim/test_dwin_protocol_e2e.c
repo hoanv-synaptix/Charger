@@ -28,7 +28,7 @@
 /* assert on real wire bytes and on how many frames a call emitted.     */
 /* ================================================================== */
 
-#define MAX_FRAMES 16
+#define MAX_FRAMES 64
 static uint8_t  g_tx[MAX_FRAMES][128];
 static uint16_t g_tx_len[MAX_FRAMES];
 static int      g_tx_count = 0;
@@ -337,6 +337,62 @@ static bool test_parse_rx_rejects_oversized_length(void)
     return true;
 }
 
+static bool test_dc_coalesced_frame(void)
+{
+    printf("Running test_dc_coalesced_frame...\n");
+    DWIN_InvalidateSyncState();
+    reset_capture();
+
+    DWIN_SystemData_t d;
+    memset(&d, 0, sizeof(d));
+    memcpy(d.dc_voltage_text, "521.0 V", sizeof(d.dc_voltage_text));
+    strncpy(d.dc_current_text, "12.0 A", sizeof(d.dc_current_text) - 1U);
+    strncpy(d.dc_power_text, "6.3 kW", sizeof(d.dc_power_text) - 1U);
+
+    /* (1) First call at STEP_DC: emits exactly 1 coalesced frame of 30 bytes */
+    DWIN_UpdateData(&d);
+    ASSERT(g_tx_count == 1, "STEP_DC must emit exactly 1 coalesced frame");
+    ASSERT(g_tx_len[0] == 30, "frame length must be 30 bytes");
+    ASSERT(g_tx[0][0] == DWIN_HEADER_1 && g_tx[0][1] == DWIN_HEADER_2, "header must be A5 5A");
+    ASSERT(g_tx[0][2] == 0x1B, "LEN byte must be 0x1B (27 bytes = cmd + vp + 24 payload)");
+    ASSERT(g_tx[0][3] == DWIN_CMD_WRITE, "cmd must be 0x82");
+    ASSERT(g_tx[0][4] == 0x10 && g_tx[0][5] == 0x00, "VP must be 0x1000 (VP_DC_VOLTAGE)");
+
+    /* Payload validation: 3 x 8-byte zero-padded fields */
+    ASSERT(memcmp(&g_tx[0][6], "521.0 V\0", 8) == 0, "voltage 8-byte field matching");
+    ASSERT(memcmp(&g_tx[0][14], "12.0 A\0\0", 8) == 0, "current 8-byte field matching");
+    ASSERT(memcmp(&g_tx[0][22], "6.3 kW\0\0", 8) == 0, "power 8-byte field matching");
+
+    /* Advance remaining 10 steps to complete first cycle */
+    for (uint8_t i = 1; i < DWIN_SCATTER_STEP_COUNT; i++) {
+        DWIN_UpdateData(&d);
+    }
+
+    /* (2) Second cycle with unchanged data: STEP_DC is diff-suppressed */
+    reset_capture();
+    DWIN_UpdateData(&d);
+    ASSERT(g_tx_count == 0, "unchanged DC fields must be diff-suppressed");
+
+    /* Advance remaining 10 steps to complete second cycle */
+    for (uint8_t i = 1; i < DWIN_SCATTER_STEP_COUNT; i++) {
+        DWIN_UpdateData(&d);
+    }
+
+    /* (3) Single field change: changing current triggers re-send of full 12-word block */
+    strncpy(d.dc_current_text, "15.5 A", sizeof(d.dc_current_text) - 1U);
+    reset_capture();
+    DWIN_UpdateData(&d);
+    ASSERT(g_tx_count == 1, "changing one field must re-send entire coalesced DC block");
+    ASSERT(g_tx_len[0] == 30, "frame length must still be 30 bytes");
+    ASSERT(g_tx[0][2] == 0x1B, "LEN byte 0x1B");
+    ASSERT(memcmp(&g_tx[0][6], "521.0 V\0", 8) == 0, "voltage preserved in payload");
+    ASSERT(memcmp(&g_tx[0][14], "15.5 A\0\0", 8) == 0, "current updated in payload");
+    ASSERT(memcmp(&g_tx[0][22], "6.3 kW\0\0", 8) == 0, "power preserved in payload");
+
+    printf("[PASS] test_dc_coalesced_frame\n");
+    return true;
+}
+
 static bool test_update_data_scatter(void)
 {
     printf("Running test_update_data_scatter...\n");
@@ -363,7 +419,7 @@ static bool test_update_data_scatter(void)
     d.charge_duration_s = 125;
     d.uptime_s = 3600;
 
-    const int steps = 12;
+    const int steps = (int)DWIN_SCATTER_STEP_COUNT;
     bool found_cell_voltage = false;
 
     /* First full cycle: every step sends (no previous snapshot). */
@@ -555,7 +611,7 @@ static bool test_dwin_precharge_page_update_and_diff(void)
     d.precharge_btn_mode = DWIN_PRECHARGE_BTN_STOP;
 
     DWIN_ForceFullRefresh();
-    const int steps = 11;
+    const int steps = (int)DWIN_SCATTER_STEP_COUNT;
     bool found_v = false, found_i = false, found_status = false, found_btn = false;
     bool found_fault_code = false;
 
@@ -741,6 +797,87 @@ static bool test_dwin_config_page_keys(void)
     return true;
 }
 
+static bool test_dwin_time_update_not_dropped_when_changed_mid_cycle(void)
+{
+    printf("Running test_dwin_time_update_not_dropped_when_changed_mid_cycle...\n");
+    DWIN_InvalidateSyncState();
+    reset_capture();
+
+    DWIN_SystemData_t d;
+    memset(&d, 0, sizeof(d));
+    memcpy(d.dc_voltage_text, "521.0 V", 7U);
+    strncpy(d.dc_current_text, "12.0 A", sizeof(d.dc_current_text) - 1U);
+    strncpy(d.dc_power_text, "6.3 kW", sizeof(d.dc_power_text) - 1U);
+    d.charge_duration_s = 10;
+
+    const int steps = (int)DWIN_SCATTER_STEP_COUNT;
+
+    /* First cycle to establish baseline and flush initial force frames */
+    for (int i = 0; i < steps; i++) {
+        DWIN_UpdateData(&d);
+    }
+    /* Drain any alarm rows */
+    for (int c = 0; c < (int)VP_ALARM_ROW_COUNT; c++) {
+        for (int i = 0; i < steps; i++) {
+            DWIN_UpdateData(&d);
+        }
+    }
+
+    /* Verify steady state is quiet */
+    reset_capture();
+    for (int i = 0; i < steps; i++) {
+        DWIN_UpdateData(&d);
+    }
+    ASSERT(g_tx_count == 0, "steady state must be quiet");
+
+    /* Simulate 5 consecutive seconds where the second rollover occurs
+     * AFTER STEP_CHG_DURATION (step 7) has already executed in the cycle
+     * (e.g. at step 8 or step 9).
+     * With the old code, step 10's global snapshot s_prev_data = *d absorbed
+     * the new second before next cycle's step 7 could see it, causing the second
+     * to be completely skipped and creating a 2-second lag.
+     * With the per-step cache, EVERY second MUST be transmitted exactly once. */
+    for (uint32_t sec = 11; sec <= 15; sec++) {
+        /* Advance cycle up to step 8 (after step 7 STEP_CHG_DURATION) */
+        for (int step = 0; step <= 8; step++) {
+            DWIN_UpdateData(&d);
+        }
+
+        /* Rollover happens now! (e.g. at step 9) */
+        d.charge_duration_s = sec;
+
+        /* Complete remaining steps of this cycle (step 9..10) */
+        for (int step = 9; step < steps; step++) {
+            DWIN_UpdateData(&d);
+        }
+
+        /* Next cycle begins: capture what gets sent */
+        reset_capture();
+        bool duration_sent = false;
+        char expected_str[16];
+        snprintf(expected_str, sizeof(expected_str), "%02u:%02u:%02u",
+                 (unsigned)(sec / 3600U), (unsigned)((sec % 3600U) / 60U), (unsigned)(sec % 60U));
+
+        for (int step = 0; step < steps; step++) {
+            DWIN_UpdateData(&d);
+            for (int f = 0; f < g_tx_count; f++) {
+                uint16_t vp = ((uint16_t)g_tx[f][4] << 8) | g_tx[f][5];
+                if (vp == VP_CHG_DURATION) {
+                    duration_sent = true;
+                    ASSERT(memcmp(&g_tx[f][6], expected_str, strlen(expected_str)) == 0,
+                           "duration payload must match new second");
+                }
+            }
+            reset_capture();
+        }
+
+        ASSERT(duration_sent, "duration update must NOT be dropped when changed mid-cycle");
+    }
+
+    printf("[PASS] test_dwin_time_update_not_dropped_when_changed_mid_cycle\n");
+    return true;
+}
+
 /* ================================================================== */
 
 int main(void)
@@ -760,7 +897,9 @@ int main(void)
     pass &= test_parse_rx_dispatches_precharge_keys();
     pass &= test_parse_rx_resyncs_on_stray_header1();
     pass &= test_parse_rx_rejects_oversized_length();
+    pass &= test_dc_coalesced_frame();
     pass &= test_update_data_scatter();
+    pass &= test_dwin_time_update_not_dropped_when_changed_mid_cycle();
     pass &= test_alarm_fifo_push();
     pass &= test_soc_color_write_and_cache();
     pass &= test_dwin_precharge_page_update_and_diff();

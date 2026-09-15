@@ -1048,15 +1048,30 @@ static void update_hard_protection(const ChargeCycleConfig_t *cfg,
                                   const BMS_View_t *bms, uint32_t now_tick) {
     bool jack_v_protect_active = false;
 
-    /* Only apply battery-dependent protections if BMS is online */
-    if (bms->online) {
-        /* ----- Jack voltage protection ----- */
-        if (cfg->protect_jack_charge_enabled) {
+    /* Only apply battery-dependent protections if BMS is online and fresh */
+    if (bms->online && !BMS_IsDataStale()) {
+        /* ----- Jack voltage protection -----
+         * Contact resistance voltage drop (V = I * R) is only physically meaningful
+         * when charge current is flowing through the closed contactor path.
+         * Inhibit evaluation if:
+         * 1) Relay is not latched closed yet.
+         * 2) BMS is in thermal pause (inhibit active or over-temperature alarm).
+         * 3) Charge current is below CHARGE_CTRL_JACK_V_MIN_CURRENT_A (unloaded open-circuit floating caps).
+         */
+        const bool bms_temp_paused = g_ctrl.bms_temp_inhibit_active ||
+                                     ((bms->alarm_flags & BMS_ALARM_TEMP_HIGH_CHG) != 0U) ||
+                                     (cfg->temp_enabled != 0U && ((float)bms->max_cell_temp >= cfg->temp_5_c));
+
+        if (cfg->protect_jack_charge_enabled &&
+            g_ctrl.relay_latched_closed &&
+            !bms_temp_paused) {
             CHG_LIB_SystemSummary_t sys_summary;
             CHG_LIB_GetSystemSummary(&sys_summary);
-            float delta_v = sys_summary.voltage - bms->batt_voltage;
-            if (delta_v > cfg->protect_jack_charge_delta_v) {
-                jack_v_protect_active = true;
+            if (sys_summary.total_current >= CHARGE_CTRL_JACK_V_MIN_CURRENT_A) {
+                float delta_v = sys_summary.voltage - bms->batt_voltage;
+                if (delta_v > cfg->protect_jack_charge_delta_v) {
+                    jack_v_protect_active = true;
+                }
             }
         }
     }
@@ -2156,8 +2171,9 @@ bool ChargeController_Start(ChargeCtrlOwner_t owner, bool manual_mode, uint32_t 
         LOG("CC: Already running\r\n");
         return true;  /* Already running */
     }
-    if (g_ctrl.state == CHARGE_CTRL_STATE_PRECHARGE) {
-        LOG("CC: Normal start rejected during pre-charge\r\n");
+    if (g_ctrl.state != CHARGE_CTRL_STATE_IDLE) {
+        LOG("CC: Start rejected, state=%u (must be IDLE, reset required if in FAULT)\r\n",
+            (unsigned)g_ctrl.state);
         return false;
     }
 
@@ -2345,9 +2361,11 @@ bool ChargeController_ResetFaultIfSafe(uint32_t now_tick)
     }
 
     if ((g_ctrl.fault_flags & CHARGE_CTRL_FAULT_PROTECT_JACK_V) != 0U) {
-        if (!bms.online || BMS_IsDataStale() ||
-            (cfg.protect_jack_charge_enabled &&
-             (summary.voltage - bms.batt_voltage) > cfg.protect_jack_charge_delta_v)) {
+        /* Once stopped and relay opened, module output capacitor and battery are
+         * physically isolated. Requiring delta_v <= threshold while unloaded is
+         * invalid and would block clear if output caps have not fully discharged.
+         * Only require healthy and fresh BMS communication. */
+        if (!bms.online || BMS_IsDataStale()) {
             return false;
         }
     }
@@ -2404,13 +2422,13 @@ void ChargeController_Stop(uint32_t now_tick) {
     }
 
     if (g_ctrl.state == CHARGE_CTRL_STATE_FAULT) {
-        /* Clear fault and go to IDLE */
-        clear_fault();
-        transition_to(CHARGE_CTRL_STATE_IDLE, now_tick);
-        g_ctrl.owner = CHARGE_CTRL_OWNER_NONE;
-    } else {
-        transition_to(CHARGE_CTRL_STATE_STOPPING, now_tick);
+        /* Already faulted and stopped. Do NOT clear fault or reset trip counters.
+         * Only ChargeController_ResetFaultIfSafe() may clear faults. */
+        LOG("CC: Stop ignored while in FAULT (reset required)\r\n");
+        return;
     }
+
+    transition_to(CHARGE_CTRL_STATE_STOPPING, now_tick);
 }
 
 void ChargeController_EmergencyStop(uint32_t now_tick) {

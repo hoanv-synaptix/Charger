@@ -103,10 +103,15 @@ void DWIN_InvalidateSyncState(void);
 void DWIN_SendSettingStrings(const char *hw_ver, const char *fw_ver,
                              const char *device_id);
 
+/** Total scatter steps in one full round-robin dashboard update cycle. */
+#define DWIN_SCATTER_STEP_COUNT  11U
+
 /**
- * @brief Scatter-send: emits at most ONE frame per call, cycling through the
- *        dashboard/setting fields. Call from the ~50 ms HMI tick. Unchanged
- *        fields are skipped to keep the half-duplex bus quiet.
+ * @brief Scatter-send: cycles through the dashboard/setting field groups.
+ *        Contiguous fields (e.g. DC Voltage, Current, Power @ 0x1000..0x100B)
+ *        are coalesced into atomic multi-word frames to minimize RS485
+ *        turnaround overhead. Unchanged fields/groups are diff-suppressed to
+ *        keep the half-duplex bus quiet.
  */
 void DWIN_UpdateData(const DWIN_SystemData_t *data);
 

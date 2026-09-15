@@ -47,7 +47,7 @@
 
 #define DWIN_BOOT_DELAY_MS           3000U   /* Wait for DWIN panel to finish boot */
 #define DWIN_HEARTBEAT_INTERVAL_MS   5000U   /* Periodic force-full-refresh interval */
-#define DWIN_UPDATE_INTERVAL_MS      50U     /* Field scatter cadence (50ms per group) */
+#define DWIN_UPDATE_INTERVAL_MS      20U     /* Field scatter cadence (20ms per group -> ~220ms full cycle) */
 #define DWIN_RESET_INTERVAL_MS       (12U * 60U * 60U * 1000U)
 #define DWIN_REBOOT_WAIT_MS          3000U   /* Wait for panel after SW reset */
 
@@ -388,19 +388,10 @@ static uint16_t dwin_status_from_state(const ChargeCtrlView_t *cc,
                                        const CHG_LIB_SystemSummary_t *sum)
 {
     (void)sum;
-    /* Fault first: any active fault flag, the FAULT state, or an alarm at
-     * STOP/ESTOP level (covers the debounce/ack window before the controller
-     * itself transitions to FAULT) -> ERROR. */
+    /* Fault first: any active fault flag, or the FAULT state -> ERROR. */
     if (cc->state == CHARGE_CTRL_STATE_FAULT ||
         cc->fault_flags != CHARGE_CTRL_FAULT_NONE) {
         return DWIN_STATUS_ERROR;
-    }
-    {
-        AlarmView_t av;
-        Alarm_GetView(&av);
-        if (av.highest_action >= ALARM_ACT_STOP) {
-            return DWIN_STATUS_ERROR;
-        }
     }
 
     switch (cc->state) {
@@ -417,6 +408,15 @@ static uint16_t dwin_status_from_state(const ChargeCtrlView_t *cc,
         case CHARGE_CTRL_STATE_IDLE:
         default:
             break;
+    }
+
+    /* While in IDLE / Standby: if there is an active alarm requiring STOP/ESTOP, show ERROR + RESET */
+    {
+        AlarmView_t av;
+        Alarm_GetView(&av);
+        if (av.highest_action >= ALARM_ACT_STOP) {
+            return DWIN_STATUS_ERROR;
+        }
     }
 
     /* IDLE: distinguish "finished a cycle" from standby / ready.
@@ -738,7 +738,7 @@ void App_Loop(void)
          * alarms, module communication and charger state. */
     }
 
-    /* (4) DWIN HMI refresh -- one field group per 50ms tick (see
+    /* (4) DWIN HMI refresh -- one field group per 20ms tick (see
      * DWIN_UpdateData scatter). RX is drained above, near the top of the
      * loop. */
     if ((now - last_dwin_tick) >= DWIN_UPDATE_INTERVAL_MS) {

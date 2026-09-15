@@ -500,10 +500,14 @@ static void aggregate_view(const AlarmInputs_t *in) {
     g_alarm.view = v;
 }
 
-static void dispatch_action(uint32_t now) {
+static void dispatch_action(uint32_t now, const AlarmInputs_t *in) {
+    bool is_running = (in != NULL) && (in->cc.state == CHARGE_CTRL_STATE_RUNNING ||
+                                       in->cc.state == CHARGE_CTRL_STATE_READY ||
+                                       in->cc.state == CHARGE_CTRL_STATE_PRECHARGE);
+
     switch (g_alarm.view.highest_action) {
         case ALARM_ACT_ESTOP:
-            if (!g_alarm.estop_sent) {
+            if (!g_alarm.estop_sent || is_running) {
                 g_alarm.estop_sent = true;
                 g_alarm.stop_sent = true;
                 LOG("ALARM: -> EMERGENCY STOP (code %u)\r\n", (unsigned)g_alarm.view.worst_code);
@@ -511,7 +515,7 @@ static void dispatch_action(uint32_t now) {
             }
             break;
         case ALARM_ACT_STOP:
-            if (!g_alarm.stop_sent) {
+            if (!g_alarm.stop_sent || is_running) {
                 g_alarm.stop_sent = true;
                 LOG("ALARM: -> STOP (code %u)\r\n", (unsigned)g_alarm.view.worst_code);
                 ChargeController_Stop(now);
@@ -562,7 +566,7 @@ void Alarm_Process(uint32_t now_tick) {
     AlarmEdgeTally_t tally = {0};
     run_debounce(now_tick, &in, &tally);
     aggregate_view(&in);
-    dispatch_action(now_tick);
+    dispatch_action(now_tick, &in);
     log_tally(now_tick, &tally);
 }
 

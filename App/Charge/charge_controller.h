@@ -91,6 +91,10 @@ typedef enum {
 #define CHARGE_CTRL_FAULT_RESERVED_10            (1U << 10)
 #define CHARGE_CTRL_FAULT_EMERGENCY_STOP         (1U << 11)
 
+/** Minimum charging current (A) required to validate contact resistance voltage drop (V = I * R).
+ * Below this threshold, module capacitance / unloaded battery voltage difference cannot represent contact resistance. */
+#define CHARGE_CTRL_JACK_V_MIN_CURRENT_A         2.0f
+
 /* ============== Controller View ============== */
 
 typedef struct {

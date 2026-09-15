@@ -588,6 +588,15 @@ static bool test_bms_thermal_trip_limit_halts_on_4th(void)
     ChargeController_GetView(&cv);
     ASSERT(cv.state == CHARGE_CTRL_STATE_FAULT, "controller must remain in FAULT even after cooling down");
 
+    /* START and STOP while in FAULT must be rejected and not clear fault */
+    ASSERT(!ChargeController_Start(CHARGE_CTRL_OWNER_PC, false, mock_tick),
+           "START while in FAULT must be rejected");
+    ChargeController_Stop(mock_tick);
+    drive_ms(200U);
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_FAULT, "STOP must not clear FAULT");
+    ASSERT(cv.bms_temp_trip_count == 4U, "STOP must not reset trip count");
+
     /* Reset clears fault and resets trip count to 0 */
     ASSERT(ChargeController_ResetFaultIfSafe(mock_tick), "reset fault should succeed once BMS is healthy");
     ChargeController_GetView(&cv);
@@ -747,6 +756,15 @@ static bool test_stage_thermal_trip_limit_halts_on_4th(void)
 
     ChargeController_GetView(&cv);
     ASSERT(cv.state == CHARGE_CTRL_STATE_FAULT, "controller must remain in FAULT even after cooling down");
+
+    /* START and STOP while in FAULT must be rejected and not clear fault */
+    ASSERT(!ChargeController_Start(CHARGE_CTRL_OWNER_PC, false, mock_tick),
+           "START while in FAULT must be rejected");
+    ChargeController_Stop(mock_tick);
+    drive_ms(200U);
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_FAULT, "STOP must not clear FAULT");
+    ASSERT(cv.bms_temp_trip_count == 4U, "STOP must not reset trip count");
 
     /* While still hot, reset must be rejected */
     g_sim_bms.max_cell_temp_c = 60.0f;

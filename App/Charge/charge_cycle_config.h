@@ -26,7 +26,7 @@ extern "C" {
 #define DEFAULT_ILOW_C                        0.5f
 
 #define DEFAULT_VMIN_V                        32.0f
-#define DEFAULT_VMAX_V                        53.0f
+#define DEFAULT_VMAX_V                        58.4f
 #define DEFAULT_VPRE_V                        48.0f
 #define DEFAULT_VLOW_V                        52.0f
 #define DEFAULT_TEMP_LIMIT_C                  55.0f

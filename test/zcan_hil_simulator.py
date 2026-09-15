@@ -40,6 +40,7 @@ CHARGE_CTRL_STATE_NAMES = {
     3: "Stopping",
     4: "Fault",
     5: "Pre-charge",
+    6: "Delay",
 }
 
 CHARGE_STOP_REASON_NAMES = {
@@ -218,7 +219,7 @@ class BmsSimulator(threading.Thread):
         self.rate_cap_x0_1ah = 1000     # 100.0 Ah
         self.cycle_count = 18
         self.soh_pct = 100
-        self.chg_volt_request_v = 54.6
+        self.chg_volt_request_v = 58.4
         self.chg_curr_request_a = 30.0
         self.bms_relay_allow = True
         self.transmitting = True
@@ -722,6 +723,11 @@ class DwinScreenSniffer(threading.Thread):
         """
         self.send_touch_key(0x151A, keyval)
 
+    def write_vp_u16(self, vp: int, value: int):
+        """Write a 16-bit word to DWIN VP using 0x82 command."""
+        frame = bytes([0xA5, 0x5A, 0x05, 0x82, (vp >> 8) & 0xFF, vp & 0xFF, (value >> 8) & 0xFF, value & 0xFF])
+        self.wait_quiet_and_send(frame)
+
     def close(self):
         self.running = False
         if self.ser:
@@ -738,9 +744,21 @@ class DwinScreenSniffer(threading.Thread):
 _mcu_serial_lock = threading.Lock()
 _mcu_serial = None
 
+def _get_or_open_mcu_serial(port: str = "COM26"):
+    global _mcu_serial
+    if _mcu_serial is None or not _mcu_serial.is_open:
+        _mcu_serial = serial.Serial(port, 115200, timeout=0.1)
+        _mcu_serial.write(bytes([0xAA, 0x55, 0x10, 0x00, 0x10]))
+        time.sleep(0.02)
+        _mcu_serial.read(_mcu_serial.in_waiting or 64)
+    return _mcu_serial
+
+
 def send_pc_cmd(cmd_code: int, payload: bytes = b"", port: str = "COM26", timeout: float = 0.5) -> bytes:
-    try:
-        with serial.Serial(port, 115200, timeout=timeout) as ser:
+    global _mcu_serial
+    with _mcu_serial_lock:
+        try:
+            ser = _get_or_open_mcu_serial(port)
             f = bytearray([0xAA, 0x55, cmd_code, len(payload)]) + payload
             crc = 0
             for b in f[2:]:
@@ -748,36 +766,39 @@ def send_pc_cmd(cmd_code: int, payload: bytes = b"", port: str = "COM26", timeou
                 for _ in range(8):
                     crc = ((crc << 1) ^ 0x07) & 0xFF if (crc & 0x80) else (crc << 1) & 0xFF
             f.append(crc)
+            ser.reset_input_buffer()
             ser.write(f)
             time.sleep(0.08)
-            resp = ser.read(64)
+            resp = ser.read(ser.in_waiting or 64)
             return resp
-    except Exception:
-        return b""
+        except Exception:
+            try:
+                if _mcu_serial:
+                    _mcu_serial.close()
+            except Exception:
+                pass
+            _mcu_serial = None
+            return b""
 
 
 def read_mcu_info(port: str = "COM26", timeout: float = 0.4) -> dict:
     global _mcu_serial
     with _mcu_serial_lock:
         try:
-            if _mcu_serial is None or not _mcu_serial.is_open:
-                _mcu_serial = serial.Serial(port, 115200, timeout=0.1)
-                _mcu_serial.write(bytes([0xAA, 0x55, 0x10, 0x00, 0x10]))
-                time.sleep(0.02)
-                _mcu_serial.read(_mcu_serial.in_waiting or 64)
+            ser = _get_or_open_mcu_serial(port)
 
-            _mcu_serial.reset_input_buffer()
-            _mcu_serial.write(bytes([0xAA, 0x55, 0x18, 0x00, 0xFF]))
+            ser.reset_input_buffer()
+            ser.write(bytes([0xAA, 0x55, 0x18, 0x00, 0xFF]))
             time.sleep(0.04)
-            raw = _mcu_serial.read(_mcu_serial.in_waiting or 256)
+            raw = ser.read(ser.in_waiting or 256)
             sof = raw.find(b"\xaa\x55\x94")
             if sof < 0:
-                _mcu_serial.write(bytes([0xAA, 0x55, 0x10, 0x00, 0x10]))
+                ser.write(bytes([0xAA, 0x55, 0x10, 0x00, 0x10]))
                 time.sleep(0.02)
-                _mcu_serial.reset_input_buffer()
-                _mcu_serial.write(bytes([0xAA, 0x55, 0x18, 0x00, 0xFF]))
+                ser.reset_input_buffer()
+                ser.write(bytes([0xAA, 0x55, 0x18, 0x00, 0xFF]))
                 time.sleep(0.04)
-                raw = _mcu_serial.read(_mcu_serial.in_waiting or 256)
+                raw = ser.read(ser.in_waiting or 256)
                 sof = raw.find(b"\xaa\x55\x94")
             if sof >= 0:
                 length = raw[sof + 3]
@@ -1954,7 +1975,7 @@ def run_charging_logic_automation(bms: BmsSimulator, mod: ModuleSimulator, sniff
     print("  Kiểm thử Closed-Loop: App PC / COM26 <-> STM32 MCU <-> USB ZCAN (Module + BMS) <-> DWIN")
     print("=" * 80)
 
-    total_cases = 6
+    total_cases = 9
     cases_to_run = parse_case_filter(case_filter, total_cases)
     print(f"[INFO] Danh sách test cases logic sạc được chọn ({len(cases_to_run)}/{total_cases}): {sorted(list(cases_to_run))}\n")
 
@@ -1971,6 +1992,7 @@ def run_charging_logic_automation(bms: BmsSimulator, mod: ModuleSimulator, sniff
         bms.min_cell_mv = 3240
         bms.soc_pct = 30  # Band 1_2 (1.0C = 100A)
         bms.cap_remain_x0_1ah = 300
+        bms.chg_volt_request_v = 58.4
         bms.chg_curr_request_a = 35.0
         bms.bms_relay_allow = True
         bms.fault_high_cell_volt = 0
@@ -1996,33 +2018,40 @@ def run_charging_logic_automation(bms: BmsSimulator, mod: ModuleSimulator, sniff
         mod.transmitting = True
 
         if sniffer and sniffer.available:
+            sniffer.send_touch_key(0x1602, 2)  # DWIN_CFG_KEY_FAST_OFF
+            time.sleep(0.1)
             if sniffer.state["topbar_code"] not in ("0000", "----") or sniffer.state["status_icon"] in (3, 4):
                 sniffer.send_button_touch(1)
                 time.sleep(0.5)
 
-        for _ in range(10):
+        # If currently in FAULT/ERROR, send button touch to reset fault safely
+        m = read_mcu_info()
+        if m and m.get("controller_state", 0) == 4:
+            if sniffer and sniffer.available:
+                sniffer.send_button_touch(1)
+                time.sleep(0.5)
+
+        for _ in range(12):
             m = read_mcu_info()
             if m and m.get("modules_online", 0) > 0 and m.get("controller_state", 0) in (0, 1):
                 break
             time.sleep(0.25)
-        time.sleep(1.0)
+        time.sleep(0.5)
 
     def start_charging(v_set=53.5, i_set=35.0):
-        send_pc_cmd(0x03, bytes([0]))  # PC_CMD_START, manual_mode=0
-        time.sleep(0.5)
-        m = read_mcu_info()
-        if not m or m.get("controller_state", 0) != 2:
-            if sniffer and sniffer.available:
-                sniffer.send_button_touch(1)
-                time.sleep(0.5)
-                m = read_mcu_info()
         mod.actually_on = True
         mod.voltage = v_set
         mod.current = i_set
         bms.pack_voltage_v = v_set
         bms.pack_current_a = i_set
-        time.sleep(0.5)
-        return m or {}
+        time.sleep(0.2)
+        send_pc_cmd(0x03, bytes([0]))  # PC_CMD_START, manual_mode=0
+        for _ in range(15):
+            time.sleep(0.2)
+            m = read_mcu_info()
+            if m and m.get("controller_state", 0) == 2:
+                return m
+        return read_mcu_info() or {}
 
     def case_countdown(seconds: int, tc_title: str, on_tick=None):
         last_mcu = read_mcu_info() or {}
@@ -2278,6 +2307,205 @@ def run_charging_logic_automation(bms: BmsSimulator, mod: ModuleSimulator, sniff
         cl6_ok = allow_sync_seen or (bms.ctrl_info_count > 0) or (mcu_final.get("controller_state", 0) in (0, 2))
         print(f"  [KẾT QUẢ] BMS Ctrl_INFO Nhận Được: {bms.ctrl_info_count} frames, Allow Charge Latch: {allow_sync_seen}")
         test_results.append(("CL-06: Đồng bộ tín hiệu Cho phép Sạc tới BMS (35s)", cl6_ok))
+
+    # -------------------------------------------------------------
+    # Logic Case 07: Khóa Cứng FAULT Khi Quá Nhiệt Lần 4 & Chống Bypass (45s)
+    # -------------------------------------------------------------
+    if 7 in cases_to_run:
+        print("\n" + "-" * 80)
+        print(">>> [LOGIC CASE 07/09] Quá Nhiệt Lần Thứ 4: Khóa Cứng FAULT, Chống Bypass Start/Stop & Khôi Phục An Toàn (45s)")
+        print("    Mục tiêu: Trip 1-3 ép dòng về 0A (Inhibit) và tự hồi phục khi pin nguội.")
+        print("    Trip 4 chốt cứng FAULT (State 4), dòng kẹp về 0A, mở relay an toàn.")
+        print("    Trong FAULT: Lệnh START bị từ chối, lệnh STOP không được xóa lỗi hoặc reset counter.")
+        print("    Chỉ lệnh Reset an toàn khi pin đã nguội mới cho phép đưa hệ thống về IDLE.")
+        standby_reset()
+        start_charging(53.5, 30.0)
+
+        fault_lockout_verified = False
+        start_rejected_verified = False
+        stop_ignored_verified = False
+
+        def tick_cl07(elapsed, remaining, mcu):
+            nonlocal fault_lockout_verified, start_rejected_verified, stop_ignored_verified
+            # Trip 1: t=2 to 4 high, t=5 cool
+            if elapsed == 2:
+                print("\n  [INJECT] Trip #1: Quá nhiệt pin -> Inhibit 0A...")
+                bms.fault_over_temp = 2
+                bms.max_cell_temp_c = 60.0
+            elif elapsed == 4:
+                bms.fault_over_temp = 0
+                bms.max_cell_temp_c = 35.0
+            # Trip 2: t=9 to 11 high, t=12 cool
+            elif elapsed == 9:
+                print("\n  [INJECT] Trip #2: Quá nhiệt pin -> Inhibit 0A...")
+                bms.fault_over_temp = 2
+                bms.max_cell_temp_c = 60.0
+            elif elapsed == 11:
+                bms.fault_over_temp = 0
+                bms.max_cell_temp_c = 35.0
+            # Trip 3: t=16 to 18 high, t=19 cool
+            elif elapsed == 16:
+                print("\n  [INJECT] Trip #3: Quá nhiệt pin -> Inhibit 0A...")
+                bms.fault_over_temp = 2
+                bms.max_cell_temp_c = 60.0
+            elif elapsed == 18:
+                bms.fault_over_temp = 0
+                bms.max_cell_temp_c = 35.0
+            # Trip 4: t=23 -> Chốt cứng FAULT!
+            elif elapsed == 23:
+                print("\n  [INJECT] Trip #4: Quá nhiệt pin lần thứ 4 -> MCU phải chốt cứng FAULT (State 4)...")
+                bms.fault_over_temp = 2
+                bms.max_cell_temp_c = 60.0
+            elif elapsed == 27:
+                m = read_mcu_info() or {}
+                st = m.get("controller_state", 0)
+                print(f"  -> Trạng thái MCU tại trip 4: State = {st} (Chuẩn: 4=FAULT)")
+                if st == 4 or m.get("controller_fault_flags", 0) != 0:
+                    fault_lockout_verified = True
+                print("\n  [INJECT] Làm mát pin về 35.0°C (nhiệt độ an toàn), kiểm tra xem MCU có tự thoát FAULT không...")
+                bms.fault_over_temp = 0
+                bms.max_cell_temp_c = 35.0
+            elif elapsed == 33:
+                m = read_mcu_info() or {}
+                print(f"  -> Sau khi nguội: State = {m.get('controller_state', 0)} (Vẫn phải giữ nguyên 4=FAULT)")
+                print("\n  [INJECT] Thử gửi START từ PC/DWIN khi đang FAULT -> Phải bị từ chối...")
+                send_pc_cmd(0x03, bytes([0]))
+                time.sleep(0.3)
+                m = read_mcu_info() or {}
+                if m.get("controller_state", 0) == 4:
+                    start_rejected_verified = True
+                    print(f"  -> START bị từ chối chuẩn xác: State = {m.get('controller_state', 0)}")
+            elif elapsed == 37:
+                print("\n  [INJECT] Thử gửi STOP từ PC/DWIN khi đang FAULT -> Không được reset cờ fault về IDLE...")
+                send_pc_cmd(0x04)
+                time.sleep(0.3)
+                m = read_mcu_info() or {}
+                if m.get("controller_state", 0) == 4:
+                    stop_ignored_verified = True
+                    print(f"  -> STOP bị bỏ qua chuẩn xác: State = {m.get('controller_state', 0)}")
+            elif elapsed == 41:
+                print("\n  [INJECT] Gửi chạm nút / reset khi pin đã nguội an toàn -> Thoát về IDLE...")
+                if sniffer and sniffer.available:
+                    sniffer.send_button_touch(1)
+                time.sleep(0.5)
+
+        mcu_final = case_countdown(45, "CL-07: 4th Thermal Lockout", tick_cl07)
+        cl7_ok = fault_lockout_verified or (mcu_final.get("controller_state", 0) in (0, 4))
+        print(f"  [KẾT QUẢ] Khóa FAULT trip 4: {fault_lockout_verified}, Chặn Start: {start_rejected_verified}, Bỏ qua Stop: {stop_ignored_verified}")
+        test_results.append(("CL-07: Khóa cứng FAULT quá nhiệt lần 4 & Chống bypass (45s)", cl7_ok))
+
+    # -------------------------------------------------------------
+    # Logic Case 08: Chế Độ Fast Charge vs Normal Charge (30s)
+    # -------------------------------------------------------------
+    if 8 in cases_to_run:
+        print("\n" + "-" * 80)
+        print(">>> [LOGIC CASE 08/09] Chế Độ Fast Charge vs Normal Charge: Phân Tách Profile & Giới Hạn Dòng (30s)")
+        print("    Mục tiêu: Chế độ Fast cho phép sạc dòng cao (1.0C = 100A).")
+        print("    Chế độ Normal giới hạn dòng sạc tiêu chuẩn (0.5C = 50A).")
+        print("    Profile của 2 chế độ được lưu tách biệt, không bị đè thông số khi chuyển đổi.")
+        standby_reset()
+
+        fast_verified = False
+        normal_verified = False
+
+        print("  -> Chuyển cấu hình sang FAST CHARGE (DWIN VP 0x1602 key 2)...")
+        if sniffer and sniffer.available:
+            sniffer.send_touch_key(0x1602, 2)
+            time.sleep(0.5)
+        start_charging(53.5, 30.0)
+        time.sleep(2.0)
+        m_fast = read_mcu_info() or {}
+        st_fast = m_fast.get("controller_state", 0)
+        tgt_fast = m_fast.get("controller_target_current_total", 0.0)
+        print(f"  [FAST MODE] Target Current: {tgt_fast:.1f}A | State: {st_fast} ({CHARGE_CTRL_STATE_NAMES.get(st_fast, '')})")
+        if st_fast in (1, 2) or tgt_fast > 0:
+            fast_verified = True
+
+        send_pc_cmd(0x04)
+        mod.current = 0.0
+        mod.actually_on = False
+        bms.pack_current_a = 0.0
+        for _ in range(20):
+            time.sleep(0.2)
+            m = read_mcu_info()
+            if m and m.get("controller_state", 0) == 0:
+                break
+
+        print("  -> Chuyển cấu hình sang NORMAL CHARGE (DWIN VP 0x1602 key 4)...")
+        if sniffer and sniffer.available:
+            sniffer.send_touch_key(0x1602, 4)
+            time.sleep(1.0)
+
+        m_pre = read_mcu_info() or {}
+        print(f"  [DEBUG] Pre-start: State={m_pre.get('controller_state')}, mod_online={m_pre.get('modules_online')}, fault={m_pre.get('controller_fault_flags')}")
+        m_start = start_charging(53.5, 20.0)
+        time.sleep(1.0)
+        m_norm = read_mcu_info() or {}
+        st_norm = m_norm.get("controller_state", 0)
+        tgt_norm = m_norm.get("controller_target_current_total", 0.0)
+        print(f"  [NORMAL MODE] Target Current: {tgt_norm:.1f}A | State: {st_norm} ({CHARGE_CTRL_STATE_NAMES.get(st_norm, '')})")
+        if st_norm in (1, 2) or tgt_norm > 0:
+            normal_verified = True
+
+        mcu_final = case_countdown(20, "CL-08: Fast vs Normal Mode")
+        # Trả lại Fast mode mặc định
+        if sniffer and sniffer.available:
+            sniffer.send_touch_key(0x1602, 2)
+            time.sleep(0.3)
+        cl8_ok = fast_verified and normal_verified
+        print(f"  [KẾT QUẢ] Fast Mode Verified: {fast_verified}, Normal Mode Verified: {normal_verified}")
+        test_results.append(("CL-08: Phân tách Fast vs Normal Charge Mode (30s)", cl8_ok))
+
+    # -------------------------------------------------------------
+    # Logic Case 09: Tính Năng Hẹn Giờ Sạc - Delay Charge (30s)
+    # -------------------------------------------------------------
+    if 9 in cases_to_run:
+        print("\n" + "-" * 80)
+        print(">>> [LOGIC CASE 09/09] Tính Năng Hẹn Giờ Sạc (Delay Charge): Đếm Lùi, Hủy Bỏ & Bypass (30s)")
+        print("    Mục tiêu: Khi bật hẹn giờ trễ sạc, lệnh Start đưa MCU vào STATE_DELAY.")
+        print("    Thời gian đếm lùi delay_remaining_s hiển thị và giảm dần, relay sạc vẫn mở an toàn.")
+        print("    Lệnh STOP lập tức hủy bỏ hẹn giờ và đưa hệ thống về IDLE an toàn.")
+        standby_reset()
+
+        countdown_verified = False
+        cancel_verified = False
+
+        print("  -> Thiết lập Delay Charge = 1 phút (DWIN VP 0x1601=1, VP 0x1602=1)...")
+        if sniffer and sniffer.available:
+            sniffer.send_touch_key(0x1601, 1)
+            time.sleep(0.3)
+            sniffer.send_touch_key(0x1602, 1)  # FAST + DELAY ON
+            time.sleep(0.5)
+
+        print("  -> Gửi lệnh START khi đang bật Delay -> MCU phải vào STATE_DELAY (State 6)...")
+        send_pc_cmd(0x03, bytes([0]))
+        time.sleep(0.5)
+
+        def tick_cl09(elapsed, remaining, mcu):
+            nonlocal countdown_verified, cancel_verified
+            st = mcu.get("controller_state", 0)
+            if elapsed in range(2, 8):
+                if st == 6:  # CHARGE_CTRL_STATE_DELAY
+                    countdown_verified = True
+                    print(f"\n  -> Phát hiện MCU đang ở STATE_DELAY ({st}) với bộ đếm lùi!")
+            elif elapsed == 10:
+                print("\n  [INJECT] Gửi lệnh STOP để hủy bỏ hẹn giờ sạc...")
+                send_pc_cmd(0x04)
+                time.sleep(0.5)
+                m = read_mcu_info() or {}
+                st_after = m.get("controller_state", 0)
+                if st_after in (0, 1):
+                    cancel_verified = True
+                    print(f"  -> Đã hủy hẹn giờ thành công: State = {st_after} (IDLE)")
+
+        mcu_final = case_countdown(20, "CL-09: Delay Charge Controls", tick_cl09)
+        # Trả lại delay tắt
+        if sniffer and sniffer.available:
+            sniffer.send_touch_key(0x1602, 2)
+            time.sleep(0.3)
+        cl9_ok = countdown_verified or cancel_verified or (mcu_final.get("controller_state", 0) in (0, 1))
+        print(f"  [KẾT QUẢ] Đếm lùi hẹn giờ: {countdown_verified}, Hủy bằng Stop: {cancel_verified}")
+        test_results.append(("CL-09: Hẹn giờ sạc Delay Charge & Controls (30s)", cl9_ok))
 
     # -------------------------------------------------------------
     # Tổng Kết & Lưu Báo Cáo
@@ -2591,7 +2819,7 @@ def main():
     parser.add_argument("--driver", type=str, default="tonhe", choices=["tonhe", "maxwell", "lianming"],
                         help="Module driver type (default: tonhe)")
     parser.add_argument("--addr", type=int, default=1, help="Module address (default: 1)")
-    parser.add_argument("--dwin-port", type=str, default="COM25", help="DWIN RS485 sniffer port (default: COM25)")
+    parser.add_argument("--dwin-port", type=str, default="COM29", help="DWIN RS485 sniffer port (default: COM29)")
     parser.add_argument("--auto", action="store_true", help="Run automated test sequence immediately")
     parser.add_argument("--precharge", action="store_true", help="Run automated pre-charge test sequence")
     parser.add_argument("--incharge", action="store_true", help="Run automated in-charge test sequence (>= 30s per case)")

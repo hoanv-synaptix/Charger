@@ -1816,18 +1816,21 @@ static bool test_precharge_zero_or_faulty_module(void)
     ChargeController_GetView(&cv);
     ASSERT(cv.state == CHARGE_CTRL_STATE_FAULT, "must enter FAULT");
 
-    /* Module in fault */
-    ChargeController_Stop(mock_tick);
-    drive_ms(100U);
+    /* Case 2: Module in fault */
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_MAXWELL, &cfg), "setup failed");
+    cfg.vlow_v = 45.0f;
+    cfg.ilow_c = 0.2f;
+    cfg.module_u_min_v = 30.0f;
+    cfg.module_u_max_v = 60.0f;
+    cfg.module_i_min_a = 1.0f;
+    cfg.module_i_max_a = 50.0f;
+    ASSERT(ChargeCycleConfig_Set(&cfg), "config set failed");
     g_sim_module.silent = false;
-    drive_ms(1000U);
     g_sim_module.maxwell_alarm_raw = (1U << 28);
     drive_ms(16000U); /* Maxwell polls 1 register/sec in IDLE; reg 5 is ALARM_STATUS */
     ASSERT(!ChargeController_StartPrecharge(CHARGE_CTRL_OWNER_DWIN, mock_tick),
            "Precharge must fail with module in fault");
 
-    ChargeController_Stop(mock_tick);
-    drive_ms(100U);
     printf("[PASS] test_precharge_zero_or_faulty_module\n");
     return true;
 }
@@ -2505,6 +2508,280 @@ static bool test_delay_charge_manual_mode_bypasses_delay(void)
     return true;
 }
 
+static bool test_bms_thermal_trip_4th_lockout_and_bypass_prevention(void)
+{
+    printf("Running test_bms_thermal_trip_4th_lockout_and_bypass_prevention...\n");
+    ChargeCycleConfig_t cfg;
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_MAXWELL, &cfg), "setup failed");
+
+    cfg.temp_enabled = 1U;
+    cfg.temp_delta_c = 1.0f;
+    cfg.temp_1_c = 10.0f;
+    cfg.temp_2_c = 20.0f;
+    cfg.temp_3_c = 40.0f;
+    cfg.temp_4_c = 50.0f;
+    cfg.temp_5_c = 55.0f;
+    cfg.temp_curr_1_c = 1.0f;
+    cfg.temp_curr_2_c = 0.8f;
+    cfg.temp_curr_3_c = 0.5f;
+    cfg.temp_curr_4_c = 0.2f;
+    ASSERT(ChargeCycleConfig_Set(&cfg), "config set failed");
+
+    set_healthy_bms(400.0f, 50);
+    drive_ms(1500U);
+
+    ASSERT(ChargeController_Start(CHARGE_CTRL_OWNER_PC, false, mock_tick), "start must succeed from IDLE");
+    drive_ms(200U);
+
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "controller must be RUNNING");
+    ASSERT(cv.bms_temp_trip_count == 0U, "initial trip count must be 0");
+
+    /* Trip 1, 2, 3: Over-temperature stage (60C >= temp_5_c 55C) inhibits to 0A and recovers */
+    for (uint8_t trip = 1U; trip <= 3U; trip++) {
+        g_sim_bms.max_cell_temp_c = 60.0f;
+        drive_ms(500U);
+
+        ChargeController_GetView(&cv);
+        ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "controller must stay RUNNING during recoverable trip");
+        ASSERT(cv.inhibit != 0U, "inhibit must be active during thermal trip");
+        ASSERT(cv.bms_temp_trip_count == trip, "trip count mismatch");
+
+        /* Cool down to 50C and wait for recovery confirmation (3000ms) */
+        g_sim_bms.max_cell_temp_c = 50.0f;
+        drive_ms(3500U);
+
+        ChargeController_GetView(&cv);
+        ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "controller must recover to RUNNING");
+        ASSERT(cv.inhibit == 0U, "inhibit must clear on recovery");
+        ASSERT(cv.bms_temp_trip_count == trip, "trip count must persist across recoveries");
+    }
+
+    /* Trip 4: Must halt charge completely into FAULT, not auto-recover */
+    g_sim_bms.max_cell_temp_c = 60.0f;
+    drive_ms(500U);
+
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_FAULT, "controller must enter FAULT on 4th trip");
+    ASSERT(cv.bms_temp_trip_count == 4U, "trip count must be 4 on 4th trip");
+    ASSERT(!cv.relay_should_close, "relay must open on FAULT");
+
+    /* (1) Cool down for 5 seconds: Controller must REMAIN in FAULT and trip count MUST remain 4 */
+    g_sim_bms.max_cell_temp_c = 40.0f;
+    drive_ms(5000U);
+
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_FAULT, "controller must remain in FAULT after cooling down");
+    ASSERT(cv.bms_temp_trip_count == 4U, "trip count must stay 4 after cooling down");
+
+    /* (2) Bypass test A: Calling ChargeController_Start() while in FAULT must be rejected */
+    ASSERT(!ChargeController_Start(CHARGE_CTRL_OWNER_PC, false, mock_tick),
+           "ChargeController_Start must be rejected when in FAULT");
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_FAULT, "START must not clear FAULT state");
+    ASSERT(cv.bms_temp_trip_count == 4U, "START must not reset trip count");
+
+    /* (3) Bypass test B: Calling ChargeController_Stop() while in FAULT must not clear fault */
+    ChargeController_Stop(mock_tick);
+    drive_ms(200U);
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_FAULT, "ChargeController_Stop must not clear FAULT");
+    ASSERT(cv.bms_temp_trip_count == 4U, "ChargeController_Stop must not reset trip count");
+
+    /* (4) Safe Reset: Reset must fail if temperature rises again */
+    g_sim_bms.max_cell_temp_c = 60.0f;
+    drive_ms(500U);
+    ASSERT(!ChargeController_ResetFaultIfSafe(mock_tick), "ResetFaultIfSafe must fail while temperature is high");
+
+    /* (5) Safe Reset: Reset succeeds once cooled and safe */
+    g_sim_bms.max_cell_temp_c = 40.0f;
+    drive_ms(500U);
+    ASSERT(ChargeController_ResetFaultIfSafe(mock_tick), "ResetFaultIfSafe must succeed when cooled and safe");
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_IDLE, "must return to IDLE after safe reset");
+    ASSERT(cv.bms_temp_trip_count == 0U, "trip count must reset to 0 after safe reset");
+    ASSERT(cv.fault_flags == CHARGE_CTRL_FAULT_NONE, "fault flags must be cleared");
+
+    /* (6) Starting again after safe reset starts a clean session */
+    ASSERT(ChargeController_Start(CHARGE_CTRL_OWNER_PC, false, mock_tick),
+           "ChargeController_Start must succeed from IDLE after reset");
+    drive_ms(200U);
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "controller must be RUNNING in new session");
+    ASSERT(cv.bms_temp_trip_count == 0U, "trip count must start at 0 in new session");
+
+    ChargeController_Stop(mock_tick);
+    printf("[PASS] test_bms_thermal_trip_4th_lockout_and_bypass_prevention\n");
+    return true;
+}
+
+/* Jack voltage protection: trips when current >= 2.0A and delta_v > threshold for delay_s */
+static bool test_jack_v_protection_trips_under_real_load(void)
+{
+    printf("Running test_jack_v_protection_trips_under_real_load...\n");
+    ChargeCycleConfig_t cfg;
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_TONHE, &cfg), "setup failed");
+
+    cfg.protect_jack_charge_enabled = 1U;
+    cfg.protect_jack_charge_delta_v = 2.0f;
+    cfg.protect_jack_charge_delay_s = 5U;
+    ASSERT(ChargeCycleConfig_Set(&cfg), "config set failed");
+
+    set_healthy_bms(400.0f, 50);
+    ASSERT(warmup_and_start(1500U, 4000U), "module never reached RUNNING");
+
+    /* Arm and latch relay */
+    g_sim_module.voltage = 400.0f * 0.97f;
+    drive_ms(200U);
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.relay_should_close == 1, "relay must latch closed");
+
+    /* Real load with large voltage drop (delta_v = 403.0 - 400.0 = 3.0V > 2.0V) */
+    g_sim_module.current_override = true;
+    g_sim_module.current = 20.0f; /* >= 2.0A */
+    g_sim_module.voltage = 403.0f;
+
+    /* Drive 4s: short of 5s delay -> must NOT trip yet */
+    drive_ms(4000U);
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "must remain RUNNING before 5s delay");
+    ASSERT((cv.fault_flags & CHARGE_CTRL_FAULT_PROTECT_JACK_V) == 0U, "must not fault before delay");
+
+    /* Drive another 2s: total > 5s -> must trip CHARGE_CTRL_FAULT_PROTECT_JACK_V */
+    drive_ms(2000U);
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_FAULT, "must enter FAULT state after delay");
+    ASSERT((cv.fault_flags & CHARGE_CTRL_FAULT_PROTECT_JACK_V) != 0U, "jack V fault must be set");
+    ASSERT(cv.stop_reason == CHARGE_STOP_PROTECTION, "stop reason must be PROTECTION");
+
+    printf("[PASS] test_jack_v_protection_trips_under_real_load\n");
+    return true;
+}
+
+/* Jack voltage protection: MUST BE IGNORED during BMS thermal inhibit (no false alarm E030) */
+static bool test_jack_v_protection_ignored_during_bms_thermal_inhibit(void)
+{
+    printf("Running test_jack_v_protection_ignored_during_bms_thermal_inhibit...\n");
+    ChargeCycleConfig_t cfg;
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_TONHE, &cfg), "setup failed");
+
+    cfg.protect_jack_charge_enabled = 1U;
+    cfg.protect_jack_charge_delta_v = 2.0f;
+    cfg.protect_jack_charge_delay_s = 5U;
+    cfg.temp_enabled = 1U;
+    cfg.temp_delta_c = 1.0f;
+    cfg.temp_1_c = 10.0f;
+    cfg.temp_2_c = 20.0f;
+    cfg.temp_3_c = 40.0f;
+    cfg.temp_4_c = 50.0f;
+    cfg.temp_5_c = 55.0f;
+    cfg.temp_curr_1_c = 1.0f;
+    cfg.temp_curr_2_c = 0.8f;
+    cfg.temp_curr_3_c = 0.5f;
+    cfg.temp_curr_4_c = 0.2f;
+    ASSERT(ChargeCycleConfig_Set(&cfg), "config set failed");
+
+    set_healthy_bms(400.0f, 50);
+    g_sim_bms.max_cell_temp_c = 30.0f;
+    ASSERT(warmup_and_start(1500U, 4000U), "module never reached RUNNING");
+
+    /* Arm and latch relay */
+    g_sim_module.voltage = 400.0f * 0.97f;
+    drive_ms(200U);
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.relay_should_close == 1, "relay must latch closed");
+
+    /* Normal charging under load */
+    g_sim_module.current_override = true;
+    g_sim_module.current = 20.0f;
+    g_sim_module.voltage = 400.5f; /* delta_v = 0.5V <= 2.0V */
+    drive_ms(1000U);
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "must be RUNNING");
+    ASSERT(cv.inhibit == 0U, "inhibit must be inactive");
+
+    /* BMS over-temperature event: cell temp rises to 60C (>= 55C temp_5_c) */
+    g_sim_bms.max_cell_temp_c = 60.0f;
+    drive_ms(500U);
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "controller stays RUNNING during thermal inhibit");
+    ASSERT(cv.inhibit == 1U, "inhibit must be active");
+
+    /* Module output current drops to 0A (inhibit command applied),
+     * but unloaded module output capacitors stay at 410.0V while battery is 400.0V (delta_v = 10.0V >> 2.0V).
+     * This physically occurs when charging is paused while contactor stays closed. */
+    g_sim_module.current = 0.0f;
+    g_sim_module.voltage = 410.0f;
+
+    /* Drive for 15s (3x the 5s jack protection delay). Under the old bug, this falsely tripped E030. */
+    drive_ms(15000U);
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "controller must NOT fault into FAULT state");
+    ASSERT((cv.fault_flags & CHARGE_CTRL_FAULT_PROTECT_JACK_V) == 0U, "MUST NOT trigger false alarm E030");
+    ASSERT(cv.inhibit == 1U, "inhibit still active waiting for cooling");
+
+    /* Battery cools down below hysteresis (40C < 50C) */
+    g_sim_bms.max_cell_temp_c = 40.0f;
+    g_sim_module.voltage = 401.0f;
+    drive_ms(4000U); /* wait past CHARGE_CTRL_BMS_TEMP_RECOVERY_CONFIRM_MS (3000ms) */
+    ChargeController_GetView(&cv);
+    ASSERT(cv.inhibit == 0U, "inhibit must clear once cooled");
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "charge session resumes without fault");
+
+    ChargeController_Stop(mock_tick);
+    printf("[PASS] test_jack_v_protection_ignored_during_bms_thermal_inhibit\n");
+    return true;
+}
+
+/* Jack voltage protection: Safe reset when module output capacitor holds residual voltage */
+static bool test_jack_v_fault_clear_safe_with_residual_voltage(void)
+{
+    printf("Running test_jack_v_fault_clear_safe_with_residual_voltage...\n");
+    ChargeCycleConfig_t cfg;
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_TONHE, &cfg), "setup failed");
+
+    cfg.protect_jack_charge_enabled = 1U;
+    cfg.protect_jack_charge_delta_v = 2.0f;
+    cfg.protect_jack_charge_delay_s = 1U;
+    ASSERT(ChargeCycleConfig_Set(&cfg), "config set failed");
+
+    set_healthy_bms(400.0f, 50);
+    ASSERT(warmup_and_start(1500U, 4000U), "module never reached RUNNING");
+
+    /* Trip jack voltage fault */
+    g_sim_module.current_override = true;
+    g_sim_module.current = 20.0f;
+    g_sim_module.voltage = 405.0f; /* delta_v = 5.0V > 2.0V */
+    drive_ms(1500U);
+
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_FAULT, "must be in FAULT");
+    ASSERT((cv.fault_flags & CHARGE_CTRL_FAULT_PROTECT_JACK_V) != 0U, "must have JACK_V fault");
+
+    /* Current settles and relay opens */
+    g_sim_module.current = 0.0f;
+    drive_ms(3500U); /* wait past RELAY_OPEN_TIMEOUT_MS so relay is open */
+    ChargeController_GetView(&cv);
+    ASSERT(cv.relay_should_close == 0, "relay must open");
+
+    /* Module capacitor still holds 415V while battery is 400V (delta_v = 15V > 2V).
+     * With open relay, this is open-circuit voltage difference. Reset must succeed! */
+    g_sim_module.voltage = 415.0f;
+    drive_ms(100U);
+
+    ASSERT(ChargeController_ResetFaultIfSafe(mock_tick), "safe reset must succeed even with capacitor residual voltage");
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_IDLE, "state must return to IDLE");
+    ASSERT(cv.fault_flags == CHARGE_CTRL_FAULT_NONE, "fault flags must be cleared");
+
+    printf("[PASS] test_jack_v_fault_clear_safe_with_residual_voltage\n");
+    return true;
+}
+
 int main(void)
 {
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -2572,6 +2849,10 @@ int main(void)
     pass &= test_charge_mode_fast_vs_normal_current_limits();
     pass &= test_delay_charge_minutes_only();
     pass &= test_delay_charge_manual_mode_bypasses_delay();
+    pass &= test_bms_thermal_trip_4th_lockout_and_bypass_prevention();
+    pass &= test_jack_v_protection_trips_under_real_load();
+    pass &= test_jack_v_protection_ignored_during_bms_thermal_inhibit();
+    pass &= test_jack_v_fault_clear_safe_with_residual_voltage();
 
     if (pass) {
         printf("ALL TESTS PASSED.\n");
@@ -2580,3 +2861,4 @@ int main(void)
     printf("TESTS FAILED.\n");
     return 1;
 }
+

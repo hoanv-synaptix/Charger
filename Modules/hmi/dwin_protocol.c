@@ -82,6 +82,16 @@ void DWIN_SendReadRequest(uint16_t vp, uint8_t n_words)
     UART_Transmit_To_DWIN(frame, 7U);
 }
 
+static void dwin_pack_string(uint8_t *dest, const char *src, uint8_t len)
+{
+    memset(dest, 0, len);
+    if (src != NULL) {
+        for (uint8_t i = 0; (i < len) && (src[i] != '\0'); i++) {
+            dest[i] = (uint8_t)src[i];
+        }
+    }
+}
+
 void DWIN_SendString(uint16_t vp, const char *str, uint8_t field_words)
 {
     uint8_t payload[2U * DWIN_TX_MAX_WORDS];
@@ -92,10 +102,7 @@ void DWIN_SendString(uint16_t vp, const char *str, uint8_t field_words)
     }
 
     n_bytes = (uint8_t)(2U * field_words);
-    memset(payload, 0, n_bytes);
-    for (uint8_t i = 0; (i < n_bytes) && (str[i] != '\0'); i++) {
-        payload[i] = (uint8_t)str[i];
-    }
+    dwin_pack_string(payload, str, n_bytes);
     dwin_write_frame(vp, payload, n_bytes);
 }
 
@@ -235,7 +242,7 @@ enum {
     STEP_SETTING_STATS,  /* 0x1118..0x112F (Uptime, Total Ah, Total kWh) */
     STEP_PRECHARGE,      /* 0x1310..0x1319 */
     STEP_ALARM_ROW,      /* Emit 1 alarm row if dirty */
-    STEP_COUNT
+    STEP_COUNT = DWIN_SCATTER_STEP_COUNT
 };
 
 static uint8_t s_force_steps = 0;
@@ -286,6 +293,7 @@ void DWIN_InvalidateSyncState(void)
     s_last_page = -1;
     s_update_step = 0U;
     s_have_prev_data = false;
+    memset(&s_prev_data, 0, sizeof(s_prev_data));
     DWIN_ForceFullRefresh();
 }
 
@@ -303,52 +311,83 @@ void DWIN_UpdateData(const DWIN_SystemData_t *d)
     }
 
     switch (s_update_step) {
-    case STEP_DC:
-        if (first || strncmp(s_prev_data.dc_voltage_text, d->dc_voltage_text, sizeof(d->dc_voltage_text)) != 0)
-            DWIN_SendString(VP_DC_VOLTAGE, d->dc_voltage_text, DWIN_TEXT_8_BYTES_WORDS);
-        if (first || strncmp(s_prev_data.dc_current_text, d->dc_current_text, sizeof(d->dc_current_text)) != 0)
-            DWIN_SendString(VP_DC_CURRENT, d->dc_current_text, DWIN_TEXT_8_BYTES_WORDS);
-        if (first || strncmp(s_prev_data.dc_power_text, d->dc_power_text, sizeof(d->dc_power_text)) != 0)
-            DWIN_SendString(VP_DC_POWER, d->dc_power_text, DWIN_TEXT_8_BYTES_WORDS);
+    case STEP_DC: {
+        bool dc_changed = first ||
+            (strncmp(s_prev_data.dc_voltage_text, d->dc_voltage_text, sizeof(d->dc_voltage_text)) != 0) ||
+            (strncmp(s_prev_data.dc_current_text, d->dc_current_text, sizeof(d->dc_current_text)) != 0) ||
+            (strncmp(s_prev_data.dc_power_text, d->dc_power_text, sizeof(d->dc_power_text)) != 0);
+
+        if (dc_changed) {
+            /* Coalesce VP_DC_VOLTAGE (0x1000), VP_DC_CURRENT (0x1004), VP_DC_POWER (0x1008)
+             * into a single 12-word (24-byte) frame. Reduces 3 UART TX calls (with RS485 turnaround)
+             * to 1 atomic frame on the wire: A5 5A 1B 82 10 00 [24 bytes]. */
+            uint8_t payload[24];
+            dwin_pack_string(&payload[0],  d->dc_voltage_text, 8U);
+            dwin_pack_string(&payload[8],  d->dc_current_text, 8U);
+            dwin_pack_string(&payload[16], d->dc_power_text,   8U);
+            dwin_write_frame(VP_DC_VOLTAGE, payload, (uint8_t)sizeof(payload));
+
+            memcpy(s_prev_data.dc_voltage_text, d->dc_voltage_text, sizeof(s_prev_data.dc_voltage_text));
+            memcpy(s_prev_data.dc_current_text, d->dc_current_text, sizeof(s_prev_data.dc_current_text));
+            memcpy(s_prev_data.dc_power_text,   d->dc_power_text,   sizeof(s_prev_data.dc_power_text));
+        }
         break;
+    }
 
     case STEP_BATT_V:
         if (first || strncmp(s_prev_data.bat_pack_volt_text, d->bat_pack_volt_text, sizeof(d->bat_pack_volt_text)) != 0) {
             DWIN_SendString(VP_BAT_PACK_VOLT_TEXT, d->bat_pack_volt_text, DWIN_TEXT_8_BYTES_WORDS);
+            memcpy(s_prev_data.bat_pack_volt_text, d->bat_pack_volt_text, sizeof(s_prev_data.bat_pack_volt_text));
         }
         if (first || strncmp(s_prev_data.bat_cell_volt_text, d->bat_cell_volt_text, sizeof(d->bat_cell_volt_text)) != 0) {
             DWIN_SendString(VP_BAT_CELL_VOLT_TEXT, d->bat_cell_volt_text, DWIN_TEXT_8_BYTES_WORDS);
+            memcpy(s_prev_data.bat_cell_volt_text, d->bat_cell_volt_text, sizeof(s_prev_data.bat_cell_volt_text));
         }
-        if (first || strncmp(s_prev_data.bat_cap_text, d->bat_cap_text, sizeof(d->bat_cap_text)) != 0)
+        if (first || strncmp(s_prev_data.bat_cap_text, d->bat_cap_text, sizeof(d->bat_cap_text)) != 0) {
             DWIN_SendString(VP_BAT_CHARGED_AH_TEXT, d->bat_cap_text, DWIN_TEXT_8_BYTES_WORDS);
+            memcpy(s_prev_data.bat_cap_text, d->bat_cap_text, sizeof(s_prev_data.bat_cap_text));
+        }
         break;
 
     case STEP_AC:
-        if (first || strncmp(s_prev_data.ac_l1_text, d->ac_l1_text, sizeof(d->ac_l1_text)) != 0)
+        if (first || strncmp(s_prev_data.ac_l1_text, d->ac_l1_text, sizeof(d->ac_l1_text)) != 0) {
             DWIN_SendString(VP_AC_PHASE_L1, d->ac_l1_text, DWIN_TEXT_8_BYTES_WORDS);
-        if (first || strncmp(s_prev_data.ac_l2_text, d->ac_l2_text, sizeof(d->ac_l2_text)) != 0)
+            memcpy(s_prev_data.ac_l1_text, d->ac_l1_text, sizeof(s_prev_data.ac_l1_text));
+        }
+        if (first || strncmp(s_prev_data.ac_l2_text, d->ac_l2_text, sizeof(d->ac_l2_text)) != 0) {
             DWIN_SendString(VP_AC_PHASE_L2, d->ac_l2_text, DWIN_TEXT_8_BYTES_WORDS);
-        if (first || strncmp(s_prev_data.ac_l3_text, d->ac_l3_text, sizeof(d->ac_l3_text)) != 0)
+            memcpy(s_prev_data.ac_l2_text, d->ac_l2_text, sizeof(s_prev_data.ac_l2_text));
+        }
+        if (first || strncmp(s_prev_data.ac_l3_text, d->ac_l3_text, sizeof(d->ac_l3_text)) != 0) {
             DWIN_SendString(VP_AC_PHASE_L3, d->ac_l3_text, DWIN_TEXT_8_BYTES_WORDS);
+            memcpy(s_prev_data.ac_l3_text, d->ac_l3_text, sizeof(s_prev_data.ac_l3_text));
+        }
         break;
 
     case STEP_TEMP:
         if (first || strncmp(s_prev_data.temp_battery_text, d->temp_battery_text, sizeof(d->temp_battery_text)) != 0) {
             DWIN_SendString(VP_TEMP_BATTERY_TEXT, d->temp_battery_text, DWIN_TEXT_8_BYTES_WORDS);
+            memcpy(s_prev_data.temp_battery_text, d->temp_battery_text, sizeof(s_prev_data.temp_battery_text));
         }
-        if (first || strncmp(s_prev_data.temp_charge_text, d->temp_charge_text, sizeof(d->temp_charge_text)) != 0)
+        if (first || strncmp(s_prev_data.temp_charge_text, d->temp_charge_text, sizeof(d->temp_charge_text)) != 0) {
             DWIN_SendString(VP_TEMP_CHARGE_TEXT, d->temp_charge_text, DWIN_TEXT_8_BYTES_WORDS);
-        if (first || strncmp(s_prev_data.temp_jack_text, d->temp_jack_text, sizeof(d->temp_jack_text)) != 0)
+            memcpy(s_prev_data.temp_charge_text, d->temp_charge_text, sizeof(s_prev_data.temp_charge_text));
+        }
+        if (first || strncmp(s_prev_data.temp_jack_text, d->temp_jack_text, sizeof(d->temp_jack_text)) != 0) {
             DWIN_SendString(VP_TEMP_JACK_TEXT, d->temp_jack_text, DWIN_TEXT_8_BYTES_WORDS);
+            memcpy(s_prev_data.temp_jack_text, d->temp_jack_text, sizeof(s_prev_data.temp_jack_text));
+        }
         break;
 
     case STEP_SOC_STATUS:
         if (first || s_prev_data.status_icon != d->status_icon) {
             uint16_t status = d->status_icon;
             DWIN_SendWords(VP_SYS_STATUS_ICON, &status, 1);
+            s_prev_data.status_icon = d->status_icon;
         }
         if (first || strncmp(s_prev_data.soc_text, d->soc_text, sizeof(d->soc_text)) != 0) {
             DWIN_SendString(DWIN_SOC_TEXT_VP, d->soc_text, DWIN_TEXT_8_BYTES_WORDS);
+            memcpy(s_prev_data.soc_text, d->soc_text, sizeof(s_prev_data.soc_text));
         }
         break;
 
@@ -356,12 +395,14 @@ void DWIN_UpdateData(const DWIN_SystemData_t *d)
         if (first || s_prev_data.btn_mode != d->btn_mode) {
             uint16_t w = d->btn_mode;
             DWIN_SendWords(VP_SYS_BTN_ICON, &w, 1);
+            s_prev_data.btn_mode = d->btn_mode;
         }
         break;
 
     case STEP_TOPBAR_FAULT:
         if (first || strncmp(s_prev_data.topbar_fault_code, d->topbar_fault_code, sizeof(d->topbar_fault_code)) != 0) {
             DWIN_SendString(VP_TOPBAR_FAULT_CODE, d->topbar_fault_code, 4);
+            memcpy(s_prev_data.topbar_fault_code, d->topbar_fault_code, sizeof(s_prev_data.topbar_fault_code));
         }
         break;
 
@@ -381,6 +422,8 @@ void DWIN_UpdateData(const DWIN_SystemData_t *d)
         if (first || s_prev_data.charge_duration_s != d->charge_duration_s ||
             strncmp(s_prev_data.footer_time_str, d->footer_time_str, sizeof(d->footer_time_str)) != 0) {
             DWIN_SendString(VP_CHG_DURATION, dur_str, 8);
+            s_prev_data.charge_duration_s = d->charge_duration_s;
+            memcpy(s_prev_data.footer_time_str, d->footer_time_str, sizeof(s_prev_data.footer_time_str));
         }
         break;
     }
@@ -407,6 +450,10 @@ void DWIN_UpdateData(const DWIN_SystemData_t *d)
             (void)snprintf(str, sizeof(str), "%02u:%02u:%02u",
                            (unsigned)uh, (unsigned)um, (unsigned)us);
             DWIN_SendString(VP_SET_UPTIME, str, 8);
+
+            s_prev_data.uptime_s = d->uptime_s;
+            s_prev_data.total_charged_ah_x10 = d->total_charged_ah_x10;
+            s_prev_data.total_energy_kwh_x10 = d->total_energy_kwh_x10;
         }
         break;
 
@@ -415,19 +462,25 @@ void DWIN_UpdateData(const DWIN_SystemData_t *d)
                              sizeof(d->precharge_voltage_text)) != 0) {
             DWIN_SendString(VP_PRECHARGE_VOLTAGE_TEXT, d->precharge_voltage_text,
                             DWIN_TEXT_8_BYTES_WORDS);
+            memcpy(s_prev_data.precharge_voltage_text, d->precharge_voltage_text,
+                   sizeof(s_prev_data.precharge_voltage_text));
         }
         if (first || strncmp(s_prev_data.precharge_current_text, d->precharge_current_text,
                              sizeof(d->precharge_current_text)) != 0) {
             DWIN_SendString(VP_PRECHARGE_CURRENT_TEXT, d->precharge_current_text,
                             DWIN_TEXT_8_BYTES_WORDS);
+            memcpy(s_prev_data.precharge_current_text, d->precharge_current_text,
+                   sizeof(s_prev_data.precharge_current_text));
         }
         if (first || s_prev_data.precharge_status_mode != d->precharge_status_mode) {
             uint16_t status = d->precharge_status_mode;
             DWIN_SendWords(VP_PRECHARGE_STATUS_ICON, &status, 1U);
+            s_prev_data.precharge_status_mode = d->precharge_status_mode;
         }
         if (first || s_prev_data.precharge_btn_mode != d->precharge_btn_mode) {
             uint16_t button = d->precharge_btn_mode;
             DWIN_SendWords(VP_PRECHARGE_BTN_ICON, &button, 1U);
+            s_prev_data.precharge_btn_mode = d->precharge_btn_mode;
         }
         break;
 
@@ -450,7 +503,6 @@ void DWIN_UpdateData(const DWIN_SystemData_t *d)
     s_update_step++;
     if (s_update_step >= STEP_COUNT) {
         s_update_step = 0U;
-        s_prev_data = *d;
         s_have_prev_data = true;
     }
 }
