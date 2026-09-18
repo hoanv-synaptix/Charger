@@ -29,9 +29,9 @@ def extract_version_from_header(header_path):
     minor = 0
     patch = 0
     
-    m_maj = re.search(r'#define\s+APP_VERSION_MAJOR\s+(\d+)', content)
-    m_min = re.search(r'#define\s+APP_VERSION_MINOR\s+(\d+)', content)
-    m_pat = re.search(r'#define\s+APP_VERSION_PATCH\s+(\d+)', content)
+    m_maj = re.search(r'#define\s+(?:APP|FW)_VERSION_MAJOR\s+(\d+)', content)
+    m_min = re.search(r'#define\s+(?:APP|FW)_VERSION_MINOR\s+(\d+)', content)
+    m_pat = re.search(r'#define\s+(?:APP|FW)_VERSION_PATCH\s+(\d+)', content)
     
     if m_maj: major = int(m_maj.group(1))
     if m_min: minor = int(m_min.group(1))
