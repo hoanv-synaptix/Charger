@@ -1,0 +1,78 @@
+name: Release & OTA Firmware
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version_tag:
+        description: 'Version Tag (e.g. v1.0.0)'
+        required: false
+        default: 'v1.0.0'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build STM32 Firmware & Create Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install ARM Toolchain & Ninja
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-none-eabi libnewlib-arm-none-eabi ninja-build cmake python3
+
+      - name: Configure CMake
+        run: |
+          cmake -B build/Release -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake
+
+      - name: Build Firmware & Bootloader
+        run: |
+          ninja -C build/Release
+
+      - name: Determine Version Tag
+        id: get_version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "TAG=${{ github.event.inputs.version_tag }}" >> $GITHUB_OUTPUT
+          else
+            echo "TAG=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Generate OTA Manifest
+        run: |
+          python3 tools/build_ota_manifest.py \
+            --bin build/Release/Charger.bin \
+            --version "${{ steps.get_version.outputs.TAG }}" \
+            --out build/Release/ota_manifest.json
+
+      - name: Display Manifest
+        run: |
+          cat build/Release/ota_manifest.json
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.get_version.outputs.TAG }}
+          name: Firmware ${{ steps.get_version.outputs.TAG }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            build/Release/Charger.bin
+            build/Release/Charger.hex
+            build/Release/Boot/Charger_Bootloader.bin
+            build/Release/Boot/Charger_Bootloader.hex
+            build/Release/ota_manifest.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

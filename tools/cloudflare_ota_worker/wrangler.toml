@@ -1,0 +1,10 @@
+name = "charger-ota-proxy"
+main = "worker.js"
+compatibility_date = "2024-01-01"
+
+[vars]
+GITHUB_OWNER = "hoanv-synaptix"
+GITHUB_REPO = "Charger"
+
+# GITHUB_TOKEN should be set as an encrypted secret using:
+# npx wrangler secret put GITHUB_TOKEN
