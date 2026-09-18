@@ -36,6 +36,7 @@
 #include "bsp_gpio.h"
 #include "bsp_sys.h"
 #include "bsp_rtc.h"
+#include "bsp_spi_flash.h"
 
 #include "app_version.h"
 
@@ -549,8 +550,14 @@ void App_Init(void)
         LOG("App_Init: CAN bus started successfully.\r\n");
     }
 
-    /* Initialize debug protocol */
-    DebugProtocol_Init();
+    /* Initialize external SPI NOR Flash (W25Q / GD25Q via SPI2) */
+    if (BSP_SPIFlash_Init()) {
+        LOG("App_Init: External SPI Flash ready (JEDEC=0x%06lX, Cap=%lu KB).\r\n",
+            (unsigned long)BSP_SPIFlash_GetJedecId(),
+            (unsigned long)(BSP_SPIFlash_GetCapacity() / 1024UL));
+    } else {
+        LOG("App_Init: WARNING - External SPI Flash not detected, using fallback.\r\n");
+    }
 
     ChargeCycleConfig_Init();
 

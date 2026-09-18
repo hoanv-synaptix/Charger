@@ -1,19 +1,21 @@
 /**
  * @file charge_cycle_storage.c
- * @brief Flash persistence for ChargeCycleConfig_t using BSP_Flash
+ * @brief Persistent storage for ChargeCycleConfig_t using External SPI Flash
+ *        with automatic Migration from Internal Flash.
  */
 
 #include "charge_cycle_storage.h"
 #include "debug_log.h"
+#include "bsp_spi_flash.h"
 #include "bsp_flash.h"
 #include <string.h>
 #include <stddef.h>
 
-#define CONFIG_MAGIC          0x43434647U
-#define CONFIG_RECORD_VERSION 1U
-#define FLASH_BLANK_BYTE      0xFFU
-#define CONFIG_V5_PAYLOAD_SIZE 239U
-#define CONFIG_V6_PAYLOAD_SIZE 243U
+#define CONFIG_MAGIC            0x43434647U
+#define CONFIG_RECORD_VERSION   1U
+#define FLASH_BLANK_BYTE        0xFFU
+#define CONFIG_V5_PAYLOAD_SIZE  239U
+#define CONFIG_V6_PAYLOAD_SIZE  243U
 
 #ifdef CHARGE_CYCLE_STORAGE_HOST_TEST
 extern uint8_t g_charge_config_test_flash[];
@@ -28,14 +30,14 @@ typedef struct __attribute__((packed)) {
 } ChargeCycleConfigRecord_t;
 
 #define CONFIG_RECORD_SIZE     (sizeof(ChargeCycleConfigRecord_t))
-#define ALIGNED_RECORD_SIZE    ((CONFIG_RECORD_SIZE + 7) & ~7) // Align to 8 bytes for G0 double-word
+#define ALIGNED_RECORD_SIZE    ((CONFIG_RECORD_SIZE + 7) & ~7) // Align to 8 bytes / 256 bytes
 
 _Static_assert(offsetof(ChargeCycleConfig_t, admin_pin) == CONFIG_V5_PAYLOAD_SIZE,
                "v6 must append admin_pin after the v5 payload");
 _Static_assert(offsetof(ChargeCycleConfig_t, charge_mode) == CONFIG_V6_PAYLOAD_SIZE,
                "v7 must append charge_mode after the v6 payload");
 
-static const uint8_t *config_flash_at(uint32_t address)
+static const uint8_t *internal_flash_at(uint32_t address)
 {
 #ifdef CHARGE_CYCLE_STORAGE_HOST_TEST
     return &g_charge_config_test_flash[address - BSP_CONFIG_FLASH_PAGE_ADDR];
@@ -77,27 +79,150 @@ static bool validate_v5_record(const ChargeCycleConfigRecord_t *rec) {
     return validate_record_length(rec, CONFIG_V5_PAYLOAD_SIZE);
 }
 
-static bool is_flash_blank(const uint8_t *addr, uint32_t len) {
+static bool is_buffer_blank(const uint8_t *buf, uint32_t len) {
     for (uint32_t i = 0; i < len; i++) {
-        if (addr[i] != FLASH_BLANK_BYTE) return false;
+        if (buf[i] != FLASH_BLANK_BYTE) return false;
     }
     return true;
 }
 
+/* ================= Storage Access Helpers ================= */
+
+static uint32_t get_storage_capacity(void)
+{
+    if (BSP_SPIFlash_IsAvailable()) {
+        return SPI_FLASH_SECTOR_SIZE; /* Sector 0 (4 KB) */
+    }
+    return BSP_FLASH_PAGE_SIZE; /* Internal Flash Page (2 KB) */
+}
+
+static bool storage_read_record(ChargeCycleConfigRecord_t *rec, uint32_t offset)
+{
+    if (BSP_SPIFlash_IsAvailable()) {
+        return BSP_SPIFlash_Read(SPI_FLASH_CONFIG_BASE + offset, (uint8_t *)rec, CONFIG_RECORD_SIZE);
+    }
+    const uint8_t *src = internal_flash_at(BSP_CONFIG_FLASH_PAGE_ADDR + offset);
+    memcpy(rec, src, CONFIG_RECORD_SIZE);
+    return true;
+}
+
+static bool storage_is_blank(uint32_t offset)
+{
+    if (BSP_SPIFlash_IsAvailable()) {
+        uint8_t buf[ALIGNED_RECORD_SIZE];
+        if (!BSP_SPIFlash_Read(SPI_FLASH_CONFIG_BASE + offset, buf, ALIGNED_RECORD_SIZE)) {
+            return false;
+        }
+        return is_buffer_blank(buf, ALIGNED_RECORD_SIZE);
+    }
+    const uint8_t *flash = internal_flash_at(BSP_CONFIG_FLASH_PAGE_ADDR + offset);
+    return is_buffer_blank(flash, ALIGNED_RECORD_SIZE);
+}
+
 static int32_t find_blank_offset(void) {
-    const uint8_t *flash = config_flash_at(BSP_CONFIG_FLASH_PAGE_ADDR);
-    
-    for (uint32_t offset = 0; offset <= (BSP_FLASH_PAGE_SIZE - ALIGNED_RECORD_SIZE); offset += ALIGNED_RECORD_SIZE) {
-        if (is_flash_blank(flash + offset, ALIGNED_RECORD_SIZE)) {
+    uint32_t capacity = get_storage_capacity();
+    for (uint32_t offset = 0; offset <= (capacity - ALIGNED_RECORD_SIZE); offset += ALIGNED_RECORD_SIZE) {
+        if (storage_is_blank(offset)) {
             return (int32_t)offset;
         }
     }
     return -1;
 }
 
-static void read_record_at(ChargeCycleConfigRecord_t *rec, uint32_t offset) {
-    const uint8_t *src = config_flash_at(BSP_CONFIG_FLASH_PAGE_ADDR + offset);
-    memcpy(rec, src, CONFIG_RECORD_SIZE);
+static bool write_single_record(uint32_t offset, const ChargeCycleConfig_t *config) {
+    ChargeCycleConfigRecord_t record;
+    uint8_t write_buf[ALIGNED_RECORD_SIZE];
+
+    record.magic = CONFIG_MAGIC;
+    record.version = CONFIG_RECORD_VERSION;
+    record.length = sizeof(ChargeCycleConfig_t);
+    record.crc32 = calc_crc32((const uint8_t *)config, sizeof(ChargeCycleConfig_t));
+    record.payload = *config;
+
+    memset(write_buf, FLASH_BLANK_BYTE, sizeof(write_buf));
+    memcpy(write_buf, &record, CONFIG_RECORD_SIZE);
+
+    if (BSP_SPIFlash_IsAvailable()) {
+        if (!BSP_SPIFlash_Write(SPI_FLASH_CONFIG_BASE + offset, write_buf, ALIGNED_RECORD_SIZE)) {
+            return false;
+        }
+    } else {
+        if (!BSP_Flash_WriteBlock(BSP_CONFIG_FLASH_PAGE_ADDR + offset, write_buf, ALIGNED_RECORD_SIZE)) {
+            return false;
+        }
+    }
+
+    ChargeCycleConfigRecord_t verify;
+    storage_read_record(&verify, offset);
+    return validate_record(&verify);
+}
+
+static bool erase_storage(void)
+{
+    if (BSP_SPIFlash_IsAvailable()) {
+        return BSP_SPIFlash_EraseSector4K(SPI_FLASH_CONFIG_BASE);
+    }
+    return BSP_Flash_ErasePage(BSP_CONFIG_FLASH_PAGE_ADDR);
+}
+
+/* ================= Load & Migration Logic ================= */
+
+static bool scan_internal_flash_for_migration(ChargeCycleConfig_t *fast_cfg, ChargeCycleConfig_t *norm_cfg,
+                                             uint8_t *active_mode_out)
+{
+    ChargeCycleConfigRecord_t record;
+    int32_t latest_fast_offset = -1;
+    int32_t latest_norm_offset = -1;
+    int32_t last_valid_offset = -1;
+    uint8_t last_valid_mode = DEFAULT_CHARGE_MODE;
+
+    for (uint32_t offset = 0; offset <= (BSP_FLASH_PAGE_SIZE - ALIGNED_RECORD_SIZE); offset += ALIGNED_RECORD_SIZE) {
+        const uint8_t *src = internal_flash_at(BSP_CONFIG_FLASH_PAGE_ADDR + offset);
+        memcpy(&record, src, CONFIG_RECORD_SIZE);
+
+        if (validate_record(&record)) {
+            last_valid_offset = (int32_t)offset;
+            if (record.payload.charge_mode == CHARGE_MODE_NORMAL) {
+                latest_norm_offset = (int32_t)offset;
+                last_valid_mode = CHARGE_MODE_NORMAL;
+                *norm_cfg = record.payload;
+            } else {
+                latest_fast_offset = (int32_t)offset;
+                last_valid_mode = CHARGE_MODE_FAST;
+                *fast_cfg = record.payload;
+            }
+        } else if (validate_v6_record(&record) || validate_v5_record(&record)) {
+            last_valid_offset = (int32_t)offset;
+            latest_fast_offset = (int32_t)offset;
+            last_valid_mode = CHARGE_MODE_FAST;
+            ChargeCycleConfig_GetDefaults(fast_cfg);
+            uint16_t copy_len = (record.length == CONFIG_V5_PAYLOAD_SIZE) ? CONFIG_V5_PAYLOAD_SIZE : CONFIG_V6_PAYLOAD_SIZE;
+            memcpy(fast_cfg, &record.payload, copy_len);
+            fast_cfg->version = CHARGE_CYCLE_CONFIG_VERSION;
+            fast_cfg->charge_mode = CHARGE_MODE_FAST;
+            if (copy_len == CONFIG_V5_PAYLOAD_SIZE) {
+                fast_cfg->admin_pin = DEFAULT_ADMIN_PIN;
+            }
+        }
+    }
+
+    if (last_valid_offset < 0) {
+        return false;
+    }
+
+    if (latest_fast_offset < 0) {
+        ChargeCycleConfig_GetDefaults(fast_cfg);
+        fast_cfg->charge_mode = CHARGE_MODE_FAST;
+    }
+    if (latest_norm_offset < 0) {
+        ChargeCycleConfig_GetDefaults(norm_cfg);
+        norm_cfg->charge_mode = CHARGE_MODE_NORMAL;
+        norm_cfg->imax_c = 0.5f;
+    }
+    if (active_mode_out != NULL) {
+        *active_mode_out = last_valid_mode;
+    }
+    return true;
 }
 
 static bool load_latest_configs(ChargeCycleConfig_t *fast_cfg, ChargeCycleConfig_t *norm_cfg,
@@ -108,9 +233,13 @@ static bool load_latest_configs(ChargeCycleConfig_t *fast_cfg, ChargeCycleConfig
     int32_t last_valid_offset = -1;
     uint8_t last_valid_mode = DEFAULT_CHARGE_MODE;
     bool any_migrated = false;
+    uint32_t capacity = get_storage_capacity();
 
-    for (uint32_t offset = 0; offset <= (BSP_FLASH_PAGE_SIZE - ALIGNED_RECORD_SIZE); offset += ALIGNED_RECORD_SIZE) {
-        read_record_at(&record, offset);
+    /* 1. Try reading from primary storage (SPI Flash if available, else Internal Flash) */
+    for (uint32_t offset = 0; offset <= (capacity - ALIGNED_RECORD_SIZE); offset += ALIGNED_RECORD_SIZE) {
+        if (!storage_read_record(&record, offset)) {
+            continue;
+        }
         if (validate_record(&record)) {
             last_valid_offset = (int32_t)offset;
             if (record.payload.charge_mode == CHARGE_MODE_NORMAL) {
@@ -150,6 +279,21 @@ static bool load_latest_configs(ChargeCycleConfig_t *fast_cfg, ChargeCycleConfig
         }
     }
 
+    /* 2. If SPI Flash is available but was empty (first boot on SPI Flash), check Internal Flash to migrate */
+    if (last_valid_offset < 0 && BSP_SPIFlash_IsAvailable()) {
+        LOG("ChargeCycleStorage: External Flash empty, checking Internal Flash for migration...\r\n");
+        if (scan_internal_flash_for_migration(fast_cfg, norm_cfg, &last_valid_mode)) {
+            LOG("ChargeCycleStorage: [MIGRATE] Found valid config in Internal Flash! Migrating to External SPI Flash...\r\n");
+            erase_storage();
+            write_single_record(0, fast_cfg);
+            write_single_record(ALIGNED_RECORD_SIZE, norm_cfg);
+            last_valid_offset = 0;
+            latest_fast_offset = 0;
+            latest_norm_offset = ALIGNED_RECORD_SIZE;
+            any_migrated = true;
+        }
+    }
+
     if (last_valid_offset < 0) {
         return false;
     }
@@ -174,6 +318,8 @@ static bool load_latest_configs(ChargeCycleConfig_t *fast_cfg, ChargeCycleConfig
     return true;
 }
 
+/* ================= Public Storage API ================= */
+
 void ChargeCycleStorage_Init(void) {
     ChargeCycleConfig_t fast_cfg;
     ChargeCycleConfig_t norm_cfg;
@@ -181,20 +327,27 @@ void ChargeCycleStorage_Init(void) {
     bool migrated = false;
 
     if (load_latest_configs(&fast_cfg, &norm_cfg, &active_mode, &migrated)) {
-        LOG("ChargeCycleStorage: Loaded configs from flash (active_mode=%u)\r\n", (unsigned)active_mode);
+        LOG("ChargeCycleStorage: Loaded configs from %s (active_mode=%u)\r\n",
+            BSP_SPIFlash_IsAvailable() ? "External SPI Flash" : "Internal Flash",
+            (unsigned)active_mode);
         ChargeCycleConfig_SetProfile(CHARGE_MODE_FAST, &fast_cfg);
         ChargeCycleConfig_SetProfile(CHARGE_MODE_NORMAL, &norm_cfg);
         ChargeCycleConfig_SetActiveMode(active_mode);
         if (migrated) {
-            LOG("ChargeCycleStorage: Migrated config to v%u\r\n", (unsigned)CHARGE_CYCLE_CONFIG_VERSION);
+            LOG("ChargeCycleStorage: Migrated config to v%u on %s\r\n",
+                (unsigned)CHARGE_CYCLE_CONFIG_VERSION,
+                BSP_SPIFlash_IsAvailable() ? "External SPI Flash" : "Internal Flash");
             (void)ChargeCycleStorage_SaveProfile(CHARGE_MODE_FAST, &fast_cfg);
             (void)ChargeCycleStorage_SaveProfile(CHARGE_MODE_NORMAL, &norm_cfg);
         }
     } else {
-        LOG("ChargeCycleStorage: Using default config\r\n");
+        LOG("ChargeCycleStorage: Using default config on %s\r\n",
+            BSP_SPIFlash_IsAvailable() ? "External SPI Flash" : "Internal Flash");
         ChargeCycleConfig_Init();
         ChargeCycleConfig_Get(&fast_cfg);
         ChargeCycleConfig_Set(&fast_cfg);
+        /* Write default config immediately so flash is initialized */
+        (void)ChargeCycleStorage_SaveProfile(CHARGE_MODE_FAST, &fast_cfg);
     }
 }
 
@@ -211,28 +364,6 @@ bool ChargeCycleStorage_Load(ChargeCycleConfig_t *config) {
     return true;
 }
 
-static bool write_single_record(uint32_t offset, const ChargeCycleConfig_t *config) {
-    ChargeCycleConfigRecord_t record;
-    uint8_t write_buf[ALIGNED_RECORD_SIZE];
-
-    record.magic = CONFIG_MAGIC;
-    record.version = CONFIG_RECORD_VERSION;
-    record.length = sizeof(ChargeCycleConfig_t);
-    record.crc32 = calc_crc32((const uint8_t *)config, sizeof(ChargeCycleConfig_t));
-    record.payload = *config;
-
-    memset(write_buf, FLASH_BLANK_BYTE, sizeof(write_buf));
-    memcpy(write_buf, &record, CONFIG_RECORD_SIZE);
-
-    if (!BSP_Flash_WriteBlock(BSP_CONFIG_FLASH_PAGE_ADDR + offset, write_buf, ALIGNED_RECORD_SIZE)) {
-        return false;
-    }
-
-    ChargeCycleConfigRecord_t verify;
-    read_record_at(&verify, offset);
-    return validate_record(&verify);
-}
-
 bool ChargeCycleStorage_SaveProfile(uint8_t mode, const ChargeCycleConfig_t *config) {
     if (config == NULL) {
         return false;
@@ -244,8 +375,8 @@ bool ChargeCycleStorage_SaveProfile(uint8_t mode, const ChargeCycleConfig_t *con
     int32_t write_offset = find_blank_offset();
 
     if (write_offset < 0) {
-        LOG("ChargeCycleStorage: Page full, erasing and re-packing dual profiles...\r\n");
-        if (!BSP_Flash_ErasePage(BSP_CONFIG_FLASH_PAGE_ADDR)) {
+        LOG("ChargeCycleStorage: Sector/Page full, erasing and re-packing dual profiles...\r\n");
+        if (!erase_storage()) {
             LOG("ChargeCycleStorage: Erase failed!\r\n");
             return false;
         }
@@ -265,7 +396,8 @@ bool ChargeCycleStorage_SaveProfile(uint8_t mode, const ChargeCycleConfig_t *con
             return false;
         }
 
-        LOG("ChargeCycleStorage: Dual profiles re-packed successfully\r\n");
+        LOG("ChargeCycleStorage: Dual profiles re-packed successfully on %s\r\n",
+            BSP_SPIFlash_IsAvailable() ? "External SPI Flash" : "Internal Flash");
         return true;
     }
 
@@ -274,7 +406,10 @@ bool ChargeCycleStorage_SaveProfile(uint8_t mode, const ChargeCycleConfig_t *con
         return false;
     }
 
-    LOG("ChargeCycleStorage: Saved profile %u successfully\r\n", (unsigned)to_write.charge_mode);
+    LOG("ChargeCycleStorage: Saved profile %u to %s (offset 0x%04lX)\r\n",
+        (unsigned)to_write.charge_mode,
+        BSP_SPIFlash_IsAvailable() ? "External SPI Flash" : "Internal Flash",
+        (unsigned long)write_offset);
     return true;
 }
 

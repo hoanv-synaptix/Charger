@@ -22,6 +22,7 @@
 #include "bms_core.h"
 #include "chg_lib.h"
 #include "debug_log.h"
+#include "alarm_storage.h"
 
 #include <string.h>
 #include <math.h>
@@ -402,6 +403,9 @@ static void log_edge(uint32_t now, AlarmCode_t code, AlarmAction_t action, bool 
     g_alarm.log_head = (uint8_t)((g_alarm.log_head + 1U) % ALARM_LOG_DEPTH);
     if (g_alarm.log_count < ALARM_LOG_DEPTH) g_alarm.log_count++;
     g_alarm.log_sequence++;
+
+    /* Persist to External SPI Flash */
+    (void)AlarmStorage_Append(now, (uint16_t)code, (uint8_t)action, raised);
 }
 
 /* ============== Debounce + aggregate ============== */
@@ -542,7 +546,17 @@ void Alarm_Init(void) {
     memset(&g_alarm, 0, sizeof(g_alarm));
     g_alarm.view.highest_action = ALARM_ACT_INFO;
     g_alarm.inited = true;
-    LOG("ALARM: init (%u specs)\r\n", (unsigned)ALARM_SPEC_COUNT);
+
+    /* Restore recent persistent alarm events from External SPI Flash */
+    uint32_t last_seq = 0U;
+    uint8_t restored = AlarmStorage_Init(g_alarm.log, ALARM_LOG_DEPTH, &last_seq);
+    if (restored > 0U) {
+        g_alarm.log_count = restored;
+        g_alarm.log_head = (uint8_t)(restored % ALARM_LOG_DEPTH);
+        g_alarm.log_sequence = last_seq;
+    }
+
+    LOG("ALARM: init (%u specs, restored %u events)\r\n", (unsigned)ALARM_SPEC_COUNT, (unsigned)restored);
 }
 
 void Alarm_Process(uint32_t now_tick) {

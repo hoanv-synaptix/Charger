@@ -2343,6 +2343,12 @@ bool ChargeController_ResetFaultIfSafe(uint32_t now_tick)
         return false;
     }
 
+    /* Emergency stop requires an explicit safety recovery outside this
+     * pre-charge UI flow. Never acknowledge it as an ordinary retry. */
+    if ((g_ctrl.fault_flags & CHARGE_CTRL_FAULT_EMERGENCY_STOP) != 0U) {
+        return false;
+    }
+
     clearable_faults = CHARGE_CTRL_FAULT_NO_DRIVER |
                        CHARGE_CTRL_FAULT_NO_MODULE |
                        CHARGE_CTRL_FAULT_MODULE_COUNT_MISMATCH |
@@ -2350,8 +2356,7 @@ bool ChargeController_ResetFaultIfSafe(uint32_t now_tick)
                        CHARGE_CTRL_FAULT_BMS_ALARM |
                        CHARGE_CTRL_FAULT_INVALID_CONFIG |
                        CHARGE_CTRL_FAULT_PROTECT_JACK_V |
-                       CHARGE_CTRL_FAULT_PROTECT_JACK_TEMP |
-                       CHARGE_CTRL_FAULT_EMERGENCY_STOP;
+                       CHARGE_CTRL_FAULT_PROTECT_JACK_TEMP;
     if ((g_ctrl.fault_flags & ~clearable_faults) != 0U) {
         return false;
     }
@@ -2421,6 +2426,28 @@ bool ChargeController_ResetFaultIfSafe(uint32_t now_tick)
     g_ctrl.relay_open_pending = false;
     g_ctrl.precharge_mode = false;
     transition_to(CHARGE_CTRL_STATE_IDLE, now_tick);
+    return true;
+}
+
+bool ChargeController_ResetEmergencyStop(uint32_t now_tick) {
+    if (g_ctrl.state != CHARGE_CTRL_STATE_FAULT) {
+        return false;
+    }
+    if ((g_ctrl.fault_flags & CHARGE_CTRL_FAULT_EMERGENCY_STOP) == 0U) {
+        return false;
+    }
+    if (g_ctrl.relay_should_close || g_ctrl.relay_latched_closed || g_ctrl.relay_open_pending) {
+        return false;
+    }
+    g_ctrl.fault_flags &= ~CHARGE_CTRL_FAULT_EMERGENCY_STOP;
+    if (g_ctrl.fault_flags == CHARGE_CTRL_FAULT_NONE) {
+        stop_charging();
+        clear_fault();
+        g_ctrl.stop_reason = CHARGE_STOP_NONE;
+        g_ctrl.owner = CHARGE_CTRL_OWNER_NONE;
+        g_ctrl.precharge_mode = false;
+        transition_to(CHARGE_CTRL_STATE_IDLE, now_tick);
+    }
     return true;
 }
 

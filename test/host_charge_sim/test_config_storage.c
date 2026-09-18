@@ -14,6 +14,11 @@ void LOG(const char *fmt, ...) { (void)fmt; }
 void BSP_EnterCritical(void) {}
 void BSP_ExitCritical(void) {}
 
+bool BSP_SPIFlash_IsAvailable(void) { return false; }
+bool BSP_SPIFlash_Read(uint32_t a, uint8_t *b, uint32_t l) { (void)a; (void)b; (void)l; return false; }
+bool BSP_SPIFlash_Write(uint32_t a, const uint8_t *d, uint32_t l) { (void)a; (void)d; (void)l; return false; }
+bool BSP_SPIFlash_EraseSector4K(uint32_t a) { (void)a; return false; }
+
 bool BSP_Flash_ErasePage(uint32_t address)
 {
     if (address != BSP_CONFIG_FLASH_PAGE_ADDR) return false;

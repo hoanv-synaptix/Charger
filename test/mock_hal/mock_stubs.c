@@ -173,3 +173,27 @@ void BSP_RTC_FormatTime(char *buf, size_t buf_size) {
 void BSP_RTC_FormatDateTime(char *buf, size_t buf_size) {
     if (buf && buf_size > 0) snprintf(buf, buf_size, "2026-03-07 07:00:00");
 }
+
+/* Mock AlarmStorage stubs for host test */
+uint8_t AlarmStorage_Init(void *ram_log, uint8_t max_entries, uint32_t *out_sequence)
+{
+    (void)ram_log;
+    (void)max_entries;
+    if (out_sequence) *out_sequence = 0;
+    return 0;
+}
+
+bool AlarmStorage_Append(uint32_t now_tick, uint16_t code, uint8_t action, bool raised)
+{
+    (void)now_tick;
+    (void)code;
+    (void)action;
+    (void)raised;
+    return true;
+}
+
+/* Mock BSP_SPIFlash stubs for host test */
+bool BSP_SPIFlash_IsAvailable(void) { return false; }
+bool BSP_SPIFlash_Read(uint32_t a, uint8_t *b, uint32_t l) { (void)a; (void)b; (void)l; return false; }
+bool BSP_SPIFlash_Write(uint32_t a, const uint8_t *d, uint32_t l) { (void)a; (void)d; (void)l; return false; }
+bool BSP_SPIFlash_EraseSector4K(uint32_t a) { (void)a; return false; }

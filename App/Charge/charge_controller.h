@@ -183,6 +183,7 @@ void ChargeController_StopPrecharge(uint32_t now_tick);
 /** Clear the current charge/pre-charge fault only after the controller
  * verifies the originating mode's conditions and output path are safe. */
 bool ChargeController_ResetFaultIfSafe(uint32_t now_tick);
+bool ChargeController_ResetEmergencyStop(uint32_t now_tick);
 void ChargeController_SetManualTarget(float voltage, float current);
 bool ChargeController_IsManualMode(void);
 
