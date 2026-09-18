@@ -44,6 +44,7 @@ add_subdirectory(BSP)
 add_subdirectory(Modules)
 add_subdirectory(App)
 add_subdirectory(Utils)
+add_subdirectory(Boot)
 
 # Link directories setup
 target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
@@ -80,6 +81,9 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     # CHG_ENABLE_LOG: enables UART1 LOG() output for bench debugging.
     # OFF by default in production/Release to save ~8-9 KB Flash and eliminate UART blocking.
     $<$<BOOL:${CHG_ENABLE_LOG}>:CHG_ENABLE_LOG>
+    # Relocate vector table for Bootloader (offset 8KB)
+    USER_VECT_TAB_ADDRESS
+    VECT_TAB_OFFSET=0x00002000U
 )
 
 # Remove wrong libob.a library dependency when using cpp files
@@ -90,6 +94,11 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
     stm32cubemx
 
     # Add user defined libraries
+)
+
+target_link_options(${CMAKE_PROJECT_NAME} PRIVATE
+    -T "${CMAKE_SOURCE_DIR}/STM32G0B1xx_FLASH.ld"
+    -Wl,-Map=${CMAKE_PROJECT_NAME}.map
 )
 
 # Generate .hex and .bin files after build
