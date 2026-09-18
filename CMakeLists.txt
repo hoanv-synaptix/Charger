@@ -16,6 +16,7 @@ set(CMAKE_C_EXTENSIONS ON)
 # Define the build type
 option(CHG_DEBUG_DWIN "Enable the USB->RS485 DWIN relay debug command (bench only)" OFF)
 option(CHG_DEBUG_CAN_TX_TRACE "Trace MCU CAN1 control frames to UART1 (bench only)" OFF)
+option(CHG_ENABLE_LOG "Enable UART1 debug logging (bench only)" OFF)
 
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE "Release")
@@ -76,6 +77,9 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     # loop through UART1. It also suppresses unrelated LOG() lines in this
     # diagnostic build. Never enable it for production: UART output is slow.
     $<$<BOOL:${CHG_DEBUG_CAN_TX_TRACE}>:CHG_DEBUG_CAN_TX_TRACE>
+    # CHG_ENABLE_LOG: enables UART1 LOG() output for bench debugging.
+    # OFF by default in production/Release to save ~8-9 KB Flash and eliminate UART blocking.
+    $<$<BOOL:${CHG_ENABLE_LOG}>:CHG_ENABLE_LOG>
 )
 
 # Remove wrong libob.a library dependency when using cpp files

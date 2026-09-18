@@ -349,9 +349,10 @@ class ModuleSimulator(threading.Thread):
     CAN_CHANNEL = 0
     CAN_BITRATE = 125000
 
-    def __init__(self, dev: ZlgCanDevice, driver: str = "tonhe", addr: int = 1):
+    def __init__(self, dev: ZlgCanDevice, driver: str = "tonhe", addr: int = 1, bms: BmsSimulator = None):
         super().__init__(daemon=True)
         self.dev = dev
+        self.bms = bms
         self.driver = driver.lower()
         self.addr = addr
         self.running = True
@@ -409,7 +410,10 @@ class ModuleSimulator(threading.Thread):
             self.current = 0.0
         elif self.actually_on:
             status = 0x01  # TONHE_STATUS_ON
-            v_out = self.target_voltage if self.target_voltage >= 30.0 else 53.5
+            if self.bms and self.bms.transmitting and self.bms.pack_voltage_v > 10.0:
+                v_out = self.bms.pack_voltage_v + (self.current * 0.01)
+            else:
+                v_out = self.target_voltage if self.target_voltage >= 30.0 else 53.5
             i_out = self.target_current if self.target_current >= 1.0 else 24.5
             self.voltage = v_out
             self.current = i_out
@@ -1135,24 +1139,22 @@ def run_precharge_automation(bms: BmsSimulator, mod: ModuleSimulator, sniffer: D
         send_pc_cmd(0x04)
         time.sleep(0.3)
 
-        # Mô phỏng: PIN KIỆT & MẤT KẾT NỐI BMS (BMS unpowered / offline)
-        bms.pack_voltage_v = 0.0
+        # Giữ BMS online lúc còn ở Dashboard để MCU về IDLE
+        bms.pack_voltage_v = 52.8
         bms.pack_current_a = 0.0
-        bms.max_cell_mv = 2000
-        bms.min_cell_mv = 1950
-        bms.soc_pct = 0
-        bms.cap_remain_x0_1ah = 0
+        bms.soc_pct = 80
+        bms.cap_remain_x0_1ah = 800
         bms.chg_curr_request_a = 20.0
-        bms.bms_relay_allow = False
+        bms.bms_relay_allow = True
         bms.fault_high_cell_volt = 0
-        bms.fault_low_cell_volt = 1   # Low cell volt alarm (tolerated in precharge)
+        bms.fault_low_cell_volt = 0
         bms.fault_high_pack_volt = 0
-        bms.fault_low_pack_volt = 1   # Low pack volt alarm (tolerated in precharge)
+        bms.fault_low_pack_volt = 0
         bms.fault_over_temp = 0
         bms.max_cell_temp_c = 28.0
         bms.min_cell_temp_c = 26.0
         bms.avg_cell_temp_c = 27.0
-        bms.transmitting = False      # Pin kiệt, BMS mất kết nối hoàn toàn
+        bms.transmitting = True
 
         mod.fault_bits = 0x0000
         mod.actually_on = False
@@ -1168,6 +1170,9 @@ def run_precharge_automation(bms: BmsSimulator, mod: ModuleSimulator, sniffer: D
             time.sleep(0.3)
             sniffer.send_touch_key(0x1504, 0x00F2)
             time.sleep(0.3)
+            # Reset fault on Dashboard
+            sniffer.send_button_touch(1)
+            time.sleep(0.5)
 
         for _ in range(10):
             m = read_mcu_info()
@@ -2867,7 +2872,7 @@ def main():
 
     # 3. Start Simulators
     bms = BmsSimulator(dev)
-    mod = ModuleSimulator(dev, driver=args.driver, addr=args.addr)
+    mod = ModuleSimulator(dev, driver=args.driver, addr=args.addr, bms=bms)
     bms.start()
     mod.start()
 

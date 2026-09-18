@@ -176,7 +176,8 @@ static void map_alarm_field(uint8_t sev, BMS_AlarmFlag_t flag,
                             BMS_AlarmFlag_t *fault_flags)
 {
     if (sev >= 1U) {
-        /* User confirmed 2026-09-14: Severity >= 1 is treated as actionable fault/fail */
+        /* Product contract: every non-zero severity is actionable. Keep the
+         * warning mirror for the existing telemetry contract. */
         *warning_flags |= flag;
         *fault_flags |= flag;
     }

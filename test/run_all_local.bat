@@ -16,7 +16,7 @@ if %errorlevel% neq 0 (
 )
 
 echo [2/9] Running Native Unit Tests (test_logic.c)...
-gcc -I"Modules/bms" -I"Modules/chg_lib" -I"test/mock_hal" test/test_logic.c Modules/bms/bms_protocol.c Modules/chg_lib/chg_lib_fsm.c -o test_logic.exe
+gcc -I"Modules/bms" -I"Modules/chg_lib" -I"test/mock_hal" test/test_logic.c Modules/bms/bms_protocol.c Modules/chg_lib/chg_lib_fsm.c -lm -o test_logic.exe
 if %errorlevel% neq 0 (
     echo [FAIL] Compilation of test_logic.c Failed!
     exit /b %errorlevel%

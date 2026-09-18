@@ -17,7 +17,7 @@
 #define ENERGY_RECORD_VERSION   1U
 #define ENERGY_RECORD_LENGTH    32U
 #define ENERGY_CHECKPOINT_MS    300000U
-#define ENERGY_SCALE            1000.0
+#define ENERGY_SCALE            1000.0f
 #define FLASH_BLANK_BYTE        0xFFU
 
 #ifdef CHARGE_ENERGY_STORAGE_HOST_TEST
@@ -37,8 +37,8 @@ typedef struct __attribute__((packed)) {
 _Static_assert(sizeof(EnergyRecord_t) == ENERGY_RECORD_LENGTH,
                "EnergyRecord_t must stay 32 bytes");
 
-static double g_total_charged_ah;
-static double g_total_energy_kwh;
+static float g_total_charged_ah;
+static float g_total_energy_kwh;
 static uint64_t g_last_saved_charged_x1000;
 static uint64_t g_last_saved_energy_x1000;
 static bool g_have_saved_record;
@@ -98,18 +98,19 @@ static bool sequence_newer(uint32_t candidate, uint32_t reference)
     return (int32_t)(candidate - reference) > 0;
 }
 
-static bool encode_counter(double value, uint64_t *encoded)
+static bool encode_counter(float value, uint64_t *encoded)
 {
-    if (encoded == NULL || !isfinite(value) || value < 0.0 ||
-        value > ((double)UINT64_MAX / ENERGY_SCALE)) {
+    if (encoded == NULL || !isfinite(value) || value < 0.0f ||
+        value > (4000000.0f)) {
         return false;
     }
-    *encoded = (uint64_t)(value * ENERGY_SCALE + 0.5);
+    uint32_t scaled = (uint32_t)(value * ENERGY_SCALE + 0.5f);
+    *encoded = (uint64_t)scaled;
     return true;
 }
 
 static bool write_record(uint32_t address, uint32_t sequence,
-                         double total_charged_ah, double total_energy_kwh)
+                         float total_charged_ah, float total_energy_kwh)
 {
     EnergyRecord_t record = {0};
     uint64_t charged_x1000;
@@ -145,8 +146,10 @@ static void load_latest(void)
         }
     }
     if (have_latest) {
-        g_total_charged_ah = (double)latest.total_charged_ah_x1000 / ENERGY_SCALE;
-        g_total_energy_kwh = (double)latest.total_energy_kwh_x1000 / ENERGY_SCALE;
+        uint32_t chg_32 = (uint32_t)latest.total_charged_ah_x1000;
+        uint32_t nrg_32 = (uint32_t)latest.total_energy_kwh_x1000;
+        g_total_charged_ah = (float)chg_32 / ENERGY_SCALE;
+        g_total_energy_kwh = (float)nrg_32 / ENERGY_SCALE;
         g_last_saved_charged_x1000 = latest.total_charged_ah_x1000;
         g_last_saved_energy_x1000 = latest.total_energy_kwh_x1000;
         g_have_saved_record = true;
@@ -154,8 +157,8 @@ static void load_latest(void)
         LOG("EnergyStorage: loaded seq=%lu Ah=%.3f kWh=%.3f\r\n",
             (unsigned long)latest.sequence, g_total_charged_ah, g_total_energy_kwh);
     } else {
-        g_total_charged_ah = 0.0;
-        g_total_energy_kwh = 0.0;
+        g_total_charged_ah = 0.0f;
+        g_total_energy_kwh = 0.0f;
         g_last_saved_charged_x1000 = 0U;
         g_last_saved_energy_x1000 = 0U;
         g_have_saved_record = false;
@@ -173,19 +176,19 @@ void ChargeEnergyStorage_Init(void)
     g_initialized = true;
 }
 
-void ChargeEnergyStorage_Get(double *total_charged_ah,
-                             double *total_energy_kwh)
+void ChargeEnergyStorage_Get(float *total_charged_ah,
+                             float *total_energy_kwh)
 {
     if (total_charged_ah != NULL) *total_charged_ah = g_total_charged_ah;
     if (total_energy_kwh != NULL) *total_energy_kwh = g_total_energy_kwh;
 }
 
-void ChargeEnergyStorage_SaveNow(double total_charged_ah,
-                                 double total_energy_kwh)
+void ChargeEnergyStorage_SaveNow(float total_charged_ah,
+                                 float total_energy_kwh)
 {
     if (!g_initialized || !isfinite(total_charged_ah) ||
-        !isfinite(total_energy_kwh) || total_charged_ah < 0.0 ||
-        total_energy_kwh < 0.0) {
+        !isfinite(total_energy_kwh) || total_charged_ah < 0.0f ||
+        total_energy_kwh < 0.0f) {
         LOG("EnergyStorage: save rejected (invalid state/value)\r\n");
         return;
     }
@@ -259,8 +262,8 @@ void ChargeEnergyStorage_SaveNow(double total_charged_ah,
 }
 
 void ChargeEnergyStorage_Process(uint32_t now_tick, bool charging,
-                                 double total_charged_ah,
-                                 double total_energy_kwh)
+                                 float total_charged_ah,
+                                 float total_energy_kwh)
 {
     if (!g_initialized) return;
     if (charging) {

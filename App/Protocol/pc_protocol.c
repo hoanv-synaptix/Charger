@@ -450,10 +450,6 @@ static void process_frame(uint8_t cmd, const uint8_t *payload, uint8_t len)
         {
             float c = payload_float(payload);
             if (!isfinite(c)) { send_nack(cmd, PC_ERR_BAD_PARAM); return; }
-            LOG("PC: SET_CURRENT %.3fA manual=%u running=%u\r\n",
-                (double)c,
-                (unsigned)ChargeController_IsManualMode(),
-                (unsigned)ChargeController_IsRunning());
             if (!CHG_LIB_SetCurrentLimitAllEx(c, CHG_LIB_TX_SOURCE_PC_SET_CURRENT)) {
                 send_nack(cmd, PC_ERR_BAD_PARAM);
                 return;
@@ -487,15 +483,27 @@ static void process_frame(uint8_t cmd, const uint8_t *payload, uint8_t len)
         break;
     }
 
-    case PC_CMD_STOP:
-        ChargeController_Stop(BSP_GetTick());
+    case PC_CMD_STOP: {
+        ChargeCtrlView_t view;
+        ChargeController_GetView(&view);
+        if (view.state == CHARGE_CTRL_STATE_FAULT) {
+            (void)ChargeController_ResetFaultIfSafe(BSP_GetTick());
+        } else {
+            ChargeController_Stop(BSP_GetTick());
+        }
         g_charging = 0;
         ok = true;
         break;
+    }
 
     case PC_CMD_EMERGENCY_STOP:
         ChargeController_EmergencyStop(BSP_GetTick());
         g_charging = 0;
+        ok = true;
+        break;
+
+    case 0x0A: /* PC_CMD_RESET_FAULT */
+        (void)ChargeController_ResetFaultIfSafe(BSP_GetTick());
         ok = true;
         break;
 
@@ -695,9 +703,9 @@ void PC_Protocol_SendStatus(void)
     report.bms_current   = bms_view.batt_current;
     report.bms_chg_v_req = bms_view.chg_volt_request;
     report.bms_chg_i_req = bms_view.chg_curr_request;
-    /* Report both BMS warnings (severity 1) and actionable faults
-     * (severity >= 2). Safety decisions remain owned by the controller and
-     * BMS_HasCriticalAlarm(), not by this telemetry field. */
+    /* Preserve the public telemetry union. Safety decisions are made from
+     * BMS alarm_flags by the controller/alarm path; warning_flags remains a
+     * compatibility field in the existing PC payload. */
     report.bms_alarm     = bms_view.alarm_flags | bms_view.warning_flags;
     report.bms_soc       = bms_view.soc;
     report.bms_state     = (uint8_t)bms_view.state;

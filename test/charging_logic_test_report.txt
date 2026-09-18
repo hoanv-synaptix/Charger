@@ -1,15 +1,15 @@
 ================================================================================
   BÁO CÁO TỔNG KẾT AUTOMATION TEST LOGIC SẠC (CHARGING LOGIC SUITE)
 ================================================================================
-  [PASS]  | CL-01: Soft-Start & Gia tốc tăng dòng 5A/s (35s)
-  [PASS]  | CL-02: Phân tầng giảm dòng theo áp Cell & Đơn điệu (40s)
-  [PASS]  | CL-03: Nhiệt độ Pin: Giảm dòng, Inhibit & Tự hồi phục (45s)
-  [PASS]  | CL-04: Điều khiển áp 2 giai đoạn & Chốt Contactor (35s)
+  [FAIL]  | CL-01: Soft-Start & Gia tốc tăng dòng 5A/s (35s)
+  [FAIL]  | CL-02: Phân tầng giảm dòng theo áp Cell & Đơn điệu (40s)
+  [FAIL]  | CL-03: Nhiệt độ Pin: Giảm dòng, Inhibit & Tự hồi phục (45s)
+  [FAIL]  | CL-04: Điều khiển áp 2 giai đoạn & Chốt Contactor (35s)
   [PASS]  | CL-05: Dập dòng về 0 trước khi nhả Contactor (35s)
   [PASS]  | CL-06: Đồng bộ tín hiệu Cho phép Sạc tới BMS (35s)
   [PASS]  | CL-07: Khóa cứng FAULT quá nhiệt lần 4 & Chống bypass (45s)
-  [PASS]  | CL-08: Phân tách Fast vs Normal Charge Mode (30s)
-  [PASS]  | CL-09: Hẹn giờ sạc Delay Charge & Controls (30s)
+  [FAIL]  | CL-08: Phân tách Fast vs Normal Charge Mode (30s)
+  [FAIL]  | CL-09: Hẹn giờ sạc Delay Charge & Controls (30s)
 --------------------------------------------------------------------------------
-  KẾT QUẢ: ALL PASS 100%
+  KẾT QUẢ: SOME CASES FAILED
 ================================================================================

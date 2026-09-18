@@ -165,6 +165,7 @@ typedef struct {
 } CHG_LIB_ModuleView_t;
 
 typedef struct {
+    /* Electrical fields contain only finite telemetry from online modules. */
     float    total_current;
     float    total_power_in;
     float    voltage;

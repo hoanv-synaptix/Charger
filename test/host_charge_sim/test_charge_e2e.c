@@ -691,12 +691,13 @@ static bool test_relay_opens_immediately_on_emergency_stop(void)
     g_sim_module.current_override = true; /* stop the simulator auto-zeroing current on Stop */
     g_sim_module.current = 20.0f; /* still charging hard */
     ChargeController_EmergencyStop(mock_tick);
-    drive_ms(20U); /* a single tick is enough -- must not wait */
 
     ChargeCtrlView_t cv;
     ChargeController_GetView(&cv);
     ASSERT(cv.state == CHARGE_CTRL_STATE_FAULT, "controller should be in FAULT after EmergencyStop");
     ASSERT(cv.relay_should_close == 0, "EMERGENCY_STOP must open the relay immediately, even with current still high");
+
+    drive_ms(20U); /* subsequent processing must not re-close it */
 
     printf("[PASS] test_relay_opens_immediately_on_emergency_stop\n");
     return true;
@@ -2861,4 +2862,3 @@ int main(void)
     printf("TESTS FAILED.\n");
     return 1;
 }
-

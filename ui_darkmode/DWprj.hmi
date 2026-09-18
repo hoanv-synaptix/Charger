@@ -1,0 +1,17 @@
+[INIT]
+PICFIX=1
+VARCount=64
+Version=-1
+ProVersion=645
+SCREENDSIZE=480X272
+SPADDRESS=5000
+[IMG]
+00=00_dashboard.jpg
+01=01_setting.jpg
+02=02_alarm_page1.png
+03=03_login.png
+04=04_precharge.png
+05=05_config_fast_on.png
+06=06_config_fast_off.png
+07=07_config_normal_on.png
+08=08_config_normal_off.png

@@ -56,34 +56,34 @@ static bool expect(bool condition, const char *name)
 
 int main(void)
 {
-    double ah = 0.0;
-    double kwh = 0.0;
+    float ah = 0.0f;
+    float kwh = 0.0f;
     bool ok = true;
 
     memset(g_energy_test_flash, 0xFF, sizeof(g_energy_test_flash));
     ChargeEnergyStorage_Init();
     ChargeEnergyStorage_Get(&ah, &kwh);
-    ok &= expect(ah == 0.0 && kwh == 0.0, "blank flash loads zero");
+    ok &= expect(ah == 0.0f && kwh == 0.0f, "blank flash loads zero");
 
-    ChargeEnergyStorage_SaveNow(1.234, 5.678);
+    ChargeEnergyStorage_SaveNow(1.234f, 5.678f);
     ChargeEnergyStorage_Get(&ah, &kwh);
-    ok &= expect(ah == 1.234 && kwh == 5.678, "save updates RAM counters");
+    ok &= expect(ah == 1.234f && kwh == 5.678f, "save updates RAM counters");
     uint32_t writes_after_first = g_write_count;
-    ChargeEnergyStorage_SaveNow(1.234, 5.678);
+    ChargeEnergyStorage_SaveNow(1.234f, 5.678f);
     ok &= expect(g_write_count == writes_after_first, "unchanged values are not rewritten");
 
-    ChargeEnergyStorage_Process(0U, true, 2.0, 6.0);
-    ChargeEnergyStorage_Process(299999U, true, 2.0, 6.0);
+    ChargeEnergyStorage_Process(0U, true, 2.0f, 6.0f);
+    ChargeEnergyStorage_Process(299999U, true, 2.0f, 6.0f);
     ok &= expect(g_write_count == writes_after_first, "checkpoint waits five minutes");
-    ChargeEnergyStorage_Process(300000U, true, 2.0, 6.0);
+    ChargeEnergyStorage_Process(300000U, true, 2.0f, 6.0f);
     ok &= expect(g_write_count == writes_after_first + 1U, "checkpoint writes at five minutes");
-    ChargeEnergyStorage_Process(300001U, false, 2.5, 7.0);
+    ChargeEnergyStorage_Process(300001U, false, 2.5f, 7.0f);
     ChargeEnergyStorage_Get(&ah, &kwh);
-    ok &= expect(ah == 2.5 && kwh == 7.0, "stop writes final counters");
+    ok &= expect(ah == 2.5f && kwh == 7.0f, "stop writes final counters");
 
     ok &= expect(ChargeEnergyStorage_Reset(), "reset succeeds");
     ChargeEnergyStorage_Get(&ah, &kwh);
-    ok &= expect(ah == 0.0 && kwh == 0.0 && g_erase_count == 4U,
+    ok &= expect(ah == 0.0f && kwh == 0.0f && g_erase_count == 4U,
                  "reset clears RAM and all journal pages");
 
     printf(ok ? "ALL ENERGY STORAGE TESTS PASSED.\n"

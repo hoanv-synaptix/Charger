@@ -13,7 +13,7 @@ if not exist %FIRMWARE% (
 )
 
 echo [INFO] Flashing via ST-LINK (SWD)...
-%PROGRAMMER% -c port=SWD -d %FIRMWARE% -v -rst
+%PROGRAMMER% -c port=SWD freq=500 ap=0 -d %FIRMWARE% -v -rst
 
 if %ERRORLEVEL% neq 0 (
     echo [ERROR] Flashing failed! Check your ST-LINK connection.

@@ -115,7 +115,7 @@ typedef struct {
 /* ---- ALM_INFO (0x07F4) ---- */
 typedef struct {
     BMS_ParseResult_t valid;
-    /* Each alarm: 0=none, 1=warning, 2=fault, 3=severe (Motorola MSB-first per byte) */
+    /* Each alarm: 0=none, 1..3=active fault severity (Motorola MSB-first per byte) */
     uint8_t low_pack_volt;          /* Byte 0 bits 7-6 */
     uint8_t low_cell_volt;          /* Byte 0 bits 5-4 */
     uint8_t high_pack_volt;         /* Byte 0 bits 3-2 */

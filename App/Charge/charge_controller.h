@@ -172,6 +172,12 @@ bool ChargeController_Start(ChargeCtrlOwner_t owner, bool manual_mode, uint32_t 
 /** Start the BMS wake/recovery pre-charge flow using config Vlow/Ilow. */
 bool ChargeController_StartPrecharge(ChargeCtrlOwner_t owner, uint32_t now_tick);
 
+/** Prepare pre-charge mode when operator enters pre-charge screen (permits BMS offline). */
+void ChargeController_PreparePrecharge(void);
+
+/** Exit pre-charge mode when operator returns to Dashboard. */
+void ChargeController_EndPrechargeSession(uint32_t now_tick);
+
 /** Request the normal controlled stop path for an active pre-charge. */
 void ChargeController_StopPrecharge(uint32_t now_tick);
 /** Clear the current charge/pre-charge fault only after the controller
@@ -194,6 +200,13 @@ void ChargeController_SetJackTempC(float temp_c);
  * @param now_tick Current tick (BSP_GetTick() from the caller)
  */
 void ChargeController_Stop(uint32_t now_tick);
+
+/**
+ * @brief Request a controlled stop from a protection/alarm path.
+ * @note Uses CHARGE_STOP_PROTECTION and preserves the normal current-settle
+ *       relay opening policy.
+ */
+void ChargeController_StopForProtection(uint32_t now_tick);
 
 /**
  * @brief Emergency stop - immediately halt charging

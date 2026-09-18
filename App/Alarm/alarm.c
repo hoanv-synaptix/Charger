@@ -53,6 +53,7 @@
 #define ALARM_DB_MIRROR_CLEAR_MS      200U   /* source is already debounced   */
 #define ALARM_DB_COMM_SET_MS          200U
 #define ALARM_DB_COMM_CLEAR_MS        500U
+#define ALARM_DB_MODULE_COMM_CLEAR_MS 200U
 #define ALARM_DB_NO_PACK_SET_MS       500U
 #define ALARM_DB_NO_PACK_CLEAR_MS    1000U
 #define ALARM_DB_AC_UNDERVOLT_SET_MS 5000U   /* 5s filter: suppress false alarm from cap discharge on AC turn-off */
@@ -74,12 +75,15 @@ typedef struct {
     ChargeCtrlView_t cc;
     BMS_View_t bms;
 
-    /* aggregated over enabled+online modules */
-    uint8_t  mod_online_count;
+    /* Aggregated from one module snapshot. Electrical values and reported
+     * alarm bits are only taken from online modules; offline modules expose
+     * communication loss separately so stale telemetry cannot be reused. */
+    uint8_t  mod_offline_count;
     float    mod_current_max;   /* -1 if none reporting */
     float    mod_voltage_min;   /* -1 if none reporting */
     uint32_t mod_alarm_or;
     uint8_t  mod_pfc_fault_or;
+    CHG_LIB_SystemSummary_t mod_summary;
 
     float    cfg_vmax_v;
     uint8_t  cfg_source_mode;
@@ -122,7 +126,7 @@ static bool ev_bms(const AlarmInputs_t *in, uint32_t bit) {
         !BMS_HasFreshPrechargeData(in->now)) {
         return false;
     }
-    return ((in->bms.alarm_flags | in->bms.warning_flags) & bit) != 0U;
+    return (in->bms.alarm_flags & bit) != 0U;
 }
 
 static bool ev_bms_temp_high(const AlarmInputs_t *in, uint32_t bit) {
@@ -138,28 +142,23 @@ static bool ev_bms_temp_high(const AlarmInputs_t *in, uint32_t bit) {
     return false;
 }
 
-/* BMS severity-1 reports use the same existing AlarmCode_t as their
- * severity-2/3 counterpart, but are reporting-only. Keep the static table
- * action for fault flags and downgrade only a warning-only BMS mirror to INFO.
- * Other alarm rows also use a `param` bit, so identify BMS rows by their
- * evaluator rather than applying warning_flags to unrelated sources. */
-static AlarmAction_t effective_action(const AlarmSpec_t *sp,
-                                      const AlarmInputs_t *in)
-{
-    if (((sp->eval == ev_bms) || (sp->eval == ev_bms_temp_high)) &&
-        ((in->bms.warning_flags & sp->param) != 0U) &&
-        ((in->bms.alarm_flags & sp->param) == 0U)) {
-        return ALARM_ACT_INFO;
-    }
-    return sp->action;
-}
 static bool ev_mod(const AlarmInputs_t *in, uint32_t bit) {
     return (in->mod_alarm_or & bit) != 0U;
 }
 static bool ev_mod_pfc(const AlarmInputs_t *in, uint32_t param) {
     (void)param;
     return (in->mod_pfc_fault_or != 0U) ||
-           ((in->mod_alarm_or & CHG_LIB_ALARM_PFC_FAULT) != 0U);
+           ((in->mod_alarm_or &
+             (CHG_LIB_ALARM_PFC_FAULT | CHG_LIB_ALARM_AC_PHASE_LOSS)) != 0U);
+}
+static bool ev_mod_comm_lost(const AlarmInputs_t *in, uint32_t param) {
+    (void)param;
+    bool active_session = (in->cc.state == CHARGE_CTRL_STATE_RUNNING ||
+                           in->cc.state == CHARGE_CTRL_STATE_READY ||
+                           in->cc.state == CHARGE_CTRL_STATE_PRECHARGE);
+    return active_session &&
+           (in->mod_offline_count != 0U ||
+            (in->mod_alarm_or & CHG_LIB_ALARM_COMM_FAIL) != 0U);
 }
 static bool ev_ctrl(const AlarmInputs_t *in, uint32_t bit) {
     return (in->cc.fault_flags & bit) != 0U;
@@ -199,7 +198,7 @@ static const AlarmSpec_t k_specs[] = {
 
     /* --- module-reported --- */
     { ALARM_MOD_HW_FAULT,        ALARM_ACT_STOP,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_HW_FAULT,         "Module hardware fault" },
-    { ALARM_MOD_COMM_FAIL,       ALARM_ACT_INFO,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_COMM_FAIL,        "Module comms fail" },
+    { ALARM_MOD_COMM_FAIL,       ALARM_ACT_INFO,  false, 0, ALARM_DB_MODULE_COMM_CLEAR_MS, ev_mod_comm_lost, 0,                "Module comms fail" },
     { ALARM_MOD_OVER_TEMP,       ALARM_ACT_STOP,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_OVER_TEMP,        "Module over-temp" },
     { ALARM_MOD_OVER_VOLT_OUT,   ALARM_ACT_ESTOP, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_OVER_VOLTAGE_OUT, "Module output over-voltage" },
     { ALARM_MOD_SHORT_CIRCUIT,   ALARM_ACT_ESTOP, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_SHORT_CIRCUIT,    "Module output short circuit" },
@@ -304,7 +303,7 @@ static bool ev_dc_load_lost(const AlarmInputs_t *in, uint32_t param) {
 
     bool bms_thermal_alarm =
         in->bms.online &&
-        (((in->bms.warning_flags | in->bms.alarm_flags) &
+        ((in->bms.alarm_flags &
           (BMS_ALARM_TEMP_HIGH_CHG | BMS_ALARM_TEMP_HIGH_DCHG)) != 0U);
 
     if (bms_thermal_alarm) return false;
@@ -331,7 +330,8 @@ static bool ev_dc_out_not_established(const AlarmInputs_t *in, uint32_t param) {
     if (g_alarm.relay_close_since == 0U) return false;
     if ((in->now - g_alarm.relay_close_since) < ALARM_DC_OUT_CONFIRM_MS) return false;
     if (in->cc.applied_current_per_module_a <= ALARM_I_LOAD_MIN_A) return false;
-    return (in->mod_current_max >= 0.0f) && (in->mod_current_max < ALARM_I_LOAD_MIN_A);
+    return isfinite(in->mod_summary.total_current) &&
+           in->mod_summary.total_current < ALARM_I_LOAD_MIN_A;
 }
 
 static bool ev_bms_volt_mismatch(const AlarmInputs_t *in, uint32_t param) {
@@ -358,12 +358,17 @@ static void gather_inputs(uint32_t now, AlarmInputs_t *in) {
 
     in->mod_current_max = -1.0f;
     in->mod_voltage_min = -1.0f;
+    memset(&in->mod_summary, 0, sizeof(in->mod_summary));
 
     uint8_t total = CHG_LIB_GetModuleCount();
     for (uint8_t i = 0; i < total; i++) {
         CHG_LIB_ModuleView_t mv;
         if (!CHG_LIB_GetModuleView(i, &mv)) continue;
-        if (!mv.enabled || !mv.online) continue;
+        if (!mv.enabled) continue;
+        if (!mv.online) {
+            in->mod_offline_count++;
+            continue;
+        }
         if (mv.state == CHG_LIB_STATE_OFFLINE || mv.state == CHG_LIB_STATE_FAULT) {
             /* still fold its alarm bits in -- a faulted module's cause matters */
             in->mod_alarm_or |= (uint32_t)mv.alarm_flags;
@@ -371,7 +376,6 @@ static void gather_inputs(uint32_t now, AlarmInputs_t *in) {
             continue;
         }
 
-        in->mod_online_count++;
         in->mod_alarm_or |= (uint32_t)mv.alarm_flags;
         in->mod_pfc_fault_or |= mv.pfc_fault;
 
@@ -383,6 +387,8 @@ static void gather_inputs(uint32_t now, AlarmInputs_t *in) {
             in->mod_voltage_min = mv.voltage;
         }
     }
+
+    CHG_LIB_GetSystemSummary(&in->mod_summary);
 }
 
 /* ============== Event log ============== */
@@ -417,7 +423,7 @@ static void run_debounce(uint32_t now, const AlarmInputs_t *in, AlarmEdgeTally_t
             if (rt->latched) rt->latched = false; /* condition returned -- genuinely active */
             if (!rt->active && held >= sp->set_ms) {
                 rt->active = true;
-                log_edge(now, sp->code, effective_action(sp, in), true);
+                log_edge(now, sp->code, sp->action, true);
                 if (tally->raised++ == 0U) tally->first_raised_desc = sp->desc;
             }
         } else {
@@ -426,7 +432,7 @@ static void run_debounce(uint32_t now, const AlarmInputs_t *in, AlarmEdgeTally_t
                     rt->latched = true;    /* keep active until Alarm_Acknowledge */
                 } else {
                     rt->active = false;
-                    log_edge(now, sp->code, effective_action(sp, in), false);
+                    log_edge(now, sp->code, sp->action, false);
                     if (tally->cleared++ == 0U) tally->first_cleared_desc = sp->desc;
                 }
             }
@@ -486,7 +492,7 @@ static void aggregate_view(const AlarmInputs_t *in) {
         v.active_count++;
         if (rt->latched) v.latched_mask |= (1ULL << sp->code);
 
-        AlarmAction_t action = effective_action(sp, in);
+        AlarmAction_t action = sp->action;
         if (action > v.highest_action) {
             v.highest_action = action;
         }
@@ -518,7 +524,7 @@ static void dispatch_action(uint32_t now, const AlarmInputs_t *in) {
             if (!g_alarm.stop_sent || is_running) {
                 g_alarm.stop_sent = true;
                 LOG("ALARM: -> STOP (code %u)\r\n", (unsigned)g_alarm.view.worst_code);
-                ChargeController_Stop(now);
+                ChargeController_StopForProtection(now);
             }
             break;
         case ALARM_ACT_INFO:
@@ -588,7 +594,7 @@ void Alarm_Acknowledge(uint32_t now_tick) {
         rt->latched = false;
         rt->active = false;
         rt->raw_prev = false;
-        log_edge(now_tick, sp->code, effective_action(sp, &in), false);
+        log_edge(now_tick, sp->code, sp->action, false);
         acked++;
     }
     if (acked > 0U) LOG("ALARM: %u latched cleared by ack\r\n", (unsigned)acked);

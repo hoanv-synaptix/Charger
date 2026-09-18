@@ -11,6 +11,7 @@
 #include <string.h>
 #include <stdbool.h>
 
+#if defined(CHG_ENABLE_LOG) && (CHG_ENABLE_LOG != 0)
 #define LOG_BUF_SIZE  128
 
 void LOG(const char *fmt, ...)
@@ -63,3 +64,4 @@ int _write(int file, char *ptr, int len)
     }
     return len;
 }
+#endif /* CHG_ENABLE_LOG */

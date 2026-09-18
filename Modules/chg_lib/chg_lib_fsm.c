@@ -6,6 +6,7 @@
 
 #include "priv/chg_lib_core_priv.h"
 #include <stddef.h>
+#include <math.h>
 
 #define FSM_RECOVERY_DELAY_MS  3000U
 
@@ -50,15 +51,25 @@ void CHG_LIB_Summary_Accumulate(
         summary->any_critical = true;
     }
 
-    summary->total_current += v->current;
+    /* Electrical values are live telemetry, not last-known values. An
+     * offline module may retain its previous current/voltage in the view;
+     * excluding it here keeps every summary consumer from making decisions
+     * from stale output data. */
+    if (!v->online) return;
+
+    if (isfinite(v->current) && v->current >= 0.0f) {
+        summary->total_current += v->current;
+    }
 
     float power_in = extra_power_in;
     if (extra_power_in == 0.0f && v->input_power > 0U) {
         power_in = (float)v->input_power;
     }
-    summary->total_power_in += power_in;
+    if (isfinite(power_in) && power_in >= 0.0f) {
+        summary->total_power_in += power_in;
+    }
 
-    if (v->voltage > 0.1f) {
+    if (isfinite(v->voltage) && v->voltage > 0.1f) {
         summary->voltage = v->voltage;
     }
 }

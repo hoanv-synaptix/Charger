@@ -162,8 +162,8 @@ static uint32_t dwin_reset_requested_count = 0U;
 static uint32_t dwin_reset_completed_count = 0U;
 static uint32_t dwin_replay_count = 0U;
 static uint32_t dwin_rx_suppressed_bytes = 0U;
-static double   s_total_charged_ah;
-static double   s_total_energy_kwh;
+static float    s_total_charged_ah;
+static float    s_total_energy_kwh;
 static uint32_t s_last_energy_tick;
 
 /* Keep the last charge duration visible briefly after a session ends. This
@@ -225,6 +225,7 @@ static void dwin_open_login(void)
 
 static void dwin_open_precharge(void)
 {
+    ChargeController_PreparePrecharge();
     uint16_t status = DWIN_PRECHARGE_STATUS_READY;
     uint16_t button = DWIN_PRECHARGE_BTN_START;
     dwin_precharge_error_hold = false;
@@ -239,6 +240,7 @@ static void dwin_open_precharge(void)
 
 static void dwin_end_precharge_session(void)
 {
+    ChargeController_EndPrechargeSession(BSP_GetTick());
     dwin_precharge_session = false;
     dwin_precharge_error_hold = false;
     dwin_precharge_error_code = ALARM_NONE;
@@ -1024,8 +1026,8 @@ void App_Loop(void)
 
         /* Energy & capacity accumulator */
         if (ChargeEnergyStorage_TakeResetRequest()) {
-            s_total_charged_ah = 0.0;
-            s_total_energy_kwh = 0.0;
+            s_total_charged_ah = 0.0f;
+            s_total_energy_kwh = 0.0f;
             s_last_energy_tick = now;
         }
         if (s_last_energy_tick == 0U) {
@@ -1034,16 +1036,16 @@ void App_Loop(void)
         uint32_t dt_ms = now - s_last_energy_tick;
         s_last_energy_tick = now;
         if (is_charging && dt_ms > 0U && dt_ms < 500U) {
-            double hours = (double)dt_ms / 3600000.0;
+            float hours = (float)dt_ms * (1.0f / 3600000.0f);
             float cur_f = (isfinite(sum.total_current) && sum.total_current > 0.0f)
                               ? sum.total_current : 0.0f;
             float volt_f = (isfinite(sum.voltage) && sum.voltage > 0.0f)
                               ? sum.voltage : 0.0f;
-            s_total_charged_ah += (double)cur_f * hours;
-            s_total_energy_kwh += ((double)cur_f * (double)volt_f / 1000.0) * hours;
+            s_total_charged_ah += cur_f * hours;
+            s_total_energy_kwh += (cur_f * volt_f * 0.001f) * hours;
         }
-        dd.total_charged_ah_x10 = (uint32_t)(s_total_charged_ah * 10.0);
-        dd.total_energy_kwh_x10 = (uint32_t)(s_total_energy_kwh * 10.0);
+        dd.total_charged_ah_x10 = (uint32_t)(s_total_charged_ah * 10.0f);
+        dd.total_energy_kwh_x10 = (uint32_t)(s_total_energy_kwh * 10.0f);
         ChargeEnergyStorage_Process(now, is_charging, s_total_charged_ah,
                                     s_total_energy_kwh);
 

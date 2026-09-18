@@ -121,9 +121,11 @@ typedef struct {
     float  chg_volt_request;  /* V */
     float  chg_curr_request;  /* A */
 
-    /* Alarms: fault/actionable flags (severity >= 2). */
+    /* Alarms: all non-zero BMS severities are actionable under the current
+     * product contract. */
     BMS_AlarmFlag_t alarm_flags;
-    /* Reporting-only flags (severity == 1); never used for safety actions. */
+    /* Retained for the existing PC telemetry contract. It mirrors the same
+     * active fields but is not used for safety decisions. */
     BMS_AlarmFlag_t warning_flags;
 
     /* Timing */

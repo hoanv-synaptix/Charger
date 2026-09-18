@@ -99,7 +99,7 @@ static bool sim_maxwell_transmit(uint32_t ext_id, const uint8_t *data, uint8_t d
         uint32_t u = ((uint32_t)data[4] << 24) | ((uint32_t)data[5] << 16) |
                      ((uint32_t)data[6] << 8) | data[7];
         float f = CHG_LIB_ProtocolBEToFloat(&data[4]);
-        if (reg == CHG_LIB_REG_SET_VOLTAGE) {
+        if (reg == CHG_LIB_REG_SET_VOLTAGE && !sm->voltage_override) {
             /* Apply immediately -- a real module regulates fast enough that
              * the next poll already sees the new setpoint. */
             sm->voltage = f;
@@ -129,6 +129,7 @@ static bool sim_maxwell_transmit(uint32_t ext_id, const uint8_t *data, uint8_t d
 
 static void sim_maxwell_tick_one(SimModuleState_t *sm)
 {
+    if (sm->silent) return;
     if (!sm->pending) return;
     sm->pending = false;
 
@@ -138,7 +139,7 @@ static void sim_maxwell_tick_one(SimModuleState_t *sm)
     resp[2] = (uint8_t)(sm->pending_reg >> 8);
     resp[3] = (uint8_t)(sm->pending_reg & 0xFF);
 
-    if (sm->actually_on) {
+    if (sm->actually_on && !sm->current_override) {
         sm->current = sm->rated_current * 0.5f;
     }
 
@@ -260,6 +261,7 @@ static bool sim_lianming_transmit(uint32_t ext_id, const uint8_t *data, uint8_t 
 static void sim_lianming_tick(uint32_t now_tick)
 {
     (void)now_tick;
+    if (g_sim_module.silent) return;
     if (!g_sim_module.pending) return;
     g_sim_module.pending = false;
 
@@ -350,6 +352,7 @@ static bool sim_tonhe_transmit(uint32_t ext_id, const uint8_t *data, uint8_t dlc
 static void sim_tonhe_tick(uint32_t now_tick)
 {
     (void)now_tick;
+    if (g_sim_module.silent) return;
     if (!g_sim_module.current_override) {
         if (g_sim_module.actually_on) {
             g_sim_module.current = g_sim_module.rated_current * 0.5f;
@@ -413,10 +416,6 @@ void sim_install_backend(SimDriverKind_t kind)
 void sim_module_tick(SimDriverKind_t kind, uint32_t now_tick)
 {
     sim_now_tick_holder = now_tick;
-    /* See SimModuleState_t.silent's doc comment. Only gates the
-     * single-module scenarios' module (g_sim_modules[0]) -- the
-     * multi-module Maxwell scenario doesn't use this flag. */
-    if (g_sim_modules[0].silent) return;
     switch (kind) {
         case SIM_DRV_MAXWELL:  sim_maxwell_tick(now_tick);  break;
         case SIM_DRV_LIANMING: sim_lianming_tick(now_tick); break;

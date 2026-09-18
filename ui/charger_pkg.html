@@ -69,6 +69,29 @@
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
             letter-spacing: 0.5px; 
         }
+        .header-time {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 6px;
+            font-size: 13px;
+            font-weight: bold;
+            color: #334155;
+            font-family: Arial, sans-serif;
+            letter-spacing: 0.5px;
+            height: 100%;
+        }
+        .header-time i {
+            font-size: 13px;
+            color: #1a51a1;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            transform: translateY(-1.5px);
+        }
+        .header-time span {
+            line-height: 1;
+        }
 
         /* Main Content */
         .main-content {
@@ -258,17 +281,26 @@
         .footer-btn.active { color: #1a51a1; }
         .footer-btn i { font-size: 13px; }
         
-        .footer-time {
+        .footer-time, .footer-device {
             flex: 1.2;
             background-color: white;
             border: 1px solid #d0d7e0;
             border-radius: 4px;
             display: flex;
             align-items: center;
-            justify-content: flex-start; padding-left: 14px;
+            justify-content: center;
             gap: 6px;
-            font-size: 12px;
+            font-family: Arial, sans-serif;
+            font-size: 11px;
             font-weight: bold;
+            color: #475569;
+            letter-spacing: 0.5px;
+            white-space: nowrap;
+        }
+        .footer-time {
+            justify-content: flex-start; 
+            padding-left: 14px;
+            font-size: 12px;
             color: #000;
         }
         .footer-time i { font-size: 14px; }
@@ -860,9 +892,366 @@
             flex-direction: column;
             flex: 1;
         }
+
+        /* ========================================================= */
+        /* --- MATTE INDUSTRIAL FLAT DARK THEME (Anti-glare / Crisp) --- */
+        /* ========================================================= */
+        body.dark-theme {
+            background-color: #0b0f19 !important;
+        }
+        body.dark-theme .dashboard-container {
+            background-color: #0f172a !important;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.7) !important;
+        }
+        body.dark-theme .header {
+            background-color: #182234 !important;
+            border-bottom: 1px solid #283548 !important;
+            box-shadow: none !important;
+        }
+        body.dark-theme .logo-battery { color: #f8fafc !important; }
+        body.dark-theme .device-id { color: #94a3b8 !important; }
+        body.dark-theme .header-time { color: #ffffff !important; }
+        body.dark-theme .header-time i { color: #60a5fa !important; }
+
+        /* Panels (Dashboard & Precharge) */
+        body.dark-theme .panel,
+        body.dark-theme .soc-panel,
+        body.dark-theme .box-panel {
+            background-color: #172033 !important;
+            border: 1px solid #283548 !important;
+            box-shadow: none !important;
+        }
+        body.dark-theme .panel-header {
+            color: #ffffff !important;
+            text-shadow: none !important;
+            font-weight: 700 !important;
+        }
+        body.dark-theme .bg-blue { background: #1e3a8a !important; }
+        body.dark-theme .bg-green { background: #065f46 !important; }
+        body.dark-theme .bg-orange { background: #9a3412 !important; }
+
+        /* Data Items */
+        body.dark-theme .data-label { color: #94a3b8 !important; }
+        body.dark-theme .data-num { 
+            color: #ffffff !important; 
+            text-shadow: none !important;
+        }
+        body.dark-theme .data-unit { color: #64748b !important; }
+        body.dark-theme .text-red { color: #f87171 !important; }
+
+        /* SOC Center Panel */
+        body.dark-theme .soc-badge {
+            background: #1e3a8a !important;
+            color: #ffffff !important;
+            box-shadow: none !important;
+            font-weight: 700 !important;
+        }
+        body.dark-theme .soc-value {
+            color: #ffffff !important;
+            text-shadow: none !important;
+        }
+        body.dark-theme .soc-divider { background-color: #283548 !important; }
+
+        /* Status Box & Action Buttons */
+        body.dark-theme .status-box {
+            background-color: #141d2e !important;
+            border: 1.5px solid #3b82f6 !important;
+            color: #60a5fa !important;
+            box-shadow: none !important;
+            text-shadow: none !important;
+        }
+        body.dark-theme .status-green {
+            background-color: #0c2419 !important;
+            border-color: #10b981 !important;
+            color: #34d399 !important;
+        }
+        body.dark-theme .status-orange {
+            background-color: #261507 !important;
+            border-color: #d97706 !important;
+            color: #fbbf24 !important;
+        }
+        body.dark-theme .status-red {
+            background-color: #260b0b !important;
+            border-color: #dc2626 !important;
+            color: #f87171 !important;
+        }
+
+        body.dark-theme .action-btn {
+            background: #1d4ed8 !important;
+            box-shadow: none !important;
+            color: #ffffff !important;
+            border: none !important;
+        }
+        body.dark-theme .btn-green {
+            background: #059669 !important;
+            box-shadow: none !important;
+        }
+        body.dark-theme .btn-red {
+            background: #dc2626 !important;
+            box-shadow: none !important;
+        }
+        body.dark-theme .btn-orange {
+            background: #d97706 !important;
+            box-shadow: none !important;
+        }
+
+        /* Footer */
+        body.dark-theme .footer { background-color: transparent !important; }
+        body.dark-theme .footer-btn {
+            background-color: #172033 !important;
+            border-color: #283548 !important;
+            color: #94a3b8 !important;
+            box-shadow: none !important;
+        }
+        body.dark-theme .footer-btn.active {
+            background: #1e3a8a !important;
+            border-color: #3b82f6 !important;
+            color: #ffffff !important;
+            box-shadow: none !important;
+        }
+        body.dark-theme .footer-time {
+            background-color: #172033 !important;
+            border: 1px solid #283548 !important;
+            color: #94a3b8 !important;
+        }
+        body.dark-theme .footer-device {
+            background-color: #172033 !important;
+            border: 1px solid #283548 !important;
+            color: #ffffff !important;
+        }
+        body.dark-theme .footer-device span {
+            color: #ffffff !important;
+        }
+
+        /* Sub-headers & Back Buttons */
+        body.dark-theme .alarm-sub-header { border-bottom-color: #283548 !important; }
+        body.dark-theme .page-title { 
+            color: #ffffff !important; 
+            text-shadow: none !important;
+        }
+        body.dark-theme .btn-back-square {
+            background: #1e293b !important;
+            border-color: #334155 !important;
+            color: #f8fafc !important;
+            box-shadow: none !important;
+        }
+
+        /* Charge Config Screen */
+        body.dark-theme #screen-config .box-panel {
+            background-color: #172033 !important;
+            border-color: #283548 !important;
+            box-shadow: none !important;
+        }
+        body.dark-theme #screen-config div[style*="color: #1a51a1"] {
+            color: #ffffff !important;
+            border-bottom-color: #283548 !important;
+        }
+        body.dark-theme .mode-btn {
+            background: #111a2c !important;
+            border-color: #283548 !important;
+            box-shadow: none !important;
+        }
+        body.dark-theme .mode-btn.active {
+            background: #1c2b48 !important;
+            border-color: #3b82f6 !important;
+            box-shadow: none !important;
+        }
+        body.dark-theme .mode-btn .radio-circle {
+            border-color: #475569 !important;
+            background: #111a2c !important;
+        }
+        body.dark-theme .mode-btn.active .radio-circle {
+            border-color: #3b82f6 !important;
+            background: #3b82f6 !important;
+        }
+        body.dark-theme .mode-btn div[style*="color: #1e293b"] {
+            color: #f8fafc !important;
+        }
+        body.dark-theme #screen-config div[style*="background: #f8fafc"] {
+            background: #111a2c !important;
+            border-color: #283548 !important;
+        }
+        body.dark-theme #screen-config span[style*="color: #334155"] {
+            color: #cbd5e1 !important;
+        }
+        body.dark-theme .btn-step {
+            background: #1e293b !important;
+            border-color: #334155 !important;
+            color: #f8fafc !important;
+            box-shadow: none !important;
+        }
+        body.dark-theme .time-val {
+            background: #0a0f18 !important;
+            border: 1px solid #334155 !important;
+            color: #f59e0b !important;
+            box-shadow: none !important;
+        }
+        body.dark-theme .time-colon {
+            color: #f59e0b !important;
+            text-shadow: none !important;
+        }
+        body.dark-theme .btn-confirm {
+            background: #1d4ed8 !important;
+            border: none !important;
+            color: #ffffff !important;
+            box-shadow: none !important;
+        }
+        body.dark-theme .btn-confirm:active {
+            background: #1e40af !important;
+        }
+
+        /* Setting Screen */
+        body.dark-theme .company-title { color: #ffffff !important; }
+        body.dark-theme .contact-box {
+            background: #111a2c !important;
+            border-color: #283548 !important;
+            color: #94a3b8 !important;
+        }
+        body.dark-theme .spec-header {
+            background: #1e293b !important;
+            color: #ffffff !important;
+            border-bottom: 1px solid #283548 !important;
+        }
+        body.dark-theme .spec-label { color: #94a3b8 !important; }
+        body.dark-theme .spec-value { color: #f8fafc !important; }
+        body.dark-theme .spec-item { border-bottom-color: #283548 !important; }
+        body.dark-theme .admin-label { color: #ffffff !important; }
+        body.dark-theme .admin-nav-btn.admin-nav-primary {
+            background: #1d4ed8 !important;
+            border: none !important;
+            color: #ffffff !important;
+            box-shadow: none !important;
+        }
+        body.dark-theme .admin-nav-btn.admin-nav-secondary {
+            background: #334155 !important;
+            border: none !important;
+            color: #ffffff !important;
+            box-shadow: none !important;
+        }
+
+        /* Alarm Screen */
+        body.dark-theme .alarm-content {
+            background-color: transparent !important;
+        }
+        body.dark-theme .table-container {
+            background: #172033 !important;
+            border-color: #283548 !important;
+            box-shadow: none !important;
+        }
+        body.dark-theme .table-header,
+        body.dark-theme .table-header div,
+        body.dark-theme .table-header .col-time,
+        body.dark-theme .table-header .col-code,
+        body.dark-theme .table-header .col-desc {
+            background: #1e293b !important;
+            color: #ffffff !important;
+            border-bottom: 1px solid #283548 !important;
+        }
+        body.dark-theme .table-row {
+            border-bottom-color: #283548 !important;
+            color: #f8fafc !important;
+        }
+        body.dark-theme .table-row:not(.table-header) .col-time { color: #94a3b8 !important; }
+        body.dark-theme .table-row:not(.table-header) .col-code { color: #60a5fa !important; }
+        body.dark-theme .alarm-footer { color: #94a3b8 !important; }
+        body.dark-theme .btn-page,
+        body.dark-theme .btn-scroll,
+        body.dark-theme .page-indicator {
+            background: #1e293b !important;
+            border-color: #334155 !important;
+            color: #ffffff !important;
+            box-shadow: none !important;
+        }
+        body.dark-theme #alarm-page-num {
+            color: #ffffff !important;
+        }
+
+        /* Login Screen */
+        body.dark-theme #screen-login div[style*="background: #ffffff"],
+        body.dark-theme #screen-login div[style*="background: white"],
+        body.dark-theme #screen-login div[style*="background: #f4f7fb"] {
+            background: #172033 !important;
+            border-color: #283548 !important;
+        }
+        body.dark-theme #screen-login div[style*="color: #1a51a1"],
+        body.dark-theme #screen-login .page-title {
+            color: #ffffff !important;
+        }
+        body.dark-theme #screen-login div[style*="color: #64748b"] {
+            color: #94a3b8 !important;
+        }
+        body.dark-theme #pass-stars {
+            color: #ffffff !important;
+        }
+        body.dark-theme #screen-login .num-btn:not(.num-del):not(.num-ok) {
+            background: #1e293b !important;
+            border-color: #334155 !important;
+            color: #f8fafc !important;
+            box-shadow: none !important;
+        }
+        body.dark-theme #screen-login .num-del {
+            background: #dc2626 !important;
+            border: none !important;
+            color: #ffffff !important;
+            box-shadow: none !important;
+        }
+        body.dark-theme #screen-login .num-ok {
+            background: #1d4ed8 !important;
+            border: none !important;
+            color: #ffffff !important;
+            box-shadow: none !important;
+        }
+
+        /* Precharge Screen */
+        body.dark-theme #screen-precharge .box-panel {
+            background-color: #172033 !important;
+            border-color: #283548 !important;
+            box-shadow: none !important;
+        }
+        body.dark-theme #precharge-volt,
+        body.dark-theme #precharge-curr {
+            color: #ffffff !important;
+            text-shadow: none !important;
+        }
+
+        /* Floating Theme Switcher Button */
+        .theme-switcher-float {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: #1e293b;
+            color: #f8fafc;
+            border: 1.5px solid #475569;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 700;
+            cursor: pointer;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            z-index: 99999;
+            transition: all 0.15s ease;
+            user-select: none;
+        }
+        .theme-switcher-float:hover {
+            background: #334155;
+            border-color: #60a5fa;
+        }
+        @media (max-width: 600px) {
+            .theme-switcher-float {
+                display: none !important;
+            }
+        }
     </style>
 </head>
-<body>
+<body class="dark-theme">
+
+    <!-- Floating Theme Switcher Button -->
+    <button class="theme-switcher-float" onclick="toggleDarkMode()">
+        <i class="fa-solid fa-moon"></i> <span id="theme-btn-label">DARK MODE (Active)</span>
+    </button>
 
 <div class="dashboard-container">
 <div class="header">
@@ -872,8 +1261,8 @@
             </div>
             <span class="logo-battery">BATTERY</span>
         </div>
-        <div class="device-id">
-            CODE: <span class="dwin-hide">E00001</span>
+        <div class="header-time">
+            <i class="fa-regular fa-clock"></i> <span class="dwin-hide" id="current-time">00:00:00</span>
         </div>
     </div>
 
@@ -1028,8 +1417,8 @@
         <div class="footer-btn" id="f-alarm" onclick="switchScreen('alarm')">
             <i class="fa-solid fa-bell"></i> ALARM
         </div>
-        <div class="footer-time">
-            <i class="fa-regular fa-clock"></i> <span class="dwin-hide">00:00:00</span>
+        <div class="footer-device">
+            CODE: <span class="dwin-hide">E00001</span>
         </div>
     </div>
 
@@ -1124,9 +1513,9 @@
                     <div class="num-btn" style="height: 33px; font-size: 17px; padding-bottom: 2px; border-radius: 4px;" onclick="pressPin('7')">7</div>
                     <div class="num-btn" style="height: 33px; font-size: 17px; padding-bottom: 2px; border-radius: 4px;" onclick="pressPin('8')">8</div>
                     <div class="num-btn" style="height: 33px; font-size: 17px; padding-bottom: 2px; border-radius: 4px;" onclick="pressPin('9')">9</div>
-                    <div class="num-btn" style="height: 33px; background: #e12b18; color: white; border: 1px solid #e12b18; font-size: 12px; font-weight: 800; padding-bottom: 2px; border-radius: 4px;" onclick="pressPin('DEL')">DEL</div>
+                    <div class="num-btn num-del" style="height: 33px; background: #dc2626; color: white; border: 1px solid #dc2626; font-size: 12px; font-weight: 800; padding-bottom: 2px; border-radius: 4px;" onclick="pressPin('DEL')">DEL</div>
                     <div class="num-btn" style="height: 33px; font-size: 17px; padding-bottom: 2px; border-radius: 4px;" onclick="pressPin('0')">0</div>
-                    <div class="num-btn" style="height: 33px; background: #1a51a1; color: white; border: 1px solid #1a51a1; font-size: 12px; font-weight: 800; padding-bottom: 2px; border-radius: 4px;" onclick="pressPin('OK')">OK</div>
+                    <div class="num-btn num-ok" style="height: 33px; background: #1d4ed8; color: white; border: 1px solid #1d4ed8; font-size: 12px; font-weight: 800; padding-bottom: 2px; border-radius: 4px;" onclick="pressPin('OK')">OK</div>
                 </div>
             </div>
         </div>
@@ -1146,7 +1535,7 @@
                 <!-- Khung: State & Dòng/Áp -->
                 <div class="box-panel" style="width: 280px; padding: 12px 16px; display: flex; flex-direction: column; align-items: center;">
                     <!-- 2. State -->
-                    <div class="status-box status-green" id="precharge-status" style="width: 100%; height: 28px; margin-bottom: 12px; font-size: 13px; font-weight: bold; letter-spacing: 1px; display: flex; align-items: center; justify-content: center; gap: 6px;">
+                    <div class="status-box status-green" id="precharge-status" style="width: 100%; height: 28px; margin-bottom: 12px; font-size: 13px; font-weight: bold; letter-spacing: 1px; display: flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer;" onclick="togglePrechargeError()" title="Bấm để mô phỏng lỗi / khôi phục">
                         <i id="precharge-status-icon" class="fa-solid fa-circle-check"></i>
                         <span id="precharge-status-text">READY</span>
                     </div>
@@ -1197,34 +1586,31 @@
                     
                     <div style="flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 6px; margin: 2px 0;">
                         <!-- Fast Mode -->
-                        <div id="mode-fast" class="mode-btn active" style="min-height: 44px; padding: 5px 8px;" onclick="selectChargeMode('FAST')">
-                            <div style="display: flex; align-items: center; gap: 8px;">
+                        <div id="mode-fast" class="mode-btn active" style="min-height: 40px; padding: 6px 10px;" onclick="selectChargeMode('FAST')">
+                            <div style="display: flex; align-items: center; gap: 9px;">
                                 <div style="width: 26px; height: 26px; border-radius: 5px; background: #fee2e2; color: #e12b18; display: flex; align-items: center; justify-content: center; font-size: 13px;">
                                     <i class="fa-solid fa-bolt"></i>
                                 </div>
-                                <div>
-                                    <div style="font-size: 11px; font-weight: 800; color: #1e293b;">FAST CHARGE</div>
-                                    <div style="font-size: 9px; color: #64748b; font-weight: 600;">High current (100A / Max)</div>
-                                </div>
+                                <div style="font-size: 12px; font-weight: 800; color: #1e293b; letter-spacing: 0.3px;">FAST CHARGE</div>
                             </div>
                             <div class="radio-circle"></div>
                         </div>
 
                         <!-- Normal Mode -->
-                        <div id="mode-normal" class="mode-btn" style="min-height: 44px; padding: 5px 8px;" onclick="selectChargeMode('NORMAL')">
-                            <div style="display: flex; align-items: center; gap: 8px;">
+                        <div id="mode-normal" class="mode-btn" style="min-height: 40px; padding: 6px 10px;" onclick="selectChargeMode('NORMAL')">
+                            <div style="display: flex; align-items: center; gap: 9px;">
                                 <div style="width: 26px; height: 26px; border-radius: 5px; background: #e0f2fe; color: #0284c7; display: flex; align-items: center; justify-content: center; font-size: 13px;">
                                     <i class="fa-solid fa-battery-half"></i>
                                 </div>
-                                <div>
-                                    <div style="font-size: 11px; font-weight: 800; color: #1e293b;">NORMAL CHARGE</div>
-                                    <div style="font-size: 9px; color: #64748b; font-weight: 600;">Standard current (40A)</div>
-                                </div>
+                                <div style="font-size: 12px; font-weight: 800; color: #1e293b; letter-spacing: 0.3px;">NORMAL CHARGE</div>
                             </div>
                             <div class="radio-circle"></div>
                         </div>
                     </div>
 
+                    <button id="btn-save-mode" class="btn-confirm" onclick="saveChargeConfig('btn-save-mode')">
+                        <i class="fa-solid fa-floppy-disk"></i> SAVE & APPLY
+                    </button>
                 </div>
 
                 <!-- Right Card: Timer Schedule -->
@@ -1267,7 +1653,7 @@
                         </div>
                     </div>
 
-                    <button id="btn-save-config" class="btn-confirm" onclick="saveChargeConfig()">
+                    <button id="btn-save-config" class="btn-confirm" onclick="saveChargeConfig('btn-save-config')">
                         <i class="fa-solid fa-floppy-disk"></i> SAVE & APPLY
                     </button>
                 </div>
@@ -1448,18 +1834,33 @@
     // Tự động cập nhật giờ hệ thống cho sinh động
     function updateClock() {
         const now = new Date();
-        const dateStr = now.toISOString().split('T')[0];
         const timeStr = now.toTimeString().split(' ')[0];
-        document.getElementById('current-date').innerText = dateStr;
-        document.getElementById('current-time').innerText = timeStr;
+        const timeEl = document.getElementById('current-time');
+        if (timeEl) timeEl.innerText = timeStr;
+        const dateEl = document.getElementById('current-date');
+        if (dateEl) {
+            const dateStr = now.toISOString().split('T')[0];
+            dateEl.innerText = dateStr;
+        }
     }
     setInterval(updateClock, 1000);
     updateClock();
 
     // --- SINGLE PAGE APPLICATION LOGIC ---
     function switchScreen(screenId) {
+        // Dừng timer precharge khi rời màn hình
+        if (screenId !== 'precharge') {
+            clearInterval(prechargeTimer);
+        }
+
+        // Reset mã PIN khi vào màn Login
+        if (screenId === 'login') {
+            enteredPin = "";
+            const starEl = document.getElementById('pass-stars');
+            if (starEl) starEl.innerText = "****";
+        }
+
         // Hide all screens
-        
         document.getElementById('screen-dashboard').style.display = 'none';
         document.getElementById('screen-setting').style.display = 'none';
         document.getElementById('screen-alarm').style.display = 'none';
@@ -1467,11 +1868,15 @@
         if(document.getElementById('screen-precharge')) document.getElementById('screen-precharge').style.display = 'none';
         if(document.getElementById('screen-config')) document.getElementById('screen-config').style.display = 'none';
 
-        
         // Show target screen
         const target = document.getElementById('screen-' + screenId);
         if (target) {
             target.style.display = 'flex';
+        }
+
+        // Reset trạng thái Pre-charge về READY khi mở màn Pre-charge
+        if (screenId === 'precharge') {
+            applyPrechargeState("READY");
         }
 
         // Update footer active state (if on dashboard footer)
@@ -1565,7 +1970,7 @@
                         applyState("CHARGING");
                     }
                 }
-            }, 350);
+            }, 300);
         } else if (stateKey === "ERROR") {
             if (currEl) currEl.innerText = "0.00";
         }
@@ -1581,21 +1986,32 @@
         }
     }
 
+    function togglePrechargeError() {
+        if (prechargeState === "ERROR") {
+            applyPrechargeState("READY");
+        } else {
+            applyPrechargeState("ERROR");
+        }
+    }
+
     let enteredPin = "";
     function pressPin(val) {
         const starEl = document.getElementById('pass-stars');
         if (val === 'DEL') {
             enteredPin = enteredPin.slice(0, -1);
         } else if (val === 'OK') {
+            // Chấp nhận mã PIN và chuyển sang màn kích pin Pre-charge
             enteredPin = "";
+            if (starEl) starEl.innerText = "****";
             switchScreen('precharge');
+            return;
         } else {
-            if (enteredPin.length < 6) {
+            if (enteredPin.length < 4) {
                 enteredPin += val;
             }
         }
         if (starEl) {
-            starEl.innerText = enteredPin.length > 0 ? "*".repeat(enteredPin.length) : "****";
+            starEl.innerText = enteredPin.length > 0 ? "•".repeat(enteredPin.length) : "****";
         }
     }
 
@@ -1650,17 +2066,26 @@
         if (el) el.innerText = timerMins.toString().padStart(2, '0');
     }
 
-    function saveChargeConfig() {
-        const btn = document.getElementById('btn-save-config');
+    function saveChargeConfig(btnId = 'btn-save-config') {
+        const btn = document.getElementById(btnId) || document.getElementById('btn-save-config');
         if (btn) {
             const oldHtml = btn.innerHTML;
             btn.innerHTML = '<i class="fa-solid fa-check"></i> SAVED!';
             btn.style.background = '#10b981';
             setTimeout(() => {
                 btn.innerHTML = oldHtml;
-                btn.style.background = '#1a51a1';
+                btn.style.background = '';
             }, 1000);
         }
+    }
+
+    function toggleDarkMode() {
+        document.body.classList.toggle('dark-theme');
+        const isDark = document.body.classList.contains('dark-theme');
+        const label = document.getElementById('theme-btn-label');
+        const icon = document.querySelector('.theme-switcher-float i');
+        if (label) label.innerText = isDark ? 'DARK MODE (Active)' : 'LIGHT MODE (Active)';
+        if (icon) icon.className = isDark ? 'fa-solid fa-moon' : 'fa-solid fa-sun';
     }
 </script>
 </body>

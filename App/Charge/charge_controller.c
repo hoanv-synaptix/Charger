@@ -287,7 +287,7 @@ static bool handle_bms_temperature_inhibit(const ChargeCycleConfig_t *cfg, const
             LOG("CC: BMS temperature trip #%u active (can=%u stage=%u temp=%.1fC alm=0x%08lX)\r\n",
                 (unsigned)g_ctrl.bms_temp_trip_count,
                 can_alarm ? 1U : 0U, stage_overtemp ? 1U : 0U,
-                (double)bms->max_cell_temp,
+                bms->max_cell_temp,
                 (unsigned long)bms->alarm_flags);
 
             if (g_ctrl.bms_temp_trip_count > CHARGE_CTRL_BMS_TEMP_MAX_TRIPS) {
@@ -593,6 +593,7 @@ static void update_relay_decision(uint32_t now_tick) {
         if (current_settled || timed_out) {
             if (timed_out && !current_settled) {
                 int i_int = (int)(max_current * 10.0f);
+                (void)i_int;
                 LOG("CC: relay open timeout, current still %d.%dA\r\n", i_int / 10, i_int % 10);
             }
             g_ctrl.relay_latched_closed = false;
@@ -808,15 +809,15 @@ static void apply_charge_targets(uint32_t now_tick) {
             g_ctrl.ramp_tick = now_tick;
             resumed_start = true;
             LOG("CC: START_RESUME baseline=%.3fA/mod target=%.3fA/mod\r\n",
-                (double)g_ctrl.applied_current_per_module_a,
-                (double)g_ctrl.target_current_per_module_a);
+                g_ctrl.applied_current_per_module_a,
+                g_ctrl.target_current_per_module_a);
             CHG_LIB_StartAll();
         } else {
             g_ctrl.applied_voltage_v = 0.0f;
             LOG("CC: APPLY_START_ZERO state=%d last_run=%u inhibit=%u target=%.3fA/mod applied=0.000A/mod V=%.3fV src=%u band=%u\r\n",
                 (int)g_ctrl.state, (unsigned)g_ctrl.last_running, (unsigned)g_ctrl.inhibit,
-                (double)g_ctrl.target_current_per_module_a,
-                (double)g_ctrl.target_voltage_v,
+                g_ctrl.target_current_per_module_a,
+                g_ctrl.target_voltage_v,
                 (unsigned)g_ctrl.active_limit_source, (unsigned)g_ctrl.active_stage_band);
             CHG_LIB_SetVoltageAllEx(0.0f, CHG_LIB_TX_SOURCE_CC_START);
             g_ctrl.current_ramp_ready =
@@ -830,7 +831,7 @@ static void apply_charge_targets(uint32_t now_tick) {
                 g_ctrl.applied_current_per_module_a = current_baseline;
                 g_ctrl.ramp_tick = now_tick;
                 LOG("CC: START_RESET_REJECTED keep=%.3fA/mod\r\n",
-                    (double)g_ctrl.applied_current_per_module_a);
+                    g_ctrl.applied_current_per_module_a);
             }
             CHG_LIB_StartAll();
         }
@@ -839,6 +840,9 @@ static void apply_charge_targets(uint32_t now_tick) {
 
         int v_int = (int)(g_ctrl.target_voltage_v * 10.0f);
         int i_int = (int)(g_ctrl.target_current_per_module_a * 10.0f);
+        (void)v_int;
+        (void)i_int;
+        (void)resumed_start;
         LOG("CC: Start V=%d.%dV I=%d.%dA/mod (%s)\r\n",
             v_int / 10, v_int % 10, i_int / 10, i_int % 10,
             resumed_start ? "resuming" : "ramping");
@@ -856,8 +860,8 @@ static void apply_charge_targets(uint32_t now_tick) {
         if (g_ctrl.applied_current_per_module_a > 0.0f) {
             if (CHG_LIB_SetCurrentLimitAllEx(0.0f, CHG_LIB_TX_SOURCE_CC_INHIBIT)) {
                 LOG("CC: INHIBIT_CLAMP applied=0.000A/mod (was %.3fA/mod) V=%.1fV src=%u band=%u\r\n",
-                    (double)g_ctrl.applied_current_per_module_a,
-                    (double)g_ctrl.applied_voltage_v,
+                    g_ctrl.applied_current_per_module_a,
+                    g_ctrl.applied_voltage_v,
                     (unsigned)g_ctrl.active_limit_source,
                     (unsigned)g_ctrl.active_stage_band);
                 g_ctrl.applied_current_per_module_a = 0.0f;
@@ -906,7 +910,7 @@ static void apply_charge_targets(uint32_t now_tick) {
     if (g_ctrl.target_current_per_module_a <= CHARGE_CTRL_CURRENT_TARGET_EPSILON_A) {
         if (!g_ctrl.zero_target_hold_logged) {
             LOG("CC: HOLD_CURRENT target_per=0 applied=%.3fA/mod modules=%u/%u\r\n",
-                (double)g_ctrl.applied_current_per_module_a,
+                g_ctrl.applied_current_per_module_a,
                 (unsigned)g_ctrl.actual_module_count,
                 (unsigned)g_ctrl.source_module_count);
             g_ctrl.zero_target_hold_logged = true;
@@ -1017,6 +1021,7 @@ static bool check_standalone_voltage_reached(uint32_t now_tick) {
     if (g_ctrl.standalone_vmax_reached_tick == 0U) {
         g_ctrl.standalone_vmax_reached_tick = now_tick;
         int target_x10 = (int)(g_ctrl.target_voltage_v * 10.0f);
+        (void)target_x10;
         LOG("CC: Standalone Vmax reached candidate (target=%d.%dV)\r\n",
             target_x10 / 10, target_x10 % 10);
         return false;
@@ -1029,6 +1034,7 @@ static bool check_standalone_voltage_reached(uint32_t now_tick) {
 
     g_ctrl.stop_reason = CHARGE_STOP_VOLTAGE_REACHED;
     int target_x10 = (int)(g_ctrl.target_voltage_v * 10.0f);
+    (void)target_x10;
     LOG("CC: Standalone Vmax reached, stopping charge (target=%d.%dV)\r\n",
         target_x10 / 10, target_x10 % 10);
     transition_to(CHARGE_CTRL_STATE_STOPPING, now_tick);
@@ -1085,6 +1091,7 @@ static void update_hard_protection(const ChargeCycleConfig_t *cfg,
         if (g_ctrl.protect_jack_v_timer_tick == 0) {
             g_ctrl.protect_jack_v_timer_tick = now_tick;
             int thresh_x10 = (int)(cfg->protect_jack_charge_delta_v * 10.0f);
+            (void)thresh_x10;
             LOG("CC: Jack V protect started (delta=%d.%dV)\r\n", thresh_x10 / 10, thresh_x10 % 10);
         } else {
             uint32_t elapsed_s = (now_tick - g_ctrl.protect_jack_v_timer_tick) / 1000U;
@@ -1105,6 +1112,7 @@ static void update_hard_protection(const ChargeCycleConfig_t *cfg,
             if (g_ctrl.protect_jack_temp_trip_timer_tick == 0) {
                 g_ctrl.protect_jack_temp_trip_timer_tick = now_tick;
                 int trip_x10 = (int)(cfg->protect_jack_temp_trip_c * 10.0f);
+                (void)trip_x10;
                 LOG("CC: Jack temp TRIP protect started (trip=%d.%dC)\r\n", trip_x10 / 10, trip_x10 % 10);
             } else {
                 uint32_t elapsed_s = (now_tick - g_ctrl.protect_jack_temp_trip_timer_tick) / 1000U;
@@ -1873,7 +1881,7 @@ static void run_bms_controlled_mode(uint32_t now_tick) {
             LOG("CC: HOLD_TARGET_MODULE_MISMATCH src=%u act=%u keep=%.3fA/mod\r\n",
                 (unsigned)g_ctrl.source_module_count,
                 (unsigned)g_ctrl.actual_module_count,
-                (double)g_ctrl.target_current_per_module_a);
+                g_ctrl.target_current_per_module_a);
             g_ctrl.module_target_hold_active = true;
         }
     } else if (g_ctrl.actual_module_count > 0U) {
@@ -2248,9 +2256,36 @@ bool ChargeController_Start(ChargeCtrlOwner_t owner, bool manual_mode, uint32_t 
     return true;
 }
 
+void ChargeController_PreparePrecharge(void)
+{
+    g_ctrl.precharge_mode = true;
+    if (g_ctrl.state == CHARGE_CTRL_STATE_FAULT) {
+        if (check_precharge_faults() == CHARGE_CTRL_FAULT_NONE) {
+            clear_fault();
+            g_ctrl.state = CHARGE_CTRL_STATE_IDLE;
+        }
+    }
+}
+
+void ChargeController_EndPrechargeSession(uint32_t now_tick)
+{
+    if (g_ctrl.state == CHARGE_CTRL_STATE_PRECHARGE) {
+        ChargeController_StopPrecharge(now_tick);
+    }
+    g_ctrl.precharge_mode = false;
+}
+
 bool ChargeController_StartPrecharge(ChargeCtrlOwner_t owner, uint32_t now_tick)
 {
     ChargeCycleConfig_t cfg;
+
+    g_ctrl.precharge_mode = true;
+    if (g_ctrl.state == CHARGE_CTRL_STATE_FAULT) {
+        if (check_precharge_faults() == CHARGE_CTRL_FAULT_NONE) {
+            clear_fault();
+            g_ctrl.state = CHARGE_CTRL_STATE_IDLE;
+        }
+    }
 
     if (g_ctrl.state != CHARGE_CTRL_STATE_IDLE) {
         LOG("CC: Pre-charge requires IDLE\r\n");
@@ -2260,7 +2295,6 @@ bool ChargeController_StartPrecharge(ChargeCtrlOwner_t owner, uint32_t now_tick)
     g_ctrl.manual_mode = false;
     /* Preserve the originating mode even when validation fails, so RESET
      * continues to use pre-charge rules and permits BMS offline. */
-    g_ctrl.precharge_mode = true;
     uint32_t faults = check_precharge_faults();
     ChargeCycleConfig_Get(&cfg);
     uint8_t actual_count = get_active_module_count();
@@ -2309,12 +2343,6 @@ bool ChargeController_ResetFaultIfSafe(uint32_t now_tick)
         return false;
     }
 
-    /* Emergency stop requires an explicit safety recovery outside this
-     * pre-charge UI flow. Never acknowledge it as an ordinary retry. */
-    if ((g_ctrl.fault_flags & CHARGE_CTRL_FAULT_EMERGENCY_STOP) != 0U) {
-        return false;
-    }
-
     clearable_faults = CHARGE_CTRL_FAULT_NO_DRIVER |
                        CHARGE_CTRL_FAULT_NO_MODULE |
                        CHARGE_CTRL_FAULT_MODULE_COUNT_MISMATCH |
@@ -2322,7 +2350,8 @@ bool ChargeController_ResetFaultIfSafe(uint32_t now_tick)
                        CHARGE_CTRL_FAULT_BMS_ALARM |
                        CHARGE_CTRL_FAULT_INVALID_CONFIG |
                        CHARGE_CTRL_FAULT_PROTECT_JACK_V |
-                       CHARGE_CTRL_FAULT_PROTECT_JACK_TEMP;
+                       CHARGE_CTRL_FAULT_PROTECT_JACK_TEMP |
+                       CHARGE_CTRL_FAULT_EMERGENCY_STOP;
     if ((g_ctrl.fault_flags & ~clearable_faults) != 0U) {
         return false;
     }
@@ -2405,13 +2434,21 @@ bool ChargeController_IsManualMode(void) {
     return g_ctrl.manual_mode;
 }
 
-void ChargeController_Stop(uint32_t now_tick) {
+static void stop_with_reason(uint32_t now_tick, ChargeStopReason_t reason) {
     if (g_ctrl.state == CHARGE_CTRL_STATE_IDLE) {
         return;
     }
 
-    LOG("CC: Stop requested\r\n");
-    g_ctrl.stop_reason = CHARGE_STOP_USER_COMMAND;
+    if (g_ctrl.state == CHARGE_CTRL_STATE_FAULT) {
+        /* Already faulted and stopped. Do NOT overwrite the protection reason
+         * or clear the fault; only ChargeController_ResetFaultIfSafe() may
+         * clear a fault. */
+        LOG("CC: Stop ignored while in FAULT (reset required)\r\n");
+        return;
+    }
+
+    LOG("CC: Stop requested (reason=%u)\r\n", (unsigned)reason);
+    g_ctrl.stop_reason = reason;
 
     if (g_ctrl.state == CHARGE_CTRL_STATE_DELAY) {
         g_ctrl.delay_remaining_s = 0U;
@@ -2421,14 +2458,15 @@ void ChargeController_Stop(uint32_t now_tick) {
         return;
     }
 
-    if (g_ctrl.state == CHARGE_CTRL_STATE_FAULT) {
-        /* Already faulted and stopped. Do NOT clear fault or reset trip counters.
-         * Only ChargeController_ResetFaultIfSafe() may clear faults. */
-        LOG("CC: Stop ignored while in FAULT (reset required)\r\n");
-        return;
-    }
-
     transition_to(CHARGE_CTRL_STATE_STOPPING, now_tick);
+}
+
+void ChargeController_Stop(uint32_t now_tick) {
+    stop_with_reason(now_tick, CHARGE_STOP_USER_COMMAND);
+}
+
+void ChargeController_StopForProtection(uint32_t now_tick) {
+    stop_with_reason(now_tick, CHARGE_STOP_PROTECTION);
 }
 
 void ChargeController_EmergencyStop(uint32_t now_tick) {
@@ -2439,6 +2477,12 @@ void ChargeController_EmergencyStop(uint32_t now_tick) {
 
     /* Set fault flag */
     set_fault(CHARGE_CTRL_FAULT_EMERGENCY_STOP, now_tick);
+
+    /* Emergency stop is the one relay policy exception: do not wait for
+     * current to settle before reflecting the open command. */
+    g_ctrl.relay_should_close = false;
+    g_ctrl.relay_latched_closed = false;
+    g_ctrl.relay_open_pending = false;
 
     /* Force to fault state */
     transition_to(CHARGE_CTRL_STATE_FAULT, now_tick);

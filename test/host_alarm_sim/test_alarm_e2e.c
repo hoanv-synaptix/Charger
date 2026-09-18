@@ -33,6 +33,8 @@ void BSP_Delay(uint32_t delay_ms) { (void)delay_ms; }
 void BSP_EnterCritical(void) {}
 void BSP_ExitCritical(void) {}
 
+static SimDriverKind_t g_sim_driver_kind = SIM_DRV_TONHE;
+
 #define ASSERT(cond, msg) \
     do { \
         if (!(cond)) { \
@@ -47,10 +49,24 @@ static void drive_step(uint32_t step_ms)
 {
     mock_tick += step_ms;
     sim_bms_tick(mock_tick);
-    sim_module_tick(SIM_DRV_TONHE, mock_tick);
+    sim_module_tick(g_sim_driver_kind, mock_tick);
     CHG_LIB_Process(mock_tick);
     BMS_Process(mock_tick);
     ChargeController_Process(mock_tick);
+    Alarm_Process(mock_tick);
+}
+
+/* Advance the module/BMS/Alarm snapshot without advancing the controller.
+ * This is intentional for READY/PRECHARGE coverage: those states normally
+ * transition on the next controller tick, but W010 must still derive from
+ * the state that Alarm actually receives. */
+static void drive_alarm_only(uint32_t step_ms)
+{
+    mock_tick += step_ms;
+    sim_bms_tick(mock_tick);
+    sim_module_tick(g_sim_driver_kind, mock_tick);
+    CHG_LIB_Process(mock_tick);
+    BMS_Process(mock_tick);
     Alarm_Process(mock_tick);
 }
 
@@ -78,6 +94,8 @@ static bool alarm_logged_raise(AlarmCode_t code)
 }
 
 static bool setup(ChargeCycleConfig_t *cfg_out);
+static bool setup_variant(uint8_t module_type, uint8_t module_count,
+                          ChargeCycleConfig_t *cfg_out);
 static bool start_running(void);
 
 static void healthy_bms(float pack_v)
@@ -284,7 +302,8 @@ static bool test_all_bms_alm_info_fields_from_pdf(void)
     return true;
 }
 
-static bool setup(ChargeCycleConfig_t *cfg_out)
+static bool setup_variant(uint8_t module_type, uint8_t module_count,
+                          ChargeCycleConfig_t *cfg_out)
 {
     static bool registered = false;
     if (!registered) {
@@ -294,10 +313,22 @@ static bool setup(ChargeCycleConfig_t *cfg_out)
         registered = true;
     }
     mock_tick = 0;
-    sim_install_backend(SIM_DRV_TONHE);
-    sim_module_reset(&g_sim_module, 1, 0);
-    g_sim_module.current_override = true;   /* tests drive current directly */
-    g_sim_module.rated_current = 100.0f;
+    g_sim_driver_kind = (module_type == CHARGE_MODULE_TYPE_MAXWELL)
+        ? SIM_DRV_MAXWELL : SIM_DRV_TONHE;
+    sim_install_backend(g_sim_driver_kind);
+    if (module_count > 1U && g_sim_driver_kind == SIM_DRV_MAXWELL) {
+        sim_module_reset_n(module_count, 1U, 0U);
+    } else {
+        sim_module_reset(&g_sim_module, 1U, 0U);
+    }
+    for (uint8_t i = 0U; i < module_count && i < SIM_MAX_MODULES; i++) {
+        g_sim_modules[i].current_override = true; /* tests drive current directly */
+        g_sim_modules[i].rated_current = 100.0f;
+        if (g_sim_driver_kind == SIM_DRV_MAXWELL) {
+            g_sim_modules[i].voltage = 400.0f;
+            g_sim_modules[i].voltage_override = true;
+        }
+    }
     sim_bms_reset(&g_sim_bms);
 
     BMS_Init();
@@ -307,8 +338,8 @@ static bool setup(ChargeCycleConfig_t *cfg_out)
 
     ChargeCycleConfig_t cfg;
     ChargeCycleConfig_GetDefaults(&cfg);
-    cfg.module_type = CHARGE_MODULE_TYPE_TONHE;
-    cfg.source_module_count = 1;
+    cfg.module_type = module_type;
+    cfg.source_module_count = module_count;
     cfg.charge_source_mode = CHARGE_SOURCE_BMS_CONTROLLED;
     cfg.battery_capacity_ah = 100.0f;
     cfg.imin_c = 0.05f; cfg.imax_c = 1.0f;
@@ -319,6 +350,11 @@ static bool setup(ChargeCycleConfig_t *cfg_out)
     if (!ChargeCycleConfig_Set(&cfg)) { printf("[FAIL] config rejected\n"); return false; }
     if (cfg_out) *cfg_out = cfg;
     return true;
+}
+
+static bool setup(ChargeCycleConfig_t *cfg_out)
+{
+    return setup_variant(CHARGE_MODULE_TYPE_TONHE, 1U, cfg_out);
 }
 
 /* Warm BMS+module online, START, and drive to controller RUNNING. */
@@ -344,6 +380,17 @@ static void establish_load(float target_v, float per_mod_a)
     g_sim_module.current = per_mod_a;
     g_sim_bms.pack_current_a = per_mod_a;
     drive_ms(400U);
+}
+
+static void set_maxwell_load(float module0_a, float module1_a)
+{
+    g_sim_modules[0].actually_on = true;
+    g_sim_modules[1].actually_on = true;
+    g_sim_modules[0].voltage = 400.0f;
+    g_sim_modules[1].voltage = 400.0f;
+    g_sim_modules[0].current = module0_a;
+    g_sim_modules[1].current = module1_a;
+    g_sim_bms.pack_current_a = module0_a + module1_a;
 }
 
 /* ================================================================== */
@@ -463,7 +510,8 @@ static bool test_bms_thermal_warning_suppresses_load_lost(void)
     ASSERT(start_running(), "controller never RUNNING");
     establish_load(400.0f, 40.0f);
 
-    /* Severity 1 identifies the thermal cause but remains reporting-only. */
+    /* Severity 1 is in alarm_flags, but this particular thermal alarm keeps
+     * INFO action because the controller owns the thermal inhibit/recovery. */
     set_bms_alarm_severity(4U, 1U);
     drive_ms(600U);
 
@@ -804,6 +852,125 @@ static bool test_dc_out_not_established(void)
     return true;
 }
 
+static bool test_dc_out_summary_two_module_threshold(void)
+{
+    printf("Running test_dc_out_summary_two_module_threshold...\n");
+
+    /* Exactly 2.0 A across two online modules is the accepted boundary and
+     * must not be classified as output-not-established. */
+    ASSERT(setup_variant(CHARGE_MODULE_TYPE_MAXWELL, 2U, NULL), "setup 2-module boundary");
+    healthy_bms(400.0f);
+    ASSERT(start_running(), "2-module controller never RUNNING");
+    set_maxwell_load(1.0f, 1.0f);
+    drive_ms(1200U); /* refresh the post-start voltage read used to arm relay */
+    drive_ms(5200U);
+
+    CHG_LIB_SystemSummary_t summary;
+    CHG_LIB_GetSystemSummary(&summary);
+    ASSERT(fabsf(summary.total_current - 2.0f) < 0.01f,
+           "two 1A online modules must produce a 2A fresh summary");
+    ASSERT(!alarm_active(ALARM_DC_OUT_NOT_ESTABLISHED),
+           "exactly 2A must not raise E024");
+
+    /* A total below 2.0 A must take the same path and raise E024. */
+    ASSERT(setup_variant(CHARGE_MODULE_TYPE_MAXWELL, 2U, NULL), "setup 2-module below threshold");
+    healthy_bms(400.0f);
+    ASSERT(start_running(), "2-module controller never RUNNING below threshold");
+    set_maxwell_load(0.9f, 1.0f);
+    drive_ms(1200U); /* refresh the post-start voltage read used to arm relay */
+    drive_ms(5200U);
+
+    CHG_LIB_GetSystemSummary(&summary);
+    ASSERT(fabsf(summary.total_current - 1.9f) < 0.01f,
+           "two online modules below threshold must produce a 1.9A summary");
+    ASSERT(alarm_active(ALARM_DC_OUT_NOT_ESTABLISHED),
+           "current below 2A must raise E024");
+
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.stop_reason == CHARGE_STOP_PROTECTION,
+           "E024 must use protection stop reason");
+
+    printf("[PASS] test_dc_out_summary_two_module_threshold\n");
+    return true;
+}
+
+static bool test_manual_stop_reason(void)
+{
+    printf("Running test_manual_stop_reason...\n");
+    ASSERT(setup(NULL), "setup");
+    healthy_bms(400.0f);
+    ASSERT(start_running(), "controller never RUNNING");
+
+    ChargeController_Stop(mock_tick);
+
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.stop_reason == CHARGE_STOP_USER_COMMAND,
+           "manual Stop must record USER_COMMAND");
+    ASSERT(cv.state == CHARGE_CTRL_STATE_STOPPING,
+           "manual Stop from RUNNING must enter STOPPING");
+
+    printf("[PASS] test_manual_stop_reason\n");
+    return true;
+}
+
+static bool test_e030_uses_fresh_multi_module_summary(void)
+{
+    printf("Running test_e030_uses_fresh_multi_module_summary...\n");
+
+    /* Module 0 will become offline while retaining a deliberately large
+     * stale current/voltage. Module 1 is the only source that may satisfy the
+     * E030 current and voltage conditions. */
+    ChargeCycleConfig_t cfg;
+    ASSERT(setup_variant(CHARGE_MODULE_TYPE_MAXWELL, 2U, &cfg),
+           "setup E030 stale-data rejection");
+    /* Keep E030 disabled while preparing the deliberately stale online
+     * values; otherwise the stale module would correctly trip E030 before it
+     * becomes offline. */
+    cfg.protect_jack_charge_enabled = 0U;
+    cfg.protect_jack_charge_delta_v = 2.0f;
+    cfg.protect_jack_charge_delay_s = 1U;
+    ASSERT(ChargeCycleConfig_Set(&cfg), "E030 config set failed");
+    healthy_bms(400.0f);
+    ASSERT(start_running(), "2-module controller never RUNNING for E030");
+    set_maxwell_load(100.0f, 1.5f);
+    g_sim_modules[0].voltage = 450.0f; /* stale value must be excluded */
+    g_sim_modules[1].voltage = 403.0f;
+    drive_ms(4000U); /* refresh voltage and current reads used by E030 */
+
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.relay_should_close != 0U, "relay must be latched before E030 test");
+
+    g_sim_modules[0].silent = true;
+    drive_ms(10300U);
+
+    CHG_LIB_ModuleView_t stale_view;
+    CHG_LIB_SystemSummary_t summary;
+    ASSERT(CHG_LIB_GetModuleView(0U, &stale_view) && !stale_view.online,
+           "module 0 must be offline");
+    CHG_LIB_GetSystemSummary(&summary);
+    ASSERT(fabsf(summary.total_current - 1.5f) < 0.01f,
+           "offline module current must not satisfy E030 current threshold");
+    ASSERT(fabsf(summary.voltage - 403.0f) < 0.01f,
+           "offline module voltage must not replace online module voltage");
+
+    cfg.protect_jack_charge_enabled = 1U;
+    cfg.protect_jack_charge_delta_v = 2.0f;
+    cfg.protect_jack_charge_delay_s = 1U;
+    ASSERT(ChargeCycleConfig_Set(&cfg), "E030 stale-data config enable failed");
+    drive_ms(1200U);
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING,
+           "E030 must not trip from stale module current");
+    ASSERT((cv.fault_flags & CHARGE_CTRL_FAULT_PROTECT_JACK_V) == 0U,
+           "stale module data must not trigger E030");
+
+    printf("[PASS] test_e030_uses_fresh_multi_module_summary\n");
+    return true;
+}
+
 static bool test_bms_comm_lost_mid_charge(void)
 {
     printf("Running test_bms_comm_lost_mid_charge...\n");
@@ -890,15 +1057,162 @@ static bool test_module_ac_undervolt_mirrored_and_derived(void)
     Alarm_GetView(&av);
     ASSERT(av.worst_code == ALARM_NONE, "worst_code must return to ALARM_NONE (0000)");
 
-    /* 3. Verify E025 (AC phase loss) is completely removed: phase loss bit does not trip alarm */
+    /* 3. Both TonHe phase-loss representations normalize to E015. */
     g_sim_module.tonhe_fault_bits = (1U << 1);
-    drive_ms(1500U);
-    Alarm_GetView(&av);
-    ASSERT(av.active_count == 0U, "AC phase loss must be completely ignored");
-    g_sim_module.tonhe_fault_bits = 0;
     drive_ms(200U);
+    ASSERT(alarm_active(ALARM_MOD_PFC_FAULT),
+           "TonHe fault_bits bit 1 phase loss must raise E015");
+    ChargeController_GetView(&cv);
+    ASSERT(cv.stop_reason == CHARGE_STOP_PROTECTION,
+           "fault_bits phase loss STOP must retain CHARGE_STOP_PROTECTION");
+
+    /* Phase loss is a protection stop, so use a fresh session for the second
+     * wire representation rather than trying to recover a stopped session. */
+    ASSERT(setup(NULL), "setup pfc phase loss");
+    healthy_bms(400.0f);
+    ASSERT(start_running(), "controller never RUNNING for pfc phase loss");
+    g_sim_module.tonhe_pfc_bits = (1U << 6);
+    drive_ms(200U);
+    ASSERT(alarm_active(ALARM_MOD_PFC_FAULT),
+           "TonHe pfc_bits bit 6 phase loss must raise E015");
+    ChargeController_GetView(&cv);
+    ASSERT(cv.stop_reason == CHARGE_STOP_PROTECTION,
+           "pfc_bits phase loss STOP must retain CHARGE_STOP_PROTECTION");
 
     printf("[PASS] test_module_ac_undervolt_mirrored_and_derived\n");
+    return true;
+}
+
+static bool test_module_offline_uses_fresh_snapshot(void)
+{
+    printf("Running test_module_offline_uses_fresh_snapshot...\n");
+
+    /* An offline module in IDLE is a transport fact, not an active-session
+     * alarm. */
+    ASSERT(setup(NULL), "setup idle offline");
+    g_sim_module.silent = true;
+    drive_ms(200U);
+    ASSERT(!alarm_active(ALARM_MOD_COMM_FAIL),
+           "offline module in IDLE must not raise W010");
+
+    ASSERT(setup(NULL), "setup active offline");
+    healthy_bms(400.0f);
+    ASSERT(start_running(), "controller never RUNNING");
+    establish_load(400.0f, 40.0f);
+
+    /* Remove all frames. The alarm snapshot must derive W010 from the
+     * driver's online state, and the summary must no longer expose stale
+     * electrical data. */
+    g_sim_module.silent = true;
+    drive_ms(10300U);
+
+    CHG_LIB_ModuleView_t mv;
+    CHG_LIB_SystemSummary_t summary;
+    ASSERT(CHG_LIB_GetModuleView(0U, &mv), "module view must be available");
+    CHG_LIB_GetSystemSummary(&summary);
+    ASSERT(!mv.online, "module must be offline after communication timeout");
+    ASSERT(alarm_active(ALARM_MOD_COMM_FAIL),
+           "offline module in RUNNING must raise W010");
+    ASSERT(fabsf(summary.total_current) < 0.01f &&
+           fabsf(summary.total_power_in) < 0.01f &&
+           fabsf(summary.voltage) < 0.01f,
+           "offline module must not contribute stale electrical summary");
+
+    g_sim_module.silent = false;
+    g_sim_module.tonhe_fault_bits = 0U;
+    drive_ms(220U);
+    ASSERT(!alarm_active(ALARM_MOD_COMM_FAIL),
+           "W010 must clear 200ms after a valid recovery frame");
+
+    printf("[PASS] test_module_offline_uses_fresh_snapshot\n");
+    return true;
+}
+
+static bool test_w010_active_states_and_exact_recovery_debounce(void)
+{
+    printf("Running test_w010_active_states_and_exact_recovery_debounce...\n");
+
+    /* READY is a real active-session state even though the normal controller
+     * loop advances it on the next tick. Hold that state while the module
+     * watchdog expires so Alarm evaluates the intended boundary directly. */
+    ASSERT(setup(NULL), "setup READY W010");
+    healthy_bms(400.0f);
+    drive_ms(1500U);
+    ASSERT(ChargeController_Start(CHARGE_CTRL_OWNER_PC, false, mock_tick),
+           "start must enter READY");
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_READY, "controller must be READY before first process tick");
+    g_sim_module.silent = true;
+    for (uint32_t elapsed = 0U; elapsed < 10020U; elapsed += 20U) {
+        drive_alarm_only(20U);
+    }
+    ASSERT(alarm_active(ALARM_MOD_COMM_FAIL), "READY + offline module must raise W010");
+
+    /* PRECHARGE is also an active session and must use the same W010 rule. */
+    ASSERT(setup(NULL), "setup PRECHARGE W010");
+    healthy_bms(400.0f);
+    drive_ms(1500U);
+    ASSERT(ChargeController_StartPrecharge(CHARGE_CTRL_OWNER_PC, mock_tick),
+           "precharge must start");
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_PRECHARGE, "controller must be PRECHARGE");
+    g_sim_module.silent = true;
+    for (uint32_t elapsed = 0U; elapsed < 10020U; elapsed += 20U) {
+        drive_alarm_only(20U);
+    }
+    ASSERT(alarm_active(ALARM_MOD_COMM_FAIL), "PRECHARGE + offline module must raise W010");
+
+    /* A valid online frame carrying the real TonHe COMM_FAIL bit is distinct
+     * from transport-offline and must still mirror W010. */
+    ASSERT(setup(NULL), "setup online COMM_FAIL W010");
+    healthy_bms(400.0f);
+    ASSERT(start_running(), "controller never RUNNING for online COMM_FAIL");
+    g_sim_module.tonhe_fault_bits = (uint16_t)(1U << 9);
+    drive_step(20U);
+    CHG_LIB_ModuleView_t mv;
+    ASSERT(CHG_LIB_GetModuleView(0U, &mv) && mv.online,
+           "COMM_FAIL frame must remain an online valid snapshot");
+    ASSERT(alarm_active(ALARM_MOD_COMM_FAIL),
+           "online valid COMM_FAIL must raise W010");
+
+    /* Clear the driver fault before checking the exact 200ms Alarm debounce. */
+    g_sim_module.tonhe_fault_bits = 0U;
+    drive_ms(600U); /* TonHe fault recovery requires a clean read streak. */
+    ASSERT(!alarm_active(ALARM_MOD_COMM_FAIL), "online COMM_FAIL must clear after recovery");
+
+    ASSERT(setup(NULL), "setup exact W010 debounce");
+    healthy_bms(400.0f);
+    ASSERT(start_running(), "controller never RUNNING for exact debounce");
+    g_sim_module.silent = true;
+    drive_ms(10300U);
+    ASSERT(alarm_active(ALARM_MOD_COMM_FAIL), "offline module must raise W010");
+
+    g_sim_module.silent = false;
+    drive_alarm_only(20U); /* first clean frame starts the Alarm clear timer */
+    drive_alarm_only(199U);
+    ASSERT(alarm_active(ALARM_MOD_COMM_FAIL), "W010 must remain active at 199ms recovery");
+    drive_alarm_only(1U);
+    ASSERT(!alarm_active(ALARM_MOD_COMM_FAIL), "W010 must clear at 200ms recovery");
+
+    /* Repeat the same recovery boundary across uint32_t tick wrap. */
+    ASSERT(setup(NULL), "setup W010 tick wrap");
+    healthy_bms(400.0f);
+    ASSERT(start_running(), "controller never RUNNING for tick wrap");
+    mock_tick = UINT32_MAX - 100U;
+    drive_alarm_only(20U); /* refresh a valid frame immediately before wrap */
+    g_sim_module.silent = true;
+    drive_alarm_only(10020U); /* timeout crosses 0U */
+    ASSERT(alarm_active(ALARM_MOD_COMM_FAIL), "W010 must raise across tick wrap");
+
+    g_sim_module.silent = false;
+    drive_alarm_only(20U); /* first clean frame starts the Alarm clear timer */
+    drive_alarm_only(199U);
+    ASSERT(alarm_active(ALARM_MOD_COMM_FAIL), "wrapped W010 recovery must hold at 199ms");
+    drive_alarm_only(1U);
+    ASSERT(!alarm_active(ALARM_MOD_COMM_FAIL), "wrapped W010 recovery must clear at 200ms");
+
+    printf("[PASS] test_w010_active_states_and_exact_recovery_debounce\n");
     return true;
 }
 
@@ -1100,10 +1414,15 @@ int main(void)
     ok &= test_stage_thermal_trip_limit_halts_on_4th();
     ok &= test_controller_temperature_inhibit_suppresses_load_lost();
     ok &= test_dc_out_not_established();
+    ok &= test_dc_out_summary_two_module_threshold();
+    ok &= test_manual_stop_reason();
+    ok &= test_e030_uses_fresh_multi_module_summary();
     ok &= test_bms_comm_lost_mid_charge();
     ok &= test_bms_no_pack_voltage();
     ok &= test_bms_critical_alarm_mirrored();
     ok &= test_module_ac_undervolt_mirrored_and_derived();
+    ok &= test_module_offline_uses_fresh_snapshot();
+    ok &= test_w010_active_states_and_exact_recovery_debounce();
     ok &= test_acknowledge_clears_latched();
     ok &= test_start_with_no_module_or_bms_reports_fault_code();
     ok &= test_bms_alarm_timeout_auto_recovers_to_0000();

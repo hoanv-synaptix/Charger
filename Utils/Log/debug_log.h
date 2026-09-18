@@ -10,6 +10,7 @@
 
 #include <stdint.h>
 
+#if defined(CHG_ENABLE_LOG) && (CHG_ENABLE_LOG != 0)
 /**
  * @brief  In chuỗi format ra UART1 (giống printf)
  * @note   Max 128 ký tự mỗi lần gọi. Blocking (đợi gửi xong).
@@ -21,6 +22,11 @@ void LOG(const char *fmt, ...);
  */
 void LOG_Banner(void);
 void LOG_TxCpltCallback(void);
+#else
+#define LOG(...)            ((void)0)
+#define LOG_Banner()        ((void)0)
+static inline void LOG_TxCpltCallback(void) {}
+#endif
 
 #endif /* DEBUG_LOG_H */
 

@@ -28,6 +28,7 @@
 #define PC_CMD_READ_REG         0x07
 #define PC_CMD_EMERGENCY_STOP   0x08
 #define PC_CMD_SET_DRIVER       0x09
+#define PC_CMD_RESET_FAULT      0x0A
 
 /* Responses STM32 -> PC */
 #define PC_RSP_STATUS           0x81

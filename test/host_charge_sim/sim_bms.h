@@ -30,8 +30,8 @@ typedef struct {
     float avg_cell_temp_c;
 
     /* ALM_INFO (event-triggered here: sent every cycle) — each field is a
-     * 0..3 severity per bms_protocol.h (0=none,1=warning,2=fault,3=severe;
-     * severity 1 is reporting-only, severity >=2 is actionable). */
+     * 0..3 severity per bms_protocol.h (0=none,1..3=active fault). The
+     * simulator keeps the warning_flags telemetry mirror as well. */
     uint8_t low_pack_volt, low_cell_volt, high_pack_volt, high_cell_volt;
     uint8_t temp_cell_high_chg, temp_cell_high_dchg, temp_cell_low_chg, temp_cell_low_dchg;
     uint8_t temp_relay_high, over_chg_curr, over_dchg_curr, cell_volt_diff, low_soc;

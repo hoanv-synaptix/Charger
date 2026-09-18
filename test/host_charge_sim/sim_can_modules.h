@@ -67,15 +67,12 @@ typedef struct {
      * transitions instead; no scenario here needs that distinction. */
     float    last_set_curr_limit_ratio;
 
-    /* Set true to simulate the module going permanently silent (comms
-     * lost -- e.g. cable disconnected) without touching anything else in
-     * this struct: sim_module_tick() returns immediately for
-     * g_sim_modules[0] (the single-module scenarios' module) when this is
-     * set, sending no response and processing no pending request, so the
-     * firmware's own offline/WARNING/OFFLINE/RECOVERING timeout logic
-     * drives purely off elapsed time with zero help from the simulator.
-     * Mirrors sim_bms.h/.c's `transmitting` flag. Defaults false (memset
-     * via sim_module_reset()). */
+    /* Set true to simulate this module going permanently silent (comms lost
+     * -- e.g. cable disconnected) without touching anything else in this
+     * struct. The simulator then sends no response/status frame, so the
+     * firmware's own offline/WARNING/OFFLINE/RECOVERING timeout logic drives
+     * purely off elapsed time. Mirrors sim_bms.h/.c's `transmitting` flag.
+     * Defaults false (memset via sim_module_reset()). */
     bool     silent;
 
     /* By default the simulator derives `current` itself each tick
@@ -85,11 +82,15 @@ typedef struct {
      * ramp-down (e.g. relay-open-current-gating: module told to stop, but
      * output current takes some ticks to actually reach zero). Set true
      * to have the simulator leave `current` alone and just broadcast
-     * whatever the test last set it to (both sim_tonhe_tick()'s periodic
-     * re-derive and sim_tonhe_transmit()'s immediate zero-on-STOP honor
-     * this). Only the TonHe path honors it currently -- Maxwell/Lianming
-     * still auto-derive. Defaults false (memset via sim_module_reset()). */
+     * whatever the test last set it to. All simulator paths honor it.
+     * Defaults false (memset via sim_module_reset()). */
     bool     current_override;
+
+    /* Maxwell startup normally lets SET_VOLTAGE overwrite the simulated
+     * output. Tests that need a stable measured bus voltage can set this
+     * before starting; the simulator then keeps broadcasting the value set
+     * by the test. Defaults false (memset via sim_module_reset()). */
+    bool     voltage_override;
 } SimModuleState_t;
 
 /* Most scenarios only need one simulated module -- see plan's scenario

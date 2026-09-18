@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
+#include <math.h>
 
 /* Mock HAL */
 uint32_t mock_tick = 0;
@@ -20,6 +21,7 @@ void BSP_ExitCritical(void) {}
 
 /* Includes to test */
 #include "bms_protocol.h"
+#include "chg_lib.h"
 #include "priv/chg_lib_core_priv.h"
 
 /* Assert Macro */
@@ -117,11 +119,62 @@ bool test_fsm_timeout(void) {
     return true;
 }
 
+bool test_summary_uses_online_finite_electrical_values(void) {
+    printf("Running test_summary_uses_online_finite_electrical_values...\n");
+    CHG_LIB_SystemSummary_t summary = {0};
+    CHG_LIB_ModuleView_t module = {0};
+    CHG_LIB_ModuleView_t module2;
+
+    module.enabled = true;
+    module.online = true;
+    module.state = CHG_LIB_STATE_RUNNING;
+    module.current = 1.0f;
+    module.input_power = 1000U;
+    module.voltage = 400.0f;
+    module2 = module;
+    CHG_LIB_Summary_Accumulate(&summary, &module, 0.0f);
+    CHG_LIB_Summary_Accumulate(&summary, &module2, 0.0f);
+    ASSERT(fabsf(summary.total_current - 2.0f) < 0.001f,
+           "two online modules at 1A must sum to 2A");
+    ASSERT(fabsf(summary.total_power_in - 2000.0f) < 0.001f,
+           "two online modules must sum input power");
+    ASSERT(fabsf(summary.voltage - 400.0f) < 0.001f,
+           "online module voltage must be reported");
+
+    module.online = false;
+    module.current = 40.0f;
+    module.input_power = 30000U;
+    module.voltage = 500.0f;
+    CHG_LIB_Summary_Accumulate(&summary, &module, 0.0f);
+    ASSERT(fabsf(summary.total_current - 2.0f) < 0.001f,
+           "offline module current must not enter summary");
+    ASSERT(fabsf(summary.total_power_in - 2000.0f) < 0.001f,
+           "offline module power must not enter summary");
+    ASSERT(fabsf(summary.voltage - 400.0f) < 0.001f,
+           "offline module voltage must not replace fresh voltage");
+
+    module.online = true;
+    module.current = NAN;
+    module.input_power = 0U;
+    module.voltage = NAN;
+    CHG_LIB_Summary_Accumulate(&summary, &module, NAN);
+    ASSERT(fabsf(summary.total_current - 2.0f) < 0.001f,
+           "non-finite current must not enter summary");
+    ASSERT(fabsf(summary.total_power_in - 2000.0f) < 0.001f,
+           "non-finite power must not enter summary");
+    ASSERT(fabsf(summary.voltage - 400.0f) < 0.001f,
+           "non-finite voltage must not replace fresh voltage");
+
+    printf("[PASS] test_summary_uses_online_finite_electrical_values\n");
+    return true;
+}
+
 int main(void) {
     printf("=== Native Logic Test ===\n");
     bool pass = true;
     pass &= test_bms_parser();
     pass &= test_fsm_timeout();
+    pass &= test_summary_uses_online_finite_electrical_values();
     
     if (pass) {
         printf("ALL TESTS PASSED.\n");

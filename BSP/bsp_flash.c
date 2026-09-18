@@ -1,4 +1,5 @@
 #include "bsp_flash.h"
+#include "debug_log.h"
 #include "main.h"
 #include <string.h>
 
@@ -60,10 +61,10 @@ bool BSP_Flash_WriteBlock(uint32_t address, const uint8_t *data, uint32_t len) {
         
         if (HAL_FLASH_Program(FLASH_TYPEPROGRAM_DOUBLEWORD, current_addr, double_word) != HAL_OK) {
             uint32_t err = HAL_FLASH_GetError();
-            extern void LOG(const char *fmt, ...);
-            LOG("BSP_Flash: Program failed at 0x%08X, err=0x%08X\r\n", (unsigned)current_addr, (unsigned)err);
+            (void)err;
             HAL_FLASH_Lock();
             __enable_irq();
+            LOG("BSP_Flash: Program failed at 0x%08X, err=0x%08X\r\n", (unsigned)current_addr, (unsigned)err);
             return false;
         }
         current_addr += 8;
