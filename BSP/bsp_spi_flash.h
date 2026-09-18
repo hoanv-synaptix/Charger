@@ -24,7 +24,10 @@ extern "C" {
 #define SPI_FLASH_CONFIG_BASE           0x00000000U /* Sector 0 (4 KB) for ChargeCycleConfig */
 #define SPI_FLASH_ENERGY_BASE           0x00001000U /* Sectors 1..4 (16 KB) for Energy Journal */
 #define SPI_FLASH_ENERGY_SECTOR_COUNT   4U
-#define SPI_FLASH_LOG_BASE              0x00005000U /* Sectors 5..15 (44 KB) for Alarm/Fault Logs */
+#define SPI_FLASH_LOG_BASE              0x00005000U /* Sectors 5..12 (32 KB) for Alarm Storage (1024 events) */
+#define SPI_FLASH_OTA_META_BASE         0x00010000U /* Sector 16 (4 KB) for OTA Descriptor */
+#define SPI_FLASH_OTA_STAGING_BASE      0x00020000U /* Sectors 32..63 (128 KB) for OTA Firmware Staging */
+#define SPI_FLASH_OTA_STAGING_SIZE      (128U * 1024U)
 
 /* Public API */
 

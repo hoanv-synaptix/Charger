@@ -13,5 +13,7 @@ void UART_Transmit_To_DWIN(uint8_t* data, uint16_t len);
  * Tra ve so byte da lay. Goi dinh ky trong main loop (cho DWIN). */
 uint16_t BSP_RS485_Read(uint8_t *out, uint16_t max_len);
 void BSP_RS485_TxCpltCallback(void);
+void BSP_RS485_RxCpltCallback(void *huart);
+void BSP_RS485_ErrorCallback(void *huart);
 
 #endif

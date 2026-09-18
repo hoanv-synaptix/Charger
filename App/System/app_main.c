@@ -37,6 +37,9 @@
 #include "bsp_sys.h"
 #include "bsp_rtc.h"
 #include "bsp_spi_flash.h"
+#include "bsp_quectel.h"
+#include "quectel_at_engine.h"
+#include "ota_service.h"
 
 #include "app_version.h"
 
@@ -587,6 +590,12 @@ void App_Init(void)
     BSP_ADC_Init();
     LOG("App_Init: NTC ADC initialized.\r\n");
 
+    /* Initialize Quectel LTE hardware driver and AT Engine */
+    BSP_Quectel_Init();
+    QuectelEngine_Init();
+    OTAService_Init();
+    LOG("App_Init: Quectel LTE driver, AT engine, and OTA service initialized.\r\n");
+
     LOG("App_Init: Initialization complete.\r\n");
 }
 
@@ -595,6 +604,11 @@ void App_Init(void)
 void App_Loop(void)
 {
     uint32_t now = BSP_GetTick();
+
+    /* Non-blocking Quectel hardware power & cellular AT engine state machine */
+    BSP_Quectel_Process(now);
+    QuectelEngine_Process(now);
+    OTAService_Process(now);
 
     /* Schedule/recover the DWIN panel independently of the MCU and charging
      * state. This state machine is non-blocking so the MCU watchdog and all

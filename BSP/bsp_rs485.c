@@ -40,9 +40,10 @@ void UART_Transmit_To_DWIN(uint8_t* data, uint16_t len)
     HAL_GPIO_WritePin(GPIOB, MCU_PB1_UART_RTS_Pin, DE_TX_OFF);
 }
 
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+void BSP_RS485_RxCpltCallback(void *huart)
 {
-    if (huart->Instance == USART3) {
+    UART_HandleTypeDef *uart = (UART_HandleTypeDef *)huart;
+    if (uart != NULL && uart->Instance == USART3) {
         uint8_t next = (uint8_t)((rx_head + 1U) % RS485_RX_BUF_SIZE);
         if (next != rx_tail) {
             rx_buf[rx_head] = rx_byte;
@@ -54,10 +55,11 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 }
 
 /* Re-arm RX khi co loi (ORE/FE/NE) - tranh chet kenh nhan sau nhieu */
-void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
+void BSP_RS485_ErrorCallback(void *huart)
 {
-    if (huart->Instance == USART3) {
-        __HAL_UART_CLEAR_FLAG(huart, UART_CLEAR_OREF | UART_CLEAR_FEF |
+    UART_HandleTypeDef *uart = (UART_HandleTypeDef *)huart;
+    if (uart != NULL && uart->Instance == USART3) {
+        __HAL_UART_CLEAR_FLAG(uart, UART_CLEAR_OREF | UART_CLEAR_FEF |
                                      UART_CLEAR_NEF | UART_CLEAR_PEF);
         HAL_UART_Receive_IT(&huart3, &rx_byte, 1);
     }
