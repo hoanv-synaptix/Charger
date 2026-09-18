@@ -252,6 +252,7 @@ int main(void)
         erase_init.NbPages = pages_to_erase;
 
         uint32_t page_error = 0;
+        IWDG->KR = 0xAAAAU; /* Pet watchdog before erase */
         if (HAL_FLASHEx_Erase(&erase_init, &page_error) == HAL_OK) {
             /* Copy firmware from SPI Flash staging area to Internal Flash */
             uint8_t chunk[256];
@@ -259,6 +260,7 @@ int main(void)
             bool copy_ok = true;
 
             while (bytes_copied < desc.image_size) {
+                IWDG->KR = 0xAAAAU; /* Pet watchdog during copy */
                 uint32_t chunk_len = desc.image_size - bytes_copied;
                 if (chunk_len > sizeof(chunk)) {
                     chunk_len = sizeof(chunk);

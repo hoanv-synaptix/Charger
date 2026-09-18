@@ -459,6 +459,7 @@ void BMS_Process(uint32_t now_tick)
             BSP_EnterCritical();
             snap = *(BMS_View_t *)&g_bms_view;
             BSP_ExitCritical();
+#if defined(CHG_ENABLE_LOG) && (CHG_ENABLE_LOG != 0)
             int batt_v_x10 = (int)(snap.batt_voltage * 10.0f);
             int batt_i_x10 = (int)(snap.batt_current * 10.0f);
             int temp_max_x10 = (int)(snap.max_cell_temp * 10.0f);
@@ -486,6 +487,9 @@ void BMS_Process(uint32_t now_tick)
                 (req_i_x10 < 0) ? "-" : "", req_i_abs / 10, req_i_abs % 10,
                  (unsigned long)snap.alarm_flags,
                  (unsigned long)snap.warning_flags);
+#else
+            (void)snap;
+#endif
         }
     }
 
