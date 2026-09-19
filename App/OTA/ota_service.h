@@ -8,21 +8,46 @@
 
 #include "ota_types.h"
 
+#define OTA_SHA256_DIGEST_SIZE 32U
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 void OTAService_Init(void);
 void OTAService_Process(uint32_t now_tick);
+void OTAService_ConfirmBoot(void);
+
+/** Start a manifest fetch. The manifest URL must use HTTPS and be served by
+ * the OTA Worker contract; a valid manifest automatically starts the binary
+ * download after its integrity fields have been parsed. */
+bool OTAService_StartManifestCheck(const char *manifest_url);
+bool OTAService_SetPolicy(bool enabled, uint32_t interval_ms, const char *manifest_url);
+bool OTAService_RequestCheckNow(void);
+
+typedef struct __attribute__((packed)) {
+    uint32_t status;
+    uint32_t version;
+    uint32_t image_size;
+    uint32_t downloaded_bytes;
+    uint32_t boot_request;
+    uint32_t boot_attempts;
+    uint32_t policy_enabled;
+} OtaStatusView_t;
+
+void OTAService_GetStatus(OtaStatusView_t *out_status);
 
 /**
  * @brief Start OTA firmware download over HTTP using Quectel module.
- * @param url HTTP URL to the firmware binary
+ * @param url HTTPS URL to the firmware binary
  * @param version Target version code
- * @param expected_size Binary file size in bytes (max 128 KB)
+ * @param expected_size Binary file size in bytes (max 120 KB)
  * @param expected_crc32 Expected CRC32 checksum of the file
+ * @param expected_sha256 Expected SHA-256 digest of the file
  */
-bool OTAService_StartDownload(const char *url, uint32_t version, uint32_t expected_size, uint32_t expected_crc32);
+bool OTAService_StartDownload(const char *url, uint32_t version,
+                              uint32_t expected_size, uint32_t expected_crc32,
+                              const uint8_t expected_sha256[OTA_SHA256_DIGEST_SIZE]);
 
 /**
  * @brief Abort ongoing OTA download and reset state.

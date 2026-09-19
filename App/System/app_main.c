@@ -594,6 +594,10 @@ void App_Init(void)
     BSP_Quectel_Init();
     QuectelEngine_Init();
     OTAService_Init();
+    /* Confirm a boot-tested image only after all safety-critical subsystems
+     * have completed initialization. A crash before this point is therefore
+     * recoverable by the bootloader on the next reset. */
+    OTAService_ConfirmBoot();
     LOG("App_Init: Quectel LTE driver, AT engine, and OTA service initialized.\r\n");
 
     LOG("App_Init: Initialization complete.\r\n");

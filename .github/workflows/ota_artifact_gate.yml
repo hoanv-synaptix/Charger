@@ -1,0 +1,48 @@
+name: OTA Artifact Gate
+
+on:
+  pull_request:
+    branches: [ "main" ]
+  push:
+    branches: [ "main", "release/*" ]
+
+permissions:
+  contents: read
+
+jobs:
+  ota-artifacts:
+    name: Reproducible Release OTA Gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install ARM toolchain and Ninja
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-none-eabi libnewlib-arm-none-eabi ninja-build cmake
+
+      - name: Configure production build
+        run: |
+          cmake -S . -B build/Release -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake \
+            -DCHG_DEBUG_DWIN=OFF \
+            -DCHG_DEBUG_CAN_TX_TRACE=OFF \
+            -DCHG_ENABLE_LOG=OFF
+
+      - name: Build firmware and bootloader
+        run: cmake --build build/Release
+
+      - name: Generate and validate manifest
+        run: |
+          python3 tools/build_ota_manifest.py \
+            --bin build/Release/Charger.bin \
+            --out build/Release/ota_manifest.json
+          python3 tools/check_ota_artifacts.py \
+            --app build/Release/Charger.bin \
+            --bootloader build/Release/Boot/Charger_Bootloader.bin \
+            --manifest build/Release/ota_manifest.json
+
+      - name: Validate Worker syntax
+        run: node --check tools/cloudflare_ota_worker/worker.js

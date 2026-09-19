@@ -9,6 +9,7 @@
 #include "charge_cycle_config.h"
 #include "charge_cycle_storage.h"
 #include "charge_controller.h"
+#include "ota_service.h"
 #include "usbd_cdc_if.h"
 #include "debug_log.h"
 #include "pc_debug_protocol.h"
@@ -331,6 +332,12 @@ static void pack_u32_le(uint32_t value, uint8_t *out)
     out[3] = (uint8_t)(value >> 24);
 }
 
+static uint32_t unpack_u32_le(const uint8_t *in)
+{
+    return (uint32_t)in[0] | ((uint32_t)in[1] << 8) |
+           ((uint32_t)in[2] << 16) | ((uint32_t)in[3] << 24);
+}
+
 static void pack_float_le(float value, uint8_t *out)
 {
     union { float f; uint8_t b[4]; } u;
@@ -505,6 +512,52 @@ static void process_frame(uint8_t cmd, const uint8_t *payload, uint8_t len)
     case 0x0A: /* PC_CMD_RESET_FAULT */
         (void)ChargeController_ResetFaultIfSafe(BSP_GetTick());
         ok = true;
+        break;
+
+    case PC_CMD_SET_OTA_POLICY: {
+        char manifest_url[128];
+        uint32_t interval_ms = 0U;
+        uint8_t enabled;
+        if (len < 1U) { send_nack(cmd, PC_ERR_BAD_LENGTH); return; }
+        enabled = payload[0];
+        if (enabled > 1U) { send_nack(cmd, PC_ERR_BAD_PARAM); return; }
+        if (enabled != 0U) {
+            size_t url_len;
+            if (len < 5U) { send_nack(cmd, PC_ERR_BAD_LENGTH); return; }
+            interval_ms = unpack_u32_le(&payload[1]);
+            url_len = (size_t)len - 5U;
+            if (url_len == 0U || url_len >= sizeof(manifest_url)) {
+                send_nack(cmd, PC_ERR_BAD_LENGTH);
+                return;
+            }
+            memcpy(manifest_url, &payload[5], url_len);
+            manifest_url[url_len] = '\0';
+        }
+        if (!OTAService_SetPolicy(enabled != 0U, interval_ms,
+                                  enabled != 0U ? manifest_url : NULL)) {
+            send_nack(cmd, PC_ERR_BAD_PARAM);
+            return;
+        }
+        ok = true;
+        break;
+    }
+
+    case PC_CMD_GET_OTA_STATUS: {
+        OtaStatusView_t status;
+        if (len != 0U) { send_nack(cmd, PC_ERR_BAD_LENGTH); return; }
+        OTAService_GetStatus(&status);
+        send_frame(PC_RSP_OTA_STATUS, (const uint8_t *)&status, sizeof(status));
+        return;
+    }
+
+    case PC_CMD_OTA_CHECK_NOW:
+        if (len != 0U) { send_nack(cmd, PC_ERR_BAD_LENGTH); return; }
+        ok = OTAService_RequestCheckNow();
+        break;
+
+    case PC_CMD_OTA_APPLY:
+        if (len != 0U) { send_nack(cmd, PC_ERR_BAD_LENGTH); return; }
+        ok = OTAService_RequestApply();
         break;
 
     case PC_CMD_SET_DRIVER:

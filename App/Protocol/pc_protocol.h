@@ -29,6 +29,10 @@
 #define PC_CMD_EMERGENCY_STOP   0x08
 #define PC_CMD_SET_DRIVER       0x09
 #define PC_CMD_RESET_FAULT      0x0A
+#define PC_CMD_SET_OTA_POLICY   0x0B  /* payload: enabled,u32 interval,HTTPS manifest URL */
+#define PC_CMD_GET_OTA_STATUS   0x0C
+#define PC_CMD_OTA_CHECK_NOW    0x0D
+#define PC_CMD_OTA_APPLY        0x0E
 
 /* Responses STM32 -> PC */
 #define PC_RSP_STATUS           0x81
@@ -36,6 +40,7 @@
 #define PC_RSP_NACK             0x83
 #define PC_RSP_PONG             0x84
 #define PC_RSP_READ_REG         0x85
+#define PC_RSP_OTA_STATUS       0x86
 
 /* NACK error codes */
 #define PC_ERR_BAD_CRC          0x01

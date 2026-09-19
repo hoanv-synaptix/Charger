@@ -95,6 +95,9 @@ void BSP_Quectel_ClearRx(void);
  */
 uint16_t BSP_Quectel_Available(void);
 
+/** Number of RX bytes dropped because the fixed ring buffer was full. */
+uint32_t BSP_Quectel_GetRxOverflowCount(void);
+
 /**
  * @brief UART callbacks called from app_it_callbacks.c
  */

@@ -5,6 +5,10 @@ compatibility_date = "2024-01-01"
 [vars]
 GITHUB_OWNER = "hoanv-synaptix"
 GITHUB_REPO = "Charger"
+# Set this to the explicitly approved release tag before deployment. The
+# Worker intentionally refuses to fall back to GitHub's mutable "latest".
+# OTA_RELEASE_TAG = "v2.0.0"
+# OTA_CACHE_TTL = "60"
 
 # GITHUB_TOKEN should be set as an encrypted secret using:
 # npx wrangler secret put GITHUB_TOKEN

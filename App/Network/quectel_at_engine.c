@@ -24,6 +24,7 @@ static uint32_t s_state_tick = 0U;
 static uint32_t s_retry_count = 0U;
 static bool s_cmd_in_flight = false;
 static uint32_t s_cmd_timeout_ms = AT_CMD_TIMEOUT_DEFAULT_MS;
+static bool s_ota_exclusive = false;
 
 static void transition_to(QuectelNetState_t new_state, uint32_t now_tick)
 {
@@ -36,6 +37,7 @@ static void transition_to(QuectelNetState_t new_state, uint32_t now_tick)
 void QuectelEngine_Init(void)
 {
     memset(&s_net_status, 0, sizeof(s_net_status));
+    s_ota_exclusive = false;
     s_net_status.state = QUECTEL_NET_STATE_OFF;
     s_net_status.csq_rssi = 99U; /* Unknown */
 
@@ -59,6 +61,12 @@ bool QuectelEngine_IsNetReady(void)
     return (s_net_status.state == QUECTEL_NET_STATE_READY && s_net_status.pdp_active);
 }
 
+void QuectelEngine_SetOtaExclusive(bool exclusive)
+{
+    s_ota_exclusive = exclusive;
+    if (exclusive) s_cmd_in_flight = false;
+}
+
 void QuectelEngine_GetStatus(QuectelNetStatus_t *out_status)
 {
     if (out_status != NULL) {
@@ -71,6 +79,10 @@ void QuectelEngine_Process(uint32_t now_tick)
     char line[128];
 
     s_net_status.powered = BSP_Quectel_IsReady();
+
+    /* OTA owns the same UART RX ring while QHTTP is in CONNECT/binary mode.
+     * Parsing here would consume OTA's CONNECT/OK lines or binary bytes. */
+    if (s_ota_exclusive) return;
 
     /* Process incoming lines from modem */
     while (BSP_Quectel_ReadLine(line, sizeof(line))) {

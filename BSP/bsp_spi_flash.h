@@ -26,8 +26,18 @@ extern "C" {
 #define SPI_FLASH_ENERGY_SECTOR_COUNT   4U
 #define SPI_FLASH_LOG_BASE              0x00005000U /* Sectors 5..12 (32 KB) for Alarm Storage (1024 events) */
 #define SPI_FLASH_OTA_META_BASE         0x00010000U /* Sector 16 (4 KB) for OTA Descriptor */
+#define SPI_FLASH_OTA_META_MIRROR_BASE  0x00011000U /* Sector 17: power-fail-safe mirror */
 #define SPI_FLASH_OTA_STAGING_BASE      0x00020000U /* Sectors 32..63 (128 KB) for OTA Firmware Staging */
 #define SPI_FLASH_OTA_STAGING_SIZE      (128U * 1024U)
+#define SPI_FLASH_OTA_BACKUP_BASE       0x00040000U /* Sectors 64..95 (128 KB) */
+#define SPI_FLASH_OTA_BACKUP_SIZE       (128U * 1024U)
+
+#if (SPI_FLASH_OTA_META_BASE + SPI_FLASH_SECTOR_SIZE) > SPI_FLASH_OTA_STAGING_BASE
+#error "OTA metadata overlaps staging area"
+#endif
+#if (SPI_FLASH_OTA_STAGING_BASE + SPI_FLASH_OTA_STAGING_SIZE) > SPI_FLASH_OTA_BACKUP_BASE
+#error "OTA staging overlaps backup area"
+#endif
 
 /* Public API */
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-build_ota_manifest.py -- Calculate CRC32, size, and generate ota_manifest.json
+build_ota_manifest.py -- Calculate integrity data and generate ota_manifest.json
 Matches the IEEE 802.3 CRC32 polynomial (0xEDB88320) used in ota_service.c.
 """
 
@@ -10,6 +10,7 @@ import json
 import zlib
 import argparse
 import re
+import hashlib
 
 def compute_crc32(filepath):
     """Compute standard IEEE 802.3 CRC32 matching ota_service.c"""
@@ -18,6 +19,13 @@ def compute_crc32(filepath):
         while chunk := f.read(65536):
             crc = zlib.crc32(chunk, crc)
     return crc & 0xFFFFFFFF
+
+def compute_sha256(filepath):
+    digest = hashlib.sha256()
+    with open(filepath, 'rb') as f:
+        while chunk := f.read(65536):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 def extract_version_from_header(header_path):
     """Extract version string from app_version.h if available"""
@@ -47,6 +55,10 @@ def main():
     parser.add_argument("--version", default=None, help="Version string (e.g. 1.0.0 or v1.0.0)")
     parser.add_argument("--out", default="build/Release/ota_manifest.json", help="Output JSON path")
     parser.add_argument("--header", default="App/Charge/app_version.h", help="Path to app_version.h")
+    parser.add_argument("--target", default="STM32G0B1", help="Target MCU identifier")
+    parser.add_argument("--min-bootloader", default="1.0.0", help="Minimum bootloader version")
+    parser.add_argument("--allow-version-mismatch", action="store_true",
+                        help="Allow release tag to differ from app_version.h")
     args = parser.parse_args()
 
     if not os.path.exists(args.bin):
@@ -55,25 +67,38 @@ def main():
 
     file_size = os.path.getsize(args.bin)
     crc32_val = compute_crc32(args.bin)
+    sha256_hex = compute_sha256(args.bin)
+    header_ver_str, header_ver_code = extract_version_from_header(args.header)
 
     if args.version:
-        v_clean = args.version.lstrip('v')
+        v_clean = args.version.lstrip('vV')
         parts = [int(p) for p in v_clean.split('.') if p.isdigit()]
+        if len(parts) != 3:
+            print(f"[ERROR] Invalid semantic version: {args.version}")
+            sys.exit(1)
         major = parts[0] if len(parts) > 0 else 1
         minor = parts[1] if len(parts) > 1 else 0
         patch = parts[2] if len(parts) > 2 else 0
         ver_str = f"{major}.{minor}.{patch}"
         ver_code = (major << 16) | (minor << 8) | patch
+        if not args.allow_version_mismatch and ver_code != header_ver_code:
+            print("[ERROR] Release version does not match app_version.h: "
+                  f"tag={ver_str}, header={header_ver_str}")
+            sys.exit(1)
     else:
-        ver_str, ver_code = extract_version_from_header(args.header)
+        ver_str, ver_code = header_ver_str, header_ver_code
 
     manifest = {
-        "target": "STM32G0B1",
+        "target": args.target,
+        "target_mcu": args.target,
         "filename": os.path.basename(args.bin),
         "version": ver_str,
         "version_code": ver_code,
         "size": file_size,
+        "min_bootloader": args.min_bootloader,
+        "sha256": sha256_hex,
         "crc32_hex": f"0x{crc32_val:08X}",
+        "crc32": f"0x{crc32_val:08X}",
         "crc32_dec": crc32_val
     }
 
@@ -88,6 +113,7 @@ def main():
     print(f"File        : {manifest['filename']} ({file_size:,} bytes)")
     print(f"Version     : {ver_str} (Code: 0x{ver_code:06X})")
     print(f"CRC32       : {manifest['crc32_hex']} ({crc32_val})")
+    print(f"SHA-256     : {sha256_hex}")
     print(f"Manifest    : {args.out}")
     print("========================================")
 

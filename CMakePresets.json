@@ -8,6 +8,9 @@
             "binaryDir": "${sourceDir}/build/${presetName}",
 		    "toolchainFile": "${sourceDir}/cmake/gcc-arm-none-eabi.cmake",
             "cacheVariables": {
+                "CHG_DEBUG_DWIN": "OFF",
+                "CHG_DEBUG_CAN_TX_TRACE": "OFF",
+                "CHG_ENABLE_LOG": "OFF"
             }
         },
         {

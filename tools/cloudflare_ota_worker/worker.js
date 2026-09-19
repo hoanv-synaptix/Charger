@@ -1,132 +1,159 @@
 /**
- * Cloudflare Worker: OTA Firmware Proxy for Quectel SIM / Embedded Devices
- * 
- * Features:
- * - Fetches latest release artifacts from GitHub Releases.
- * - Handles GitHub 302 redirects internally on Cloudflare edge.
- * - Returns raw HTTP 200 with Content-Length to embedded devices (no redirect).
- * - Supports Private Repositories using Cloudflare Secret GITHUB_TOKEN.
- * - Ultra-low latency and zero infrastructure maintenance (Free 100,000 req/day).
+ * Cloudflare Worker: lean OTA proxy for Quectel embedded devices.
+ *
+ * The device talks only to this Worker. GitHub API redirects remain inside
+ * the Worker, so the modem receives a normal HTTP 200 stream.
  */
+
+const MANIFEST_NAME = "ota_manifest.json";
+const FIRMWARE_NAME = "Charger.bin";
+const DEFAULT_CACHE_TTL = 60;
+
+function jsonResponse(body, status, extraHeaders = {}) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "no-store",
+      ...extraHeaders
+    }
+  });
+}
+
+function configuredTag(url, env) {
+  if (env.ALLOW_TAG_QUERY === "true") {
+    const queryTag = url.searchParams.get("tag");
+    if (queryTag) return queryTag;
+  }
+  return env.OTA_RELEASE_TAG || "";
+}
+
+function parseManifest(value) {
+  let manifest;
+  try {
+    manifest = JSON.parse(value);
+  } catch (_) {
+    return { ok: false, error: "invalid_manifest" };
+  }
+
+  const target = manifest.target_mcu || manifest.target;
+  const crc32 = manifest.crc32 || manifest.crc32_hex;
+  const required = ["version", "version_code", "size", "sha256"];
+  if (!required.every((key) => Object.prototype.hasOwnProperty.call(manifest, key)) ||
+      target !== "STM32G0B1" ||
+      manifest.filename !== FIRMWARE_NAME ||
+      !Number.isInteger(manifest.version_code) ||
+      !Number.isInteger(manifest.size) || manifest.size <= 0 ||
+      typeof manifest.sha256 !== "string" || !/^[0-9a-f]{64}$/i.test(manifest.sha256) ||
+      typeof crc32 !== "string" || !/^0x[0-9a-f]{8}$/i.test(crc32)) {
+    return { ok: false, error: "invalid_manifest" };
+  }
+
+  return {
+    ok: true,
+    value: { ...manifest, target_mcu: target, crc32, filename: FIRMWARE_NAME }
+  };
+}
 
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const owner = env.GITHUB_OWNER || "hoanv-synaptix";
     const repo = env.GITHUB_REPO || "Charger";
-    const token = env.GITHUB_TOKEN || "";
+    const tag = configuredTag(url, env);
+    const parsedTtl = Number.parseInt(env.OTA_CACHE_TTL || DEFAULT_CACHE_TTL, 10);
+    const cacheTtl = Number.isFinite(parsedTtl) && parsedTtl > 0 ? parsedTtl : DEFAULT_CACHE_TTL;
 
-    const headers = {
-      "User-Agent": "Cloudflare-OTA-Worker",
-      "Accept": "application/vnd.github.v3+json"
-    };
-    if (token) {
-      headers["Authorization"] = `Bearer ${token}`;
+    if (request.method !== "GET") {
+      return jsonResponse({ error: "method_not_allowed" }, 405, { Allow: "GET" });
+    }
+    if (!tag) {
+      return jsonResponse({ error: "ota_release_not_configured" }, 503);
     }
 
-    // Helper: Get release metadata from GitHub
-    async function getRelease(tag) {
-      const endpoint = tag 
-        ? `https://api.github.com/repos/${owner}/${repo}/releases/tags/${tag}`
-        : `https://api.github.com/repos/${owner}/${repo}/releases/latest`;
-      
-      const res = await fetch(endpoint, { headers });
-      if (!res.ok) {
-        throw new Error(`GitHub API error: ${res.status} ${res.statusText}`);
+    const githubHeaders = new Headers({
+      "User-Agent": "Cloudflare-OTA-Worker",
+      Accept: "application/vnd.github.v3+json"
+    });
+    const assetHeaders = new Headers({
+      "User-Agent": "Cloudflare-OTA-Worker",
+      Accept: "application/octet-stream"
+    });
+    if (env.GITHUB_TOKEN) {
+      githubHeaders.set("Authorization", `Bearer ${env.GITHUB_TOKEN}`);
+      assetHeaders.set("Authorization", `Bearer ${env.GITHUB_TOKEN}`);
+    }
+
+    const releaseUrl = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/releases/tags/${encodeURIComponent(tag)}`;
+    const cacheKey = new Request(`${url.origin}/__release/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/${encodeURIComponent(tag)}`);
+
+    async function getRelease() {
+      const cached = await caches.default.match(cacheKey);
+      if (cached) return cached.json();
+
+      const response = await fetch(releaseUrl, { headers: githubHeaders });
+      if (response.status === 404) throw new Error("release_not_found");
+      if (!response.ok) throw new Error("github_release_unavailable");
+
+      const release = await response.json();
+      if (!Array.isArray(release.assets)) throw new Error("release_assets_missing");
+      const cachedResponse = new Response(JSON.stringify(release), {
+        headers: {
+          "Content-Type": "application/json",
+          "Cache-Control": `public, max-age=${cacheTtl}`
+        }
+      });
+      ctx.waitUntil(caches.default.put(cacheKey, cachedResponse.clone()));
+      return release;
+    }
+
+    async function getAsset(release, name) {
+      const asset = release.assets.find((entry) => entry.name === name);
+      if (!asset || typeof asset.url !== "string") {
+        throw new Error(name === MANIFEST_NAME ? "manifest_not_found" : "firmware_not_found");
       }
-      return await res.json();
+      const response = await fetch(asset.url, { headers: assetHeaders, redirect: "follow" });
+      if (!response.ok) throw new Error("github_asset_unavailable");
+      return { asset, response };
     }
 
     try {
-      // 1. Route: /manifest -> Returns ota_manifest.json directly
       if (url.pathname === "/manifest" || url.pathname === "/version.json") {
-        const tag = url.searchParams.get("tag") || null;
-        const release = await getRelease(tag);
-        const manifestAsset = release.assets.find(a => a.name === "ota_manifest.json");
-
-        if (!manifestAsset) {
-          return new Response(JSON.stringify({ error: "ota_manifest.json not found in release" }), {
-            status: 404,
-            headers: { "Content-Type": "application/json" }
-          });
-        }
-
-        const assetHeaders = { "User-Agent": "Cloudflare-OTA-Worker", "Accept": "application/octet-stream" };
-        if (token) assetHeaders["Authorization"] = `Bearer ${token}`;
-
-        const manifestRes = await fetch(manifestAsset.url, {
-          headers: assetHeaders,
-          redirect: "follow"
-        });
-
-        const manifestText = await manifestRes.text();
-        return new Response(manifestText, {
-          status: 200,
-          headers: {
-            "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": "*",
-            "Cache-Control": "public, max-age=60"
-          }
+        const release = await getRelease();
+        const { response } = await getAsset(release, MANIFEST_NAME);
+        const parsed = parseManifest(await response.text());
+        if (!parsed.ok) return jsonResponse({ error: parsed.error }, 502);
+        return jsonResponse(parsed.value, 200, {
+          "Access-Control-Allow-Origin": "*",
+          "Cache-Control": `public, max-age=${cacheTtl}`
         });
       }
 
-      // 2. Route: /firmware or /Charger.bin -> Streams binary with HTTP 200 (No 302 seen by device)
       if (url.pathname === "/firmware" || url.pathname === "/Charger.bin") {
-        const tag = url.searchParams.get("tag") || null;
-        const release = await getRelease(tag);
-        const binAsset = release.assets.find(a => a.name === "Charger.bin");
-
-        if (!binAsset) {
-          return new Response("Charger.bin not found in release", { status: 404 });
+        const release = await getRelease();
+        const { asset, response } = await getAsset(release, FIRMWARE_NAME);
+        if (!Number.isInteger(asset.size) || asset.size <= 0) {
+          return jsonResponse({ error: "firmware_size_missing" }, 502);
         }
-
-        const assetHeaders = {
-          "User-Agent": "Cloudflare-OTA-Worker",
-          "Accept": "application/octet-stream"
-        };
-        if (token) assetHeaders["Authorization"] = `Bearer ${token}`;
-
-        // Fetch asset from GitHub (Worker follows GitHub -> S3 redirect internally)
-        const binRes = await fetch(binAsset.url, {
-          headers: assetHeaders,
-          redirect: "follow"
+        const headers = new Headers({
+          "Content-Type": "application/octet-stream",
+          "Content-Disposition": `attachment; filename="${FIRMWARE_NAME}"`,
+          "Cache-Control": "public, max-age=60",
+          "Content-Length": response.headers.get("content-length") || String(asset.size)
         });
-
-        if (!binRes.ok) {
-          return new Response(`Failed to download binary: ${binRes.status}`, { status: 502 });
-        }
-
-        // Forward headers to modem
-        const responseHeaders = new Headers();
-        responseHeaders.set("Content-Type", "application/octet-stream");
-        responseHeaders.set("Content-Disposition", `attachment; filename="Charger.bin"`);
-        const len = binRes.headers.get("content-length");
-        if (len) responseHeaders.set("Content-Length", len);
-
-        return new Response(binRes.body, {
-          status: 200,
-          headers: responseHeaders
-        });
+        return new Response(response.body, { status: 200, headers });
       }
 
-      // Default info page
-      return new Response(JSON.stringify({
+      return jsonResponse({
         service: "STM32 Charger OTA Proxy",
         repository: `${owner}/${repo}`,
-        endpoints: {
-          manifest: `${url.origin}/manifest`,
-          firmware: `${url.origin}/firmware`
-        }
-      }, null, 2), {
-        status: 200,
-        headers: { "Content-Type": "application/json" }
-      });
-
-    } catch (err) {
-      return new Response(JSON.stringify({ error: err.message }), {
-        status: 500,
-        headers: { "Content-Type": "application/json" }
-      });
+        release_tag: tag,
+        endpoints: { manifest: `${url.origin}/manifest`, firmware: `${url.origin}/firmware` }
+      }, 200, { "Cache-Control": "public, max-age=60" });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "internal_error";
+      const status = message === "release_not_found" || message.endsWith("_not_found") ? 404 : 502;
+      return jsonResponse({ error: message }, status);
     }
   }
 };

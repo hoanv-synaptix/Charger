@@ -27,6 +27,7 @@ static uint32_t s_state_start_tick = 0U;
 static uint8_t s_rx_buf[QUECTEL_RX_BUF_SIZE];
 static volatile uint16_t s_rx_head = 0U;
 static volatile uint16_t s_rx_tail = 0U;
+static volatile uint32_t s_rx_overflow_count = 0U;
 static uint8_t s_rx_byte = 0U;
 static bool s_rx_started = false;
 
@@ -53,6 +54,7 @@ void BSP_Quectel_Init(void)
 
     s_rx_head = 0U;
     s_rx_tail = 0U;
+    s_rx_overflow_count = 0U;
 
     /* Start USART5 interrupt RX */
     if (!s_rx_started) {
@@ -272,6 +274,11 @@ uint16_t BSP_Quectel_Available(void)
     return (uint16_t)(QUECTEL_RX_BUF_SIZE - (s_rx_tail - s_rx_head));
 }
 
+uint32_t BSP_Quectel_GetRxOverflowCount(void)
+{
+    return s_rx_overflow_count;
+}
+
 void BSP_Quectel_RxCpltCallback(void *huart)
 {
     UART_HandleTypeDef *uart = (UART_HandleTypeDef *)huart;
@@ -280,6 +287,8 @@ void BSP_Quectel_RxCpltCallback(void *huart)
         if (next != s_rx_tail) {
             s_rx_buf[s_rx_head] = s_rx_byte;
             s_rx_head = next;
+        } else {
+            ++s_rx_overflow_count;
         }
         /* Re-arm interrupt for next byte */
         HAL_UART_Receive_IT(&huart5, &s_rx_byte, 1U);

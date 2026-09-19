@@ -59,6 +59,9 @@ void QuectelEngine_Process(uint32_t now_tick);
  */
 bool QuectelEngine_IsNetReady(void);
 
+/** Temporarily give the UART RX line parser exclusively to OTA QHTTP. */
+void QuectelEngine_SetOtaExclusive(bool exclusive);
+
 /**
  * @brief Get current network and modem status snapshot.
  */

@@ -54,6 +54,12 @@
 #     is the same pattern Modules already use against BSP_GetTick().
 App/Charge/charge_cycle_storage.c:bsp_flash.h
 App/Charge/charge_energy_storage.c:bsp_flash.h
+# The following entries are the current header names of the same reviewed
+# persistence exceptions (plus Alarm's RTC timestamp dependency).
+App/Alarm/alarm_storage.c:bsp_spi_flash.h
+App/Alarm/alarm_storage.c:bsp_rtc.h
+App/Charge/charge_cycle_storage.c:bsp_spi_flash.h
+App/Charge/charge_energy_storage.c:bsp_spi_flash.h
 App/Protocol/pc_debug_protocol.c:bsp_can.h
 App/Protocol/pc_debug_protocol.c:bsp_sys.h
 App/Protocol/pc_protocol.c:bsp_sys.h
