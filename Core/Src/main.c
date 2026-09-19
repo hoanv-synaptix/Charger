@@ -83,6 +83,7 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
+  SCB->VTOR = 0x08002000U;
   /* EARLY DIAGNOSTIC: Blink PC6 (RUN LED) immediately after HAL_Init
    * to confirm MCU is alive. If this LED never toggles, the issue is
    * in SystemClock_Config or startup, not in App_Init. */

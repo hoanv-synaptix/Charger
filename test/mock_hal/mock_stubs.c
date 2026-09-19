@@ -9,6 +9,16 @@
 #include "charge_cycle_storage.h"
 #include "charge_energy_storage.h"
 
+typedef struct {
+    uint32_t status;
+    uint32_t version;
+    uint32_t image_size;
+    uint32_t downloaded_bytes;
+    uint32_t boot_request;
+    uint32_t boot_attempts;
+    uint32_t policy_enabled;
+} OtaStatusView_t;
+
 void LOG(const char *fmt, ...)
 {
     va_list args;
@@ -197,3 +207,17 @@ bool BSP_SPIFlash_IsAvailable(void) { return false; }
 bool BSP_SPIFlash_Read(uint32_t a, uint8_t *b, uint32_t l) { (void)a; (void)b; (void)l; return false; }
 bool BSP_SPIFlash_Write(uint32_t a, const uint8_t *d, uint32_t l) { (void)a; (void)d; (void)l; return false; }
 bool BSP_SPIFlash_EraseSector4K(uint32_t a) { (void)a; return false; }
+
+/* OTA command boundary stubs for the PC protocol host suite. The real OTA
+ * service is exercised by the target firmware build; this test only verifies
+ * PC framing and command dispatch. */
+bool OTAService_SetPolicy(bool enabled, uint32_t interval_ms, const char *url)
+{
+    (void)enabled; (void)interval_ms; (void)url; return true;
+}
+bool OTAService_RequestCheckNow(void) { return true; }
+bool OTAService_RequestApply(void) { return true; }
+void OTAService_GetStatus(OtaStatusView_t *status)
+{
+    if (status != NULL) memset(status, 0, sizeof(*status));
+}

@@ -5,6 +5,8 @@ enable_language(C ASM)
 set(MX_Defines_Syms 
 	USE_HAL_DRIVER 
 	STM32G0B1xx
+	USER_VECT_TAB_ADDRESS
+	VECT_TAB_OFFSET=0x00002000U
     $<$<CONFIG:Debug>:DEBUG>
 )
 

@@ -73,7 +73,7 @@ if %errorlevel% neq 0 (
 )
 
 echo [5/9] Running PC Protocol E2E Simulation: byte stream to PC protocol parser...
-gcc -Wall -I"test/mock_hal" -I"test/host_charge_sim" -I"Modules/chg_lib" -I"Modules/bms" -I"BSP" -I"Utils/Log" -I"App/Charge" -I"App/Alarm" -I"App/Protocol" -I"App/System" ^
+gcc -Wall -I"test/mock_hal" -I"test/host_charge_sim" -I"Modules/chg_lib" -I"Modules/bms" -I"BSP" -I"Utils/Log" -I"App/Charge" -I"App/Alarm" -I"App/Protocol" -I"App/System" -I"App/OTA" ^
     test/host_protocol_sim/test_pc_protocol_e2e.c ^
     test/host_charge_sim/sim_can_modules.c ^
     test/host_charge_sim/sim_bms.c ^
