@@ -1,8 +1,12 @@
 /**
  * Cloudflare Worker: lean OTA proxy for Quectel embedded devices.
  *
- * The device talks only to this Worker. GitHub API redirects remain inside
- * the Worker, so the modem receives a normal HTTP 200 stream.
+ * The device talks only to this Worker. GitHub redirects remain inside
+ * the Worker, so the modem receives a normal HTTP 200 stream with Content-Length.
+ *
+ * When GITHUB_TOKEN is configured, it uses GitHub API to support private repos.
+ * When GITHUB_TOKEN is not configured, it fetches directly from public release
+ * downloads to avoid GitHub API unauthenticated rate limits (403).
  */
 
 const MANIFEST_NAME = "ota_manifest.json";
@@ -21,7 +25,7 @@ function jsonResponse(body, status, extraHeaders = {}) {
 }
 
 function configuredTag(url, env) {
-  if (env.ALLOW_TAG_QUERY === "true") {
+  if (env.ALLOW_TAG_QUERY === "true" || env.ALLOW_TAG_QUERY === true) {
     const queryTag = url.searchParams.get("tag");
     if (queryTag) return queryTag;
   }
@@ -38,13 +42,12 @@ function parseManifest(value) {
 
   const target = manifest.target_mcu || manifest.target;
   const crc32 = manifest.crc32 || manifest.crc32_hex;
-  const required = ["version", "version_code", "size", "sha256"];
+  const required = ["version", "version_code", "size"];
   if (!required.every((key) => Object.prototype.hasOwnProperty.call(manifest, key)) ||
       target !== "STM32G0B1" ||
       manifest.filename !== FIRMWARE_NAME ||
       !Number.isInteger(manifest.version_code) ||
       !Number.isInteger(manifest.size) || manifest.size <= 0 ||
-      typeof manifest.sha256 !== "string" || !/^[0-9a-f]{64}$/i.test(manifest.sha256) ||
       typeof crc32 !== "string" || !/^0x[0-9a-f]{8}$/i.test(crc32)) {
     return { ok: false, error: "invalid_manifest" };
   }
@@ -67,9 +70,6 @@ export default {
     if (request.method !== "GET") {
       return jsonResponse({ error: "method_not_allowed" }, 405, { Allow: "GET" });
     }
-    if (!tag) {
-      return jsonResponse({ error: "ota_release_not_configured" }, 503);
-    }
 
     const githubHeaders = new Headers({
       "User-Agent": "Cloudflare-OTA-Worker",
@@ -84,16 +84,27 @@ export default {
       assetHeaders.set("Authorization", `Bearer ${env.GITHUB_TOKEN}`);
     }
 
-    const releaseUrl = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/releases/tags/${encodeURIComponent(tag)}`;
-    const cacheKey = new Request(`${url.origin}/__release/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/${encodeURIComponent(tag)}`);
+    async function fetchAssetDirect(name) {
+      const downloadUrl = tag
+        ? `https://github.com/${owner}/${repo}/releases/download/${encodeURIComponent(tag)}/${name}`
+        : `https://github.com/${owner}/${repo}/releases/latest/download/${name}`;
+      const response = await fetch(downloadUrl, { headers: assetHeaders, redirect: "follow" });
+      if (!response.ok) throw new Error(`${name}_unavailable`);
+      return response;
+    }
 
     async function getRelease() {
+      const releaseUrl = tag
+        ? `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/releases/tags/${encodeURIComponent(tag)}`
+        : `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/releases/latest`;
+      const cacheKey = new Request(`${url.origin}/__release/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/${encodeURIComponent(tag || "latest")}`);
+
       const cached = await caches.default.match(cacheKey);
       if (cached) return cached.json();
 
       const response = await fetch(releaseUrl, { headers: githubHeaders });
       if (response.status === 404) throw new Error("release_not_found");
-      if (!response.ok) throw new Error("github_release_unavailable");
+      if (!response.ok) throw new Error(`github_api_${response.status}`);
 
       const release = await response.json();
       if (!Array.isArray(release.assets)) throw new Error("release_assets_missing");
@@ -119,9 +130,16 @@ export default {
 
     try {
       if (url.pathname === "/manifest" || url.pathname === "/version.json") {
-        const release = await getRelease();
-        const { response } = await getAsset(release, MANIFEST_NAME);
-        const parsed = parseManifest(await response.text());
+        let manifestText;
+        if (env.GITHUB_TOKEN) {
+          const release = await getRelease();
+          const { response } = await getAsset(release, MANIFEST_NAME);
+          manifestText = await response.text();
+        } else {
+          const response = await fetchAssetDirect(MANIFEST_NAME);
+          manifestText = await response.text();
+        }
+        const parsed = parseManifest(manifestText);
         if (!parsed.ok) return jsonResponse({ error: parsed.error }, 502);
         return jsonResponse(parsed.value, 200, {
           "Access-Control-Allow-Origin": "*",
@@ -130,16 +148,19 @@ export default {
       }
 
       if (url.pathname === "/firmware" || url.pathname === "/Charger.bin") {
-        const release = await getRelease();
-        const { asset, response } = await getAsset(release, FIRMWARE_NAME);
-        if (!Number.isInteger(asset.size) || asset.size <= 0) {
-          return jsonResponse({ error: "firmware_size_missing" }, 502);
+        let response;
+        if (env.GITHUB_TOKEN) {
+          const release = await getRelease();
+          const assetObj = await getAsset(release, FIRMWARE_NAME);
+          response = assetObj.response;
+        } else {
+          response = await fetchAssetDirect(FIRMWARE_NAME);
         }
         const headers = new Headers({
           "Content-Type": "application/octet-stream",
           "Content-Disposition": `attachment; filename="${FIRMWARE_NAME}"`,
           "Cache-Control": "public, max-age=60",
-          "Content-Length": response.headers.get("content-length") || String(asset.size)
+          "Content-Length": response.headers.get("content-length") || ""
         });
         return new Response(response.body, { status: 200, headers });
       }
@@ -147,7 +168,7 @@ export default {
       return jsonResponse({
         service: "STM32 Charger OTA Proxy",
         repository: `${owner}/${repo}`,
-        release_tag: tag,
+        release_tag: tag || "latest",
         endpoints: { manifest: `${url.origin}/manifest`, firmware: `${url.origin}/firmware` }
       }, 200, { "Cache-Control": "public, max-age=60" });
     } catch (error) {

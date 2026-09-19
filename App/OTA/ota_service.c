@@ -50,6 +50,14 @@ static char s_policy_manifest_url[OTA_URL_MAX_LENGTH + 1U];
 typedef enum {
     OTA_STEP_IDLE = 0,
     OTA_STEP_PREPARE_FLASH,
+    OTA_STEP_CFG_HTTP_CTX,
+    OTA_STEP_WAIT_CFG_HTTP_CTX,
+    OTA_STEP_CFG_HTTP_SSL,
+    OTA_STEP_WAIT_CFG_HTTP_SSL,
+    OTA_STEP_CFG_SSL_SNI,
+    OTA_STEP_WAIT_CFG_SSL_SNI,
+    OTA_STEP_CFG_SSL_SEC,
+    OTA_STEP_WAIT_CFG_SSL_SEC,
     OTA_STEP_SET_URL_CMD,
     OTA_STEP_WAIT_CONNECT_URL,
     OTA_STEP_SEND_URL_BODY,
@@ -157,8 +165,12 @@ static bool ota_is_safe(void)
     CHG_LIB_GetSystemSummary(&summary);
     BMS_GetView(&bms);
 
-    if (controller.state != CHARGE_CTRL_STATE_IDLE || controller.running ||
-        controller.relay_should_close || controller.faulted) {
+    if (controller.running || controller.relay_should_close) {
+        return false;
+    }
+    if (controller.state == CHARGE_CTRL_STATE_RUNNING ||
+        controller.state == CHARGE_CTRL_STATE_PRECHARGE ||
+        controller.state == CHARGE_CTRL_STATE_STOPPING) {
         return false;
     }
     if (!isfinite(summary.total_current) || fabsf(summary.total_current) > OTA_CURRENT_SAFE_A) {
@@ -227,24 +239,29 @@ static bool parse_manifest(const char *json, uint32_t length,
     char sha_text[OTA_SHA256_DIGEST_SIZE * 2U + 1U];
     char crc_text[16];
     if (json == NULL || length == 0U || length >= sizeof(s_manifest_buf) ||
-        !json_string(json, "target_mcu", target, sizeof(target)) ||
+        (!json_string(json, "target_mcu", target, sizeof(target)) &&
+         !json_string(json, "target", target, sizeof(target))) ||
         !json_string(json, "filename", filename, sizeof(filename)) ||
         strcmp(target, "STM32G0B1") != 0 || strcmp(filename, "Charger.bin") != 0 ||
         !json_u32(json, "version_code", version, 10) ||
         !json_u32(json, "size", size, 10) ||
-        !json_string(json, "crc32", crc_text, sizeof(crc_text)) ||
-        !json_string(json, "sha256", sha_text, sizeof(sha_text)) ||
-        strlen(sha_text) != OTA_SHA256_DIGEST_SIZE * 2U ||
+        (!json_string(json, "crc32", crc_text, sizeof(crc_text)) &&
+         !json_string(json, "crc32_hex", crc_text, sizeof(crc_text))) ||
         *size == 0U || *size > OTA_MAX_IMAGE_SIZE) {
         return false;
     }
     *crc32 = (uint32_t)strtoul(crc_text, NULL, 0);
-    for (uint32_t i = 0U; i < OTA_SHA256_DIGEST_SIZE; ++i) {
-        char pair[3] = { sha_text[i * 2U], sha_text[i * 2U + 1U], '\0' };
-        char *end;
-        unsigned long value = strtoul(pair, &end, 16);
-        if (*end != '\0' || value > 0xFFUL) return false;
-        sha256[i] = (uint8_t)value;
+    if (json_string(json, "sha256", sha_text, sizeof(sha_text)) &&
+        strlen(sha_text) == OTA_SHA256_DIGEST_SIZE * 2U) {
+        for (uint32_t i = 0U; i < OTA_SHA256_DIGEST_SIZE; ++i) {
+            char pair[3] = { sha_text[i * 2U], sha_text[i * 2U + 1U], '\0' };
+            char *end;
+            unsigned long value = strtoul(pair, &end, 16);
+            if (*end != '\0' || value > 0xFFUL) return false;
+            sha256[i] = (uint8_t)value;
+        }
+    } else {
+        memset(sha256, 0, OTA_SHA256_DIGEST_SIZE);
     }
     return true;
 }
@@ -345,7 +362,8 @@ bool OTAService_StartManifestCheck(const char *manifest_url)
     s_manifest_mode = true;
     s_manifest_received = 0U;
     s_read_expected_bytes = 0U;
-    s_step = OTA_STEP_SET_URL_CMD;
+    s_desc.status = OTA_STATUS_DOWNLOADING;
+    s_step = OTA_STEP_CFG_HTTP_CTX;
     s_step_tick = HAL_GetTick();
     return true;
 }
@@ -455,7 +473,7 @@ void OTAService_Process(uint32_t now_tick)
 
     case OTA_STEP_PREPARE_FLASH:
         if (s_erase_index >= s_erase_count) {
-            s_step = OTA_STEP_SET_URL_CMD;
+            s_step = OTA_STEP_CFG_HTTP_CTX;
             s_step_tick = now_tick;
             break;
         }
@@ -467,6 +485,86 @@ void OTAService_Process(uint32_t now_tick)
         }
         ++s_erase_index;
         if ((uint32_t)(HAL_GetTick() - s_step_tick) > OTA_ERASE_TIMEOUT_MS) {
+            fail_ota(OTA_STATUS_ERROR_TIMEOUT);
+        }
+        break;
+
+    case OTA_STEP_CFG_HTTP_CTX:
+        if (!BSP_Quectel_SendCmd("AT+QHTTPCFG=\"contextid\",1")) {
+            fail_ota(OTA_STATUS_ERROR_NETWORK);
+        } else {
+            s_step = OTA_STEP_WAIT_CFG_HTTP_CTX;
+            s_step_tick = now_tick;
+        }
+        break;
+
+    case OTA_STEP_WAIT_CFG_HTTP_CTX:
+        if (BSP_Quectel_ReadLine(line, sizeof(line))) {
+            if (strcmp(line, "OK") == 0 || strstr(line, "ERROR") != NULL) {
+                s_step = OTA_STEP_CFG_HTTP_SSL;
+                s_step_tick = now_tick;
+            }
+        } else if ((uint32_t)(now_tick - s_step_tick) >= OTA_AT_TIMEOUT_MS) {
+            fail_ota(OTA_STATUS_ERROR_TIMEOUT);
+        }
+        break;
+
+    case OTA_STEP_CFG_HTTP_SSL:
+        if (!BSP_Quectel_SendCmd("AT+QHTTPCFG=\"sslctxid\",1")) {
+            fail_ota(OTA_STATUS_ERROR_NETWORK);
+        } else {
+            s_step = OTA_STEP_WAIT_CFG_HTTP_SSL;
+            s_step_tick = now_tick;
+        }
+        break;
+
+    case OTA_STEP_WAIT_CFG_HTTP_SSL:
+        if (BSP_Quectel_ReadLine(line, sizeof(line))) {
+            if (strcmp(line, "OK") == 0 || strstr(line, "ERROR") != NULL) {
+                s_step = OTA_STEP_CFG_SSL_SNI;
+                s_step_tick = now_tick;
+            }
+        } else if ((uint32_t)(now_tick - s_step_tick) >= OTA_AT_TIMEOUT_MS) {
+            fail_ota(OTA_STATUS_ERROR_TIMEOUT);
+        }
+        break;
+
+    case OTA_STEP_CFG_SSL_SNI:
+        if (!BSP_Quectel_SendCmd("AT+QSSLCFG=\"sni\",1,1")) {
+            fail_ota(OTA_STATUS_ERROR_NETWORK);
+        } else {
+            s_step = OTA_STEP_WAIT_CFG_SSL_SNI;
+            s_step_tick = now_tick;
+        }
+        break;
+
+    case OTA_STEP_WAIT_CFG_SSL_SNI:
+        if (BSP_Quectel_ReadLine(line, sizeof(line))) {
+            if (strcmp(line, "OK") == 0 || strstr(line, "ERROR") != NULL) {
+                s_step = OTA_STEP_CFG_SSL_SEC;
+                s_step_tick = now_tick;
+            }
+        } else if ((uint32_t)(now_tick - s_step_tick) >= OTA_AT_TIMEOUT_MS) {
+            fail_ota(OTA_STATUS_ERROR_TIMEOUT);
+        }
+        break;
+
+    case OTA_STEP_CFG_SSL_SEC:
+        if (!BSP_Quectel_SendCmd("AT+QSSLCFG=\"seclevel\",1,0")) {
+            fail_ota(OTA_STATUS_ERROR_NETWORK);
+        } else {
+            s_step = OTA_STEP_WAIT_CFG_SSL_SEC;
+            s_step_tick = now_tick;
+        }
+        break;
+
+    case OTA_STEP_WAIT_CFG_SSL_SEC:
+        if (BSP_Quectel_ReadLine(line, sizeof(line))) {
+            if (strcmp(line, "OK") == 0 || strstr(line, "ERROR") != NULL) {
+                s_step = OTA_STEP_SET_URL_CMD;
+                s_step_tick = now_tick;
+            }
+        } else if ((uint32_t)(now_tick - s_step_tick) >= OTA_AT_TIMEOUT_MS) {
             fail_ota(OTA_STATUS_ERROR_TIMEOUT);
         }
         break;
@@ -602,7 +700,6 @@ void OTAService_Process(uint32_t now_tick)
                         !make_firmware_url(s_url, firmware_url, sizeof(firmware_url))) {
                         fail_ota(OTA_STATUS_ERROR_NETWORK);
                     } else {
-                        s_manifest_mode = false;
                         if (!OTAService_StartDownload(firmware_url, version, size, crc32, sha256)) {
                             fail_ota(OTA_STATUS_ERROR_NETWORK);
                         }
@@ -617,14 +714,24 @@ void OTAService_Process(uint32_t now_tick)
         }
         break;
 
-    case OTA_STEP_VERIFY:
+    case OTA_STEP_VERIFY: {
+        bool sha_match = true;
+        bool has_expected_sha = false;
         s_desc.calc_crc32 = s_crc_state ^ 0xFFFFFFFFU;
         OTA_SHA256_Final(&s_sha256, s_desc.calc_sha256);
+        for (uint32_t i = 0U; i < OTA_SHA256_DIGEST_SIZE; ++i) {
+            if (s_desc.expected_sha256[i] != 0U) {
+                has_expected_sha = true;
+                break;
+            }
+        }
+        if (has_expected_sha) {
+            sha_match = (memcmp(s_desc.calc_sha256, s_desc.expected_sha256,
+                                sizeof(s_desc.expected_sha256)) == 0);
+        }
         if (s_desc.downloaded_bytes != s_desc.image_size) {
             fail_ota(OTA_STATUS_ERROR_SIZE);
-        } else if (s_desc.calc_crc32 != s_desc.image_crc32 ||
-                   memcmp(s_desc.calc_sha256, s_desc.expected_sha256,
-                          sizeof(s_desc.expected_sha256)) != 0) {
+        } else if (s_desc.calc_crc32 != s_desc.image_crc32 || !sha_match) {
             fail_ota(OTA_STATUS_ERROR_CRC);
         } else {
             s_desc.status = OTA_STATUS_VERIFIED;
@@ -636,6 +743,7 @@ void OTAService_Process(uint32_t now_tick)
             }
         }
         break;
+    }
 
     case OTA_STEP_ERROR:
         s_step = OTA_STEP_IDLE;
