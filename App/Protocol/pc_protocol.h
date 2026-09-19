@@ -33,6 +33,7 @@
 #define PC_CMD_GET_OTA_STATUS   0x0C
 #define PC_CMD_OTA_CHECK_NOW    0x0D
 #define PC_CMD_OTA_APPLY        0x0E
+#define PC_CMD_TEST_FLASH       0x0F
 
 /* Responses STM32 -> PC */
 #define PC_RSP_STATUS           0x81
@@ -41,6 +42,7 @@
 #define PC_RSP_PONG             0x84
 #define PC_RSP_READ_REG         0x85
 #define PC_RSP_OTA_STATUS       0x86
+#define PC_RSP_FLASH_TEST       0x87
 
 /* NACK error codes */
 #define PC_ERR_BAD_CRC          0x01

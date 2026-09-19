@@ -646,3 +646,8 @@ void OTAService_Process(uint32_t now_tick)
         break;
     }
 }
+
+bool OTAService_SelfTestFlash(uint32_t *out_jedec, uint32_t *out_cap_kb)
+{
+    return BSP_SPIFlash_SelfTest(out_jedec, out_cap_kb);
+}

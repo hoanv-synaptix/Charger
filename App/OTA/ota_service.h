@@ -64,6 +64,11 @@ void OTAService_GetDescriptor(OtaDescriptor_t *out_desc);
  */
 bool OTAService_RequestApply(void);
 
+/**
+ * @brief Run hardware self-test on external SPI Flash.
+ */
+bool OTAService_SelfTestFlash(uint32_t *out_jedec, uint32_t *out_cap_kb);
+
 #ifdef __cplusplus
 }
 #endif

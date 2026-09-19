@@ -74,32 +74,26 @@ static void GPIO_Init(void)
     gpio.Speed = GPIO_SPEED_FREQ_LOW;
     HAL_GPIO_Init(LED_PORT, &gpio);
 
-    gpio.Pin = GPIO_PIN_8 | GPIO_PIN_7;
-    gpio.Mode = GPIO_MODE_AF_PP;
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_8, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_SET);
+
+    /* PB8: SCK, PB6: MOSI (to U201 Pin 5 SI) */
+    gpio.Pin = GPIO_PIN_8 | GPIO_PIN_6;
+    gpio.Mode = GPIO_MODE_OUTPUT_PP;
     gpio.Speed = GPIO_SPEED_FREQ_HIGH;
-    gpio.Alternate = GPIO_AF1_SPI2;
+    gpio.Pull = GPIO_NOPULL;
     HAL_GPIO_Init(GPIOB, &gpio);
-    gpio.Pin = GPIO_PIN_6;
-    gpio.Alternate = GPIO_AF4_SPI2;
+
+    /* PB7: MISO (from U201 Pin 2 SO) */
+    gpio.Pin = GPIO_PIN_7;
+    gpio.Mode = GPIO_MODE_INPUT;
+    gpio.Pull = GPIO_PULLUP;
     HAL_GPIO_Init(GPIOB, &gpio);
 }
 
 static void SPI2_Init(void)
 {
-    __HAL_RCC_SPI2_CLK_ENABLE();
-    hspi2.Instance = SPI2;
-    hspi2.Init.Mode = SPI_MODE_MASTER;
-    hspi2.Init.Direction = SPI_DIRECTION_2LINES;
-    hspi2.Init.DataSize = SPI_DATASIZE_8BIT;
-    hspi2.Init.CLKPolarity = SPI_POLARITY_LOW;
-    hspi2.Init.CLKPhase = SPI_PHASE_1EDGE;
-    hspi2.Init.NSS = SPI_NSS_SOFT;
-    hspi2.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_2;
-    hspi2.Init.FirstBit = SPI_FIRSTBIT_MSB;
-    hspi2.Init.TIMode = SPI_TIMODE_DISABLE;
-    hspi2.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
-    hspi2.Init.NSSPMode = SPI_NSS_PULSE_DISABLE;
-    (void)HAL_SPI_Init(&hspi2);
+    /* Pins configured in GPIO_Init as bitbang */
 }
 
 static inline void cs_low(void) { HAL_GPIO_WritePin(SPI2_CS_PORT, SPI2_CS_PIN, GPIO_PIN_RESET); }
@@ -107,10 +101,21 @@ static inline void cs_high(void) { HAL_GPIO_WritePin(SPI2_CS_PORT, SPI2_CS_PIN, 
 
 static uint8_t spi_transfer(uint8_t byte)
 {
-    if (!s_spi_ok) return 0xFFU;
-    uint8_t rx = 0xFFU;
-    if (HAL_SPI_TransmitReceive(&hspi2, &byte, &rx, 1U, 10U) != HAL_OK) {
-        s_spi_ok = false;
+    uint8_t rx = 0U;
+    for (int bit = 7; bit >= 0; --bit) {
+        if (byte & (1 << bit)) {
+            GPIOB->BSRR = GPIO_PIN_6;
+        } else {
+            GPIOB->BRR = GPIO_PIN_6;
+        }
+        for (volatile int d = 0; d < 6; d++) {}
+        GPIOB->BSRR = GPIO_PIN_8;
+        for (volatile int d = 0; d < 6; d++) {}
+        if (GPIOB->IDR & GPIO_PIN_7) {
+            rx |= (1U << bit);
+        }
+        GPIOB->BRR = GPIO_PIN_8;
+        for (volatile int d = 0; d < 6; d++) {}
     }
     return rx;
 }

@@ -560,6 +560,25 @@ static void process_frame(uint8_t cmd, const uint8_t *payload, uint8_t len)
         ok = OTAService_RequestApply();
         break;
 
+    case PC_CMD_TEST_FLASH: {
+        if (len != 0U) { send_nack(cmd, PC_ERR_BAD_LENGTH); return; }
+        uint32_t jedec = 0U;
+        uint32_t cap_kb = 0U;
+        bool test_ok = OTAService_SelfTestFlash(&jedec, &cap_kb);
+        uint8_t rsp[9];
+        rsp[0] = test_ok ? 1U : 0U;
+        rsp[1] = (uint8_t)(jedec & 0xFFU);
+        rsp[2] = (uint8_t)((jedec >> 8) & 0xFFU);
+        rsp[3] = (uint8_t)((jedec >> 16) & 0xFFU);
+        rsp[4] = (uint8_t)((jedec >> 24) & 0xFFU);
+        rsp[5] = (uint8_t)(cap_kb & 0xFFU);
+        rsp[6] = (uint8_t)((cap_kb >> 8) & 0xFFU);
+        rsp[7] = (uint8_t)((cap_kb >> 16) & 0xFFU);
+        rsp[8] = (uint8_t)((cap_kb >> 24) & 0xFFU);
+        send_frame(PC_RSP_FLASH_TEST, rsp, sizeof(rsp));
+        return;
+    }
+
     case PC_CMD_SET_DRIVER:
         if (len != 1) { send_nack(cmd, PC_ERR_BAD_LENGTH); return; }
         if (!CHG_LIB_SelectDriver((CHG_LIB_DriverId_t)payload[0])) {

@@ -107,6 +107,14 @@ bool BSP_SPIFlash_EraseBlock64K(uint32_t address);
  */
 bool BSP_SPIFlash_ChipErase(void);
 
+/**
+ * @brief Self-test external SPI Flash (read JEDEC, write test pattern, verify)
+ * @param out_jedec Pointer to store detected JEDEC ID (optional)
+ * @param out_cap_kb Pointer to store detected capacity in KB (optional)
+ * @return true if hardware communication and write/verify succeeded, false otherwise
+ */
+bool BSP_SPIFlash_SelfTest(uint32_t *out_jedec, uint32_t *out_cap_kb);
+
 #ifdef __cplusplus
 }
 #endif

@@ -221,3 +221,9 @@ void OTAService_GetStatus(OtaStatusView_t *status)
 {
     if (status != NULL) memset(status, 0, sizeof(*status));
 }
+bool OTAService_SelfTestFlash(uint32_t *out_jedec, uint32_t *out_cap_kb)
+{
+    if (out_jedec != NULL) *out_jedec = 0x856017U;
+    if (out_cap_kb != NULL) *out_cap_kb = 8192U;
+    return true;
+}
