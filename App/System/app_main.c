@@ -527,6 +527,7 @@ static void app_action_button(uint16_t dwin_status, uint32_t now)
             /* The controller, not the HMI, decides whether the root cause and
              * output path are safe enough to clear. A failed reset is a
              * deliberate no-op and leaves ERROR visible. */
+            (void)ChargeController_ResetEmergencyStop(now);
             (void)ChargeController_ResetFaultIfSafe(now);
             break;
         case DWIN_STATUS_COMPLETE:
@@ -1366,6 +1367,7 @@ void DWIN_OnKeyEvent(uint16_t vp, uint16_t keyval)
             ChargeController_GetView(&view);
 
             if (view.state == CHARGE_CTRL_STATE_FAULT) {
+                (void)ChargeController_ResetEmergencyStop(now);
                 if (ChargeController_ResetFaultIfSafe(now)) {
                     dwin_precharge_error_hold = false;
                     dwin_precharge_error_code = ALARM_NONE;

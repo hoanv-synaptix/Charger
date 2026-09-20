@@ -496,6 +496,7 @@ static void process_frame(uint8_t cmd, const uint8_t *payload, uint8_t len)
         ChargeCtrlView_t view;
         ChargeController_GetView(&view);
         if (view.state == CHARGE_CTRL_STATE_FAULT) {
+            (void)ChargeController_ResetEmergencyStop(BSP_GetTick());
             (void)ChargeController_ResetFaultIfSafe(BSP_GetTick());
         } else {
             ChargeController_Stop(BSP_GetTick());
@@ -512,6 +513,7 @@ static void process_frame(uint8_t cmd, const uint8_t *payload, uint8_t len)
         break;
 
     case 0x0A: /* PC_CMD_RESET_FAULT */
+        (void)ChargeController_ResetEmergencyStop(BSP_GetTick());
         (void)ChargeController_ResetFaultIfSafe(BSP_GetTick());
         ok = true;
         break;
