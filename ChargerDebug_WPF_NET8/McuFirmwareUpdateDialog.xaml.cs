@@ -264,7 +264,7 @@ public partial class McuFirmwareUpdateDialog : Window
             }
 
             Txt4gIp.Text = !string.IsNullOrWhiteSpace(s.IpAddr) ? s.IpAddr : "--";
-            Txt4gModel.Text = !string.IsNullOrWhiteSpace(s.Model) ? s.Model : "EC200U / LTE";
+            Txt4gModel.Text = !string.IsNullOrWhiteSpace(s.Model) ? s.Model : "--";
 
             SetStatus($"Cập nhật trạng thái module 4G: Nguồn={(s.Powered ? "ON" : "OFF")}, SIM={(s.SimReady ? "OK" : "Lỗi/Trống")}, Mạng={(s.NetRegistered ? "OK" : "Chưa")}, CSQ={s.CsqRssi}.");
         });
