@@ -63,11 +63,11 @@
 #define DWIN_TEXT_COLOR_OFFSET_WORDS  3U
 #define DWIN_SOC_COLOR_ADDR           (DWIN_SOC_SP + DWIN_TEXT_COLOR_OFFSET_WORDS)
 
-#define DWIN_SOC_COLOR_RGB565_UNAVAILABLE 0x8410U /* neutral gray */
-#define DWIN_SOC_COLOR_RGB565_CRITICAL    0xF800U /* red */
+#define DWIN_SOC_COLOR_RGB565_UNAVAILABLE 0x9516U /* slate 400 (non-neon) */
+#define DWIN_SOC_COLOR_RGB565_CRITICAL    0xF38EU /* soft coral red (non-neon) */
 #define DWIN_SOC_COLOR_RGB565_LOW         0xFD20U /* orange */
 #define DWIN_SOC_COLOR_RGB565_MEDIUM      0xD520U /* muted amber */
-#define DWIN_SOC_COLOR_RGB565_NORMAL      0x2CEAU /* muted green */
+#define DWIN_SOC_COLOR_RGB565_NORMAL      0x262BU /* industrial green 500 (non-neon) */
 
 typedef enum {
     DWIN_SOC_COLOR_UNAVAILABLE = 0,

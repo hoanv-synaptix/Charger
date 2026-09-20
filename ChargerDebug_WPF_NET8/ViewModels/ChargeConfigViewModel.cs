@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using ChargerDebugApp.Protocol;
@@ -28,6 +28,22 @@ namespace ChargerDebugApp.ViewModels
                 OnPropertyChanged(string.Empty); // Refresh all bindings
             }
         }
+
+        public int ChargeSourceMode
+        {
+            get => _config.ChargeSourceMode;
+            set
+            {
+                if (_config.ChargeSourceMode != (byte)value)
+                {
+                    _config.ChargeSourceMode = (byte)value;
+                    OnPropertyChanged(nameof(ChargeSourceMode));
+                    OnPropertyChanged(nameof(IsBmsIdEnabled));
+                }
+            }
+        }
+
+        public bool IsBmsIdEnabled => _config.ChargeSourceMode == 0;
 
         public void LoadConfig(ChargeCycleConfig newConfig)
         {

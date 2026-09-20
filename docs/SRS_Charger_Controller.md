@@ -458,7 +458,7 @@ Frame RX được feed tới driver đang active qua `CHG_LIB_FeedCanFrame()`.
   | `0x1042` | nhãn nút (MCU→panel) | 0 START 1 STOP 2 RESET 3 DISABLED — VAR Icon |
   | `0x1043` | nút chạm (panel→MCU) | Return-Key-Code upload khi nhấn; MCU không ghi VP này |
   | `0x1048..0x104B` | SOC | Text Display, 8 bytes / 4 VP; BMS online ví dụ `50%`, offline → `--%` |
-  | `0x8003` | SOC Text Color | SP `0x8000` + 3 WORD; RGB565: unavailable `0x8410`, critical `0xF800`, low `0xFD20`, medium `0xD520` (muted amber), normal `0x2CEA` (muted green) |
+  | `0x8003` | SOC Text Color | SP `0x8000` + 3 WORD; RGB565: unavailable `0x9516` (slate 400), critical `0xF38E` (soft coral red), low `0xFD20`, medium `0xD520` (muted amber), normal `0x262B` (green 500) |
   | `0x1100/1108/1110` | HW ver / FW ver / Device ID | ASCII 8 VP / 16 ký tự |
   | `0x1118` | uptime | u32 (0x1118–19) giây |
   | `0x009C` | RTC set | *chưa dùng — panel tự giữ giờ* |

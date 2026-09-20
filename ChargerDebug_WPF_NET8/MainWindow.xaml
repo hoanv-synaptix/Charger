@@ -397,14 +397,17 @@
                                     <StackPanel>
                                         <GroupBox Header="System Mapping">
                                             <UniformGrid Columns="2">
-                                                <StackPanel Margin="0,5"><TextBlock Text="Admin PIN:" Style="{StaticResource LabelStyle}"/><TextBox Text="{Binding Config.AdminPin, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
-                                                <StackPanel Margin="0,5"><TextBlock Text="BMS CAN ID:" Style="{StaticResource LabelStyle}"/><TextBox Text="{Binding Config.CanBatteryId, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
+                                                <StackPanel Margin="0,5"><TextBlock Text="Device ID:" Style="{StaticResource LabelStyle}"/><TextBox Text="{Binding Config.DeviceId, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" MaxLength="15"/></StackPanel>
+                                                <StackPanel Margin="0,5"><TextBlock Text="Hardware Version:" Style="{StaticResource LabelStyle}"/><TextBox Text="{Binding Config.HwRev, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" MaxLength="11"/></StackPanel>
                                                 <StackPanel Margin="0,5"><TextBlock Text="Charge Source:" Style="{StaticResource LabelStyle}"/>
-                                                    <ComboBox SelectedIndex="{Binding Config.ChargeSourceMode, Mode=TwoWay}">
+                                                    <ComboBox SelectedIndex="{Binding ChargeSourceMode, Mode=TwoWay}">
                                                         <ComboBoxItem>BMS Controlled</ComboBoxItem>
                                                         <ComboBoxItem>Standalone (No BMS)</ComboBoxItem>
                                                     </ComboBox>
                                                 </StackPanel>
+                                                <StackPanel Margin="0,5"><TextBlock Text="BMS CAN ID:" Style="{StaticResource LabelStyle}"/><TextBox Text="{Binding Config.CanBatteryId, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding IsBmsIdEnabled}"/></StackPanel>
+                                                <StackPanel Margin="0,5"><TextBlock Text="Admin PIN:" Style="{StaticResource LabelStyle}"/><TextBox Text="{Binding Config.AdminPin, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
+                                                <TextBlock Text=""/>
                                             </UniformGrid>
                                         </GroupBox>
                                         

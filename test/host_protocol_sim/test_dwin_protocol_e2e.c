@@ -567,7 +567,7 @@ static bool test_soc_color_write_and_cache(void)
     ASSERT(g_tx[0][2] == 5 && g_tx[0][3] == DWIN_CMD_WRITE, "SOC color frame is a DWIN write");
     ASSERT((((uint16_t)g_tx[0][4] << 8) | g_tx[0][5]) == DWIN_SOC_COLOR_ADDR,
            "SOC color uses SP WORD offset address");
-    ASSERT(g_tx[0][6] == 0xF8 && g_tx[0][7] == 0x00, "SOC critical color is RGB565 red");
+    ASSERT(g_tx[0][6] == 0xF3 && g_tx[0][7] == 0x8E, "SOC critical color is RGB565 soft coral red");
 
     reset_capture();
     DWIN_SetSocColor(DWIN_SOC_COLOR_CRITICAL);
@@ -588,12 +588,12 @@ static bool test_soc_color_write_and_cache(void)
            "SOC medium color is RGB565 muted amber");
     reset_capture();
     DWIN_SetSocColor(DWIN_SOC_COLOR_NORMAL);
-    ASSERT(g_tx_count == 1 && g_tx[0][6] == 0x2C && g_tx[0][7] == 0xEA,
-           "SOC normal color is RGB565 muted green");
+    ASSERT(g_tx_count == 1 && g_tx[0][6] == 0x26 && g_tx[0][7] == 0x2B,
+           "SOC normal color is RGB565 industrial green");
     reset_capture();
     DWIN_SetSocColor(DWIN_SOC_COLOR_UNAVAILABLE);
-    ASSERT(g_tx_count == 1 && g_tx[0][6] == 0x84 && g_tx[0][7] == 0x10,
-           "SOC unavailable color is RGB565 gray");
+    ASSERT(g_tx_count == 1 && g_tx[0][6] == 0x95 && g_tx[0][7] == 0x16,
+           "SOC unavailable color is RGB565 slate gray");
 
     printf("[PASS] test_soc_color_write_and_cache\n");
     return true;
