@@ -25,11 +25,19 @@ static volatile QuectelPowerState_t s_pwr_state = QUECTEL_PWR_OFF;
 static uint32_t s_state_start_tick = 0U;
 
 static uint8_t s_rx_buf[QUECTEL_RX_BUF_SIZE];
-static volatile uint16_t s_rx_head = 0U;
 static volatile uint16_t s_rx_tail = 0U;
 static volatile uint32_t s_rx_overflow_count = 0U;
-static uint8_t s_rx_byte = 0U;
+static volatile uint32_t s_rx_line_overflow_count = 0U;
+static volatile bool s_discarding_line = false;
 static bool s_rx_started = false;
+
+static inline uint16_t get_rx_head(void)
+{
+    if (huart5.hdmarx == NULL) return 0U;
+    uint16_t cndtr = (uint16_t)__HAL_DMA_GET_COUNTER(huart5.hdmarx);
+    if (cndtr > QUECTEL_RX_BUF_SIZE) return 0U;
+    return (uint16_t)((QUECTEL_RX_BUF_SIZE - cndtr) % QUECTEL_RX_BUF_SIZE);
+}
 
 /* Hardware control helpers */
 static inline void set_pwr_en(bool enable)
@@ -52,14 +60,16 @@ void BSP_Quectel_Init(void)
     s_pwr_state = QUECTEL_PWR_OFF;
     s_state_start_tick = 0U;
 
-    s_rx_head = 0U;
     s_rx_tail = 0U;
     s_rx_overflow_count = 0U;
 
-    /* Start USART5 interrupt RX */
+    /* Start USART5 circular DMA RX */
     if (!s_rx_started) {
-        if (HAL_UART_Receive_IT(&huart5, &s_rx_byte, 1U) == HAL_OK) {
+        if (HAL_UART_Receive_DMA(&huart5, s_rx_buf, QUECTEL_RX_BUF_SIZE) == HAL_OK) {
             s_rx_started = true;
+            LOG("Quectel: Circular DMA RX started (%u bytes buffer)\r\n", QUECTEL_RX_BUF_SIZE);
+        } else {
+            LOG("Quectel: ERROR starting Circular DMA RX\r\n");
         }
     }
 }
@@ -203,8 +213,9 @@ uint16_t BSP_Quectel_Read(uint8_t *dest, uint16_t max_len)
         return 0U;
     }
 
+    uint16_t head = get_rx_head();
     uint16_t count = 0U;
-    while (s_rx_tail != s_rx_head && count < max_len) {
+    while (s_rx_tail != head && count < max_len) {
         dest[count++] = s_rx_buf[s_rx_tail];
         s_rx_tail = (uint16_t)((s_rx_tail + 1U) % QUECTEL_RX_BUF_SIZE);
     }
@@ -217,9 +228,25 @@ bool BSP_Quectel_ReadLine(char *line, uint16_t max_len)
         return false;
     }
 
-    /* Check if buffer contains a newline '\n' */
+    uint16_t head = get_rx_head();
+
+    /* Phase 1: If currently in discard mode, swallow bytes up to '\n' */
+    if (s_discarding_line) {
+        while (s_rx_tail != head) {
+            uint8_t b = s_rx_buf[s_rx_tail];
+            s_rx_tail = (uint16_t)((s_rx_tail + 1U) % QUECTEL_RX_BUF_SIZE);
+            if (b == '\n') {
+                s_discarding_line = false;
+                break;
+            }
+        }
+        if (s_discarding_line) {
+            return false; /* Still discarding unclosed long line */
+        }
+    }
+
+    /* Phase 2: Scan buffer for newline '\n' without exceeding max_len-1 */
     uint16_t tail = s_rx_tail;
-    uint16_t head = s_rx_head;
     bool found_newline = false;
     uint16_t line_len = 0U;
 
@@ -232,8 +259,22 @@ bool BSP_Quectel_ReadLine(char *line, uint16_t max_len)
             break;
         }
         if (line_len >= (max_len - 1U)) {
-            /* Line is too long for destination buffer; discard up to current */
-            break;
+            /* Line is too long for destination buffer.
+             * Discard all bytes scanned so far and enter discard mode until '\n' */
+            s_discarding_line = true;
+            ++s_rx_line_overflow_count;
+            s_rx_tail = tail;
+
+            /* Opportunistically scan the rest of already-buffered bytes for '\n' */
+            while (s_rx_tail != head) {
+                uint8_t db = s_rx_buf[s_rx_tail];
+                s_rx_tail = (uint16_t)((s_rx_tail + 1U) % QUECTEL_RX_BUF_SIZE);
+                if (db == '\n') {
+                    s_discarding_line = false;
+                    break;
+                }
+            }
+            return false;
         }
     }
 
@@ -263,15 +304,22 @@ bool BSP_Quectel_ReadLine(char *line, uint16_t max_len)
 
 void BSP_Quectel_ClearRx(void)
 {
-    s_rx_tail = s_rx_head;
+    s_rx_tail = get_rx_head();
+    s_discarding_line = false;
+}
+
+uint32_t BSP_Quectel_GetLineOverflowCount(void)
+{
+    return s_rx_line_overflow_count;
 }
 
 uint16_t BSP_Quectel_Available(void)
 {
-    if (s_rx_head >= s_rx_tail) {
-        return (uint16_t)(s_rx_head - s_rx_tail);
+    uint16_t head = get_rx_head();
+    if (head >= s_rx_tail) {
+        return (uint16_t)(head - s_rx_tail);
     }
-    return (uint16_t)(QUECTEL_RX_BUF_SIZE - (s_rx_tail - s_rx_head));
+    return (uint16_t)(QUECTEL_RX_BUF_SIZE - (s_rx_tail - head));
 }
 
 uint32_t BSP_Quectel_GetRxOverflowCount(void)
@@ -281,18 +329,8 @@ uint32_t BSP_Quectel_GetRxOverflowCount(void)
 
 void BSP_Quectel_RxCpltCallback(void *huart)
 {
-    UART_HandleTypeDef *uart = (UART_HandleTypeDef *)huart;
-    if (uart != NULL && uart->Instance == USART5) {
-        uint16_t next = (uint16_t)((s_rx_head + 1U) % QUECTEL_RX_BUF_SIZE);
-        if (next != s_rx_tail) {
-            s_rx_buf[s_rx_head] = s_rx_byte;
-            s_rx_head = next;
-        } else {
-            ++s_rx_overflow_count;
-        }
-        /* Re-arm interrupt for next byte */
-        HAL_UART_Receive_IT(&huart5, &s_rx_byte, 1U);
-    }
+    /* In circular DMA mode, hardware wraps automatically. No action needed. */
+    (void)huart;
 }
 
 void BSP_Quectel_ErrorCallback(void *huart)
@@ -301,6 +339,9 @@ void BSP_Quectel_ErrorCallback(void *huart)
     if (uart != NULL && uart->Instance == USART5) {
         __HAL_UART_CLEAR_FLAG(uart, UART_CLEAR_OREF | UART_CLEAR_FEF |
                                     UART_CLEAR_NEF | UART_CLEAR_PEF);
-        HAL_UART_Receive_IT(&huart5, &s_rx_byte, 1U);
+        /* If circular DMA stopped due to error, restart it */
+        if (uart->hdmarx != NULL && uart->hdmarx->State != HAL_DMA_STATE_BUSY) {
+            HAL_UART_Receive_DMA(&huart5, s_rx_buf, QUECTEL_RX_BUF_SIZE);
+        }
     }
 }

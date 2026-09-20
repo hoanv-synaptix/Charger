@@ -279,14 +279,16 @@ static bool handle_bms_temperature_inhibit(const ChargeCycleConfig_t *cfg, const
     const bool can_alarm = (bms->alarm_flags & BMS_ALARM_TEMP_HIGH_CHG) != 0U;
     const bool stage_overtemp = (cfg != NULL && cfg->temp_enabled != 0U) &&
                                 ((float)bms->max_cell_temp >= cfg->temp_5_c);
-    const bool temp_alarm = can_alarm || stage_overtemp;
+    const bool limit_overtemp = (cfg != NULL && cfg->temp_limit_c > 0.0f) &&
+                                ((float)bms->max_cell_temp >= cfg->temp_limit_c);
+    const bool temp_alarm = can_alarm || stage_overtemp || limit_overtemp;
 
     if (temp_alarm) {
         if (!g_ctrl.bms_temp_inhibit_active) {
             g_ctrl.bms_temp_trip_count++;
-            LOG("CC: BMS temperature trip #%u active (can=%u stage=%u temp=%.1fC alm=0x%08lX)\r\n",
+            LOG("CC: BMS temperature trip #%u active (can=%u stage=%u limit=%u temp=%.1fC alm=0x%08lX)\r\n",
                 (unsigned)g_ctrl.bms_temp_trip_count,
-                can_alarm ? 1U : 0U, stage_overtemp ? 1U : 0U,
+                can_alarm ? 1U : 0U, stage_overtemp ? 1U : 0U, limit_overtemp ? 1U : 0U,
                 bms->max_cell_temp,
                 (unsigned long)bms->alarm_flags);
 
@@ -303,10 +305,16 @@ static bool handle_bms_temperature_inhibit(const ChargeCycleConfig_t *cfg, const
         g_ctrl.bms_temp_recovery_start_tick = 0U;
     } else if (g_ctrl.bms_temp_inhibit_active) {
         /* Recovery condition: CAN alarm must be clear AND cell temperature must have cooled
-         * below hysteresis threshold (temp_5_c - temp_delta_c). */
+         * below hysteresis threshold. */
         bool temp_clear = !can_alarm;
         if (cfg != NULL && cfg->temp_enabled != 0U) {
             if ((float)bms->max_cell_temp > (cfg->temp_5_c - cfg->temp_delta_c)) {
+                temp_clear = false;
+            }
+        }
+        if (cfg != NULL && cfg->temp_limit_c > 0.0f) {
+            float delta = (cfg->temp_delta_c > 0.0f) ? cfg->temp_delta_c : 2.0f;
+            if ((float)bms->max_cell_temp > (cfg->temp_limit_c - delta)) {
                 temp_clear = false;
             }
         }
@@ -2012,6 +2020,7 @@ void ChargeController_Init(void) {
     memset(&g_ctrl, 0, sizeof(g_ctrl));
     g_ctrl.state = CHARGE_CTRL_STATE_IDLE;
     g_ctrl.owner = CHARGE_CTRL_OWNER_NONE;
+    ChargeCycleConfig_ResetSessionDefaults();
     /* Initialize last_* tracking to ensure first state change is logged */
     g_ctrl.last_inhibit = 1;
     g_ctrl.last_derating = 1;
@@ -2162,6 +2171,8 @@ void ChargeController_Process(uint32_t now_tick) {
     if (g_ctrl.state == CHARGE_CTRL_STATE_STOPPING && !g_ctrl.relay_should_close) {
         transition_to(CHARGE_CTRL_STATE_IDLE, now_tick);
         g_ctrl.owner = CHARGE_CTRL_OWNER_NONE;
+        ChargeCycleConfig_ResetSessionDefaults();
+        LOG("CC: Session ended, reset to NORMAL mode and NO DELAY\r\n");
     }
     update_bms_charge_allow();
 }
@@ -2426,6 +2437,8 @@ bool ChargeController_ResetFaultIfSafe(uint32_t now_tick)
     g_ctrl.relay_open_pending = false;
     g_ctrl.precharge_mode = false;
     transition_to(CHARGE_CTRL_STATE_IDLE, now_tick);
+    ChargeCycleConfig_ResetSessionDefaults();
+    LOG("CC: Fault cleared, reset to NORMAL mode and NO DELAY\r\n");
     return true;
 }
 
@@ -2447,6 +2460,8 @@ bool ChargeController_ResetEmergencyStop(uint32_t now_tick) {
         g_ctrl.owner = CHARGE_CTRL_OWNER_NONE;
         g_ctrl.precharge_mode = false;
         transition_to(CHARGE_CTRL_STATE_IDLE, now_tick);
+        ChargeCycleConfig_ResetSessionDefaults();
+        LOG("CC: E-Stop reset, reset to NORMAL mode and NO DELAY\r\n");
     }
     return true;
 }
@@ -2482,6 +2497,8 @@ static void stop_with_reason(uint32_t now_tick, ChargeStopReason_t reason) {
         g_ctrl.is_delaying = false;
         transition_to(CHARGE_CTRL_STATE_IDLE, now_tick);
         g_ctrl.owner = CHARGE_CTRL_OWNER_NONE;
+        ChargeCycleConfig_ResetSessionDefaults();
+        LOG("CC: Delay cancelled, reset to NORMAL mode and NO DELAY\r\n");
         return;
     }
 

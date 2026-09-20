@@ -18,12 +18,23 @@ void OTAService_Init(void);
 void OTAService_Process(uint32_t now_tick);
 void OTAService_ConfirmBoot(void);
 
+typedef enum {
+    OTA_CHECK_OK = 0,
+    OTA_CHECK_ERR_POLICY_DISABLED,
+    OTA_CHECK_ERR_NOT_SAFE,
+    OTA_CHECK_ERR_FLASH_BUSY,
+    OTA_CHECK_ERR_NET_NOT_READY,
+    OTA_CHECK_ERR_BUSY,
+    OTA_CHECK_ERR_INVALID_URL
+} OtaCheckResult_t;
+
 /** Start a manifest fetch. The manifest URL must use HTTPS and be served by
  * the OTA Worker contract; a valid manifest automatically starts the binary
  * download after its integrity fields have been parsed. */
 bool OTAService_StartManifestCheck(const char *manifest_url);
 bool OTAService_SetPolicy(bool enabled, uint32_t interval_ms, const char *manifest_url);
 bool OTAService_RequestCheckNow(void);
+OtaCheckResult_t OTAService_RequestCheckNowResult(void);
 
 typedef struct __attribute__((packed)) {
     uint32_t status;
@@ -68,6 +79,13 @@ bool OTAService_RequestApply(void);
  * @brief Run hardware self-test on external SPI Flash.
  */
 bool OTAService_SelfTestFlash(uint32_t *out_jedec, uint32_t *out_cap_kb);
+
+/**
+ * @brief Direct firmware upload over USB / PC protocol into SPI Flash staging area.
+ */
+bool OTAService_DirectUploadStart(uint32_t total_size, uint32_t expected_crc32, uint32_t version);
+bool OTAService_DirectUploadChunk(uint32_t offset, const uint8_t *data, uint16_t len);
+bool OTAService_DirectUploadFinish(void);
 
 #ifdef __cplusplus
 }

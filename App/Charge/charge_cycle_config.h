@@ -38,7 +38,7 @@ extern "C" {
 #define DEFAULT_JACK_TEMP_POWER_LIMIT_PCT     80.0f
 #define DEFAULT_JACK_TEMP_TRIP_C              75.0f
 #define DEFAULT_ADMIN_PIN                     123456U
-#define DEFAULT_CHARGE_MODE                   0U /* 0: FAST, 1: NORMAL */
+#define DEFAULT_CHARGE_MODE                   1U /* 0: FAST, 1: NORMAL */
 #define DEFAULT_DELAY_ENABLED                 0U /* 0: OFF, 1: ON */
 #define DEFAULT_DELAY_HOURS                   2U
 #define DEFAULT_DELAY_MINUTES                 30U
@@ -159,6 +159,7 @@ void ChargeCycleConfig_GetProfile(uint8_t mode, ChargeCycleConfig_t *config);
 bool ChargeCycleConfig_SetProfile(uint8_t mode, const ChargeCycleConfig_t *config);
 uint8_t ChargeCycleConfig_GetActiveMode(void);
 bool ChargeCycleConfig_SetActiveMode(uint8_t mode);
+void ChargeCycleConfig_ResetSessionDefaults(void);
 
 /** Identity strings (always NUL-terminated). Never NULL. */
 const char *ChargeCycleConfig_GetDeviceId(void);

@@ -34,6 +34,11 @@
 #define PC_CMD_OTA_CHECK_NOW    0x0D
 #define PC_CMD_OTA_APPLY        0x0E
 #define PC_CMD_TEST_FLASH       0x0F
+#define PC_CMD_TEST_SD          0x20
+#define PC_CMD_OTA_UPLOAD_START 0x21  /* payload: u32 size, u32 crc32, u32 version */
+#define PC_CMD_OTA_UPLOAD_CHUNK 0x22  /* payload: u32 offset, u8 data[...] */
+#define PC_CMD_OTA_UPLOAD_FINISH 0x23 /* payload: none -> verify & arm bootloader */
+#define PC_CMD_GET_4G_STATUS    0x24 /* payload: none -> returns 4G modem & network status */
 
 /* Responses STM32 -> PC */
 #define PC_RSP_STATUS           0x81
@@ -43,6 +48,8 @@
 #define PC_RSP_READ_REG         0x85
 #define PC_RSP_OTA_STATUS       0x86
 #define PC_RSP_FLASH_TEST       0x87
+#define PC_RSP_SD_TEST          0x88
+#define PC_RSP_4G_STATUS        0x89
 
 /* NACK error codes */
 #define PC_ERR_BAD_CRC          0x01
@@ -50,6 +57,13 @@
 #define PC_ERR_BAD_LENGTH       0x03
 #define PC_ERR_CAN_TX_FAIL      0x04
 #define PC_ERR_BAD_PARAM        0x05
+
+/* OTA-specific NACK error codes */
+#define PC_ERR_OTA_BUSY             0x20  /* OTA service currently running or busy */
+#define PC_ERR_OTA_NOT_SAFE         0x21  /* Safety interlock active (charging, fault, emergency stop) */
+#define PC_ERR_OTA_NET_NOT_READY    0x22  /* 4G modem or PDP context not ready */
+#define PC_ERR_OTA_FLASH_BUSY       0x23  /* External SPI flash unavailable or busy */
+#define PC_ERR_OTA_POLICY_DISABLED  0x24  /* OTA policy not enabled or URL empty */
 
 /* Status report (gửi định kỳ về PC) */
 #pragma pack(push, 1)
@@ -132,5 +146,4 @@ bool PC_Protocol_PeekTxFrame(uint8_t index, uint8_t *cmd, uint8_t *payload, uint
 #include "app_version.h"
 
 #endif /* PC_PROTOCOL_H */
-
 

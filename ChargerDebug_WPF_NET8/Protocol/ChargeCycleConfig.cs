@@ -9,10 +9,11 @@ namespace ChargerDebugApp.Protocol
     public class ChargeCycleConfig
     {
         public const int EXPECTED_BINARY_SIZE = 243;
+        public const int V7_BINARY_SIZE = 249;
 
         // 1. Version
         [JsonPropertyName("version")]
-        public ushort Version { get; set; } = 6;
+        public ushort Version { get; set; } = 7;
 
         // 2. General Limits (10 floats = 40 bytes)
         [JsonPropertyName("battery_capacity_ah")]
@@ -216,14 +217,27 @@ namespace ChargerDebugApp.Protocol
 
         // 9. Identity v4 (16 + 12 = 28 bytes)
         [JsonPropertyName("device_id")]
-        public string DeviceId { get; set; } = "";
+        public string DeviceId { get; set; } = "PKG-0001";
 
         [JsonPropertyName("hw_rev")]
-        public string HwRev { get; set; } = "";
+        public string HwRev { get; set; } = "V1.0.0";
 
         // 10. v6 pre-charge authorization PIN (app/Flash canonical config)
         [JsonPropertyName("admin_pin")]
         public uint AdminPin { get; set; } = 123456;
+
+        // 11. v7 DWIN Charge Mode & Delay Start
+        [JsonPropertyName("charge_mode")]
+        public byte ChargeMode { get; set; } = 1; // 0=FAST, 1=NORMAL
+
+        [JsonPropertyName("delay_enabled")]
+        public bool DelayEnabled { get; set; } = false;
+
+        [JsonPropertyName("delay_hours")]
+        public ushort DelayHours { get; set; } = 2;
+
+        [JsonPropertyName("delay_minutes")]
+        public ushort DelayMinutes { get; set; } = 30;
 
         public static ChargeCycleConfig CreateDefault()
         {
@@ -232,7 +246,7 @@ namespace ChargerDebugApp.Protocol
 
         public byte[] ToBytes()
         {
-            using var ms = new MemoryStream(EXPECTED_BINARY_SIZE);
+            using var ms = new MemoryStream(V7_BINARY_SIZE);
             using var writer = new BinaryWriter(ms, Encoding.ASCII);
 
             // Version (2)
@@ -332,6 +346,12 @@ namespace ChargerDebugApp.Protocol
             // v6 admin PIN (u32, appended after the v5 payload)
             writer.Write(AdminPin);
 
+            // v7 charge mode & delay (6 bytes)
+            writer.Write(ChargeMode);
+            writer.Write((byte)(DelayEnabled ? 1 : 0));
+            writer.Write(DelayHours);
+            writer.Write(DelayMinutes);
+
             return ms.ToArray();
         }
 
@@ -427,6 +447,15 @@ namespace ChargerDebugApp.Protocol
             if (hwLen < 0) hwLen = 12;
             cfg.HwRev = Encoding.ASCII.GetString(hwRaw, 0, hwLen);
             cfg.AdminPin = reader.ReadUInt32();
+
+            // v7: if remaining bytes >= 6, read charge mode & delay fields
+            if (ms.Length - ms.Position >= 6)
+            {
+                cfg.ChargeMode = reader.ReadByte();
+                cfg.DelayEnabled = reader.ReadByte() != 0;
+                cfg.DelayHours = reader.ReadUInt16();
+                cfg.DelayMinutes = reader.ReadUInt16();
+            }
 
             return cfg;
         }

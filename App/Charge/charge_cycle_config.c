@@ -7,7 +7,7 @@
 static ChargeCycleConfig_t g_charge_cycle_config;
 static ChargeCycleConfig_t s_fast_config;
 static ChargeCycleConfig_t s_normal_config;
-static uint8_t s_active_mode = CHARGE_MODE_FAST;
+static uint8_t s_active_mode = CHARGE_MODE_NORMAL;
 
 static bool value_is_invalid(float value)
 {
@@ -248,13 +248,15 @@ void ChargeCycleConfig_Init(void)
 {
     ChargeCycleConfig_GetDefaults(&s_fast_config);
     s_fast_config.charge_mode = CHARGE_MODE_FAST;
+    s_fast_config.delay_enabled = 0U;
 
     ChargeCycleConfig_GetDefaults(&s_normal_config);
     s_normal_config.charge_mode = CHARGE_MODE_NORMAL;
+    s_normal_config.delay_enabled = 0U;
     s_normal_config.imax_c = 0.5f; /* Sensible default distinction for normal mode */
 
-    s_active_mode = CHARGE_MODE_FAST;
-    g_charge_cycle_config = s_fast_config;
+    s_active_mode = CHARGE_MODE_NORMAL;
+    g_charge_cycle_config = s_normal_config;
 }
 
 void ChargeCycleConfig_Get(ChargeCycleConfig_t *config)
@@ -308,7 +310,11 @@ bool ChargeCycleConfig_Set(const ChargeCycleConfig_t *config)
     uint8_t mode = (config->charge_mode <= 1U) ? config->charge_mode : s_active_mode;
     bool ok = ChargeCycleConfig_SetProfile(mode, config);
     if (ok) {
-        ChargeCycleConfig_SetActiveMode(mode);
+        if (mode != s_active_mode) {
+            s_active_mode = mode;
+            g_charge_cycle_config = (s_active_mode == CHARGE_MODE_NORMAL) ? s_normal_config : s_fast_config;
+            apply_hardware_config(&g_charge_cycle_config);
+        }
     }
     return ok;
 }
@@ -325,8 +331,27 @@ bool ChargeCycleConfig_SetActiveMode(uint8_t mode)
     }
     s_active_mode = mode;
     g_charge_cycle_config = (s_active_mode == CHARGE_MODE_NORMAL) ? s_normal_config : s_fast_config;
-    apply_hardware_config(&g_charge_cycle_config);
+    for (uint8_t i = 0; i < g_charge_cycle_config.source_module_count; i++) {
+        if (g_charge_cycle_config.module_i_max_a > 0.0f) {
+            CHG_LIB_SetModuleConfig(i, g_charge_cycle_config.module_i_max_a);
+        }
+    }
     return true;
+}
+
+void ChargeCycleConfig_ResetSessionDefaults(void)
+{
+    /* Always revert active mode to NORMAL and clear delay_enabled for a new session,
+     * while preserving delay_hours and delay_minutes (Option A). */
+    s_normal_config.delay_enabled = 0U;
+    s_fast_config.delay_enabled = 0U;
+    s_active_mode = CHARGE_MODE_NORMAL;
+    g_charge_cycle_config = s_normal_config;
+    for (uint8_t i = 0; i < g_charge_cycle_config.source_module_count; i++) {
+        if (g_charge_cycle_config.module_i_max_a > 0.0f) {
+            CHG_LIB_SetModuleConfig(i, g_charge_cycle_config.module_i_max_a);
+        }
+    }
 }
 
 const char *ChargeCycleConfig_GetDeviceId(void)

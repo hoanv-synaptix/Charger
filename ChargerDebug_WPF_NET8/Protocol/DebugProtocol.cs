@@ -23,8 +23,115 @@ namespace ChargerDebugApp.Protocol
         RESET_TOTALS = 0x1F
     }
 
+    public enum PcCmd : byte
+    {
+        SET_OTA_POLICY = 0x0B,
+        GET_OTA_STATUS = 0x0C,
+        OTA_CHECK_NOW = 0x0D,
+        OTA_APPLY = 0x0E,
+        TEST_FLASH = 0x0F,
+        TEST_SD = 0x20,
+        OTA_UPLOAD_START = 0x21,
+        OTA_UPLOAD_CHUNK = 0x22,
+        OTA_UPLOAD_FINISH = 0x23,
+        GET_4G_STATUS = 0x24
+    }
+
+    public enum PcRsp : byte
+    {
+        STATUS = 0x81,
+        ACK = 0x82,
+        NACK = 0x83,
+        PONG = 0x84,
+        READ_REG = 0x85,
+        OTA_STATUS = 0x86,
+        FLASH_TEST = 0x87,
+        SD_TEST = 0x88,
+        _4G_STATUS = 0x89
+    }
+
+    public enum OtaStatusCode : uint
+    {
+        IDLE = 0,
+        DOWNLOADING = 1,
+        DOWNLOADED = 2,
+        VERIFIED = 3,
+        APPLIED = 4,
+        ERROR_SIZE = 5,
+        ERROR_CRC = 6,
+        ERROR_FLASH = 7,
+        ERROR_NETWORK = 8,
+        ERROR_TIMEOUT = 9,
+        ERROR_ROLLBACK = 10,
+        BOOT_TEST = 11
+    }
+
+    public class OtaStatusView
+    {
+        public OtaStatusCode Status { get; set; }
+        public uint Version { get; set; }
+        public uint ImageSize { get; set; }
+        public uint DownloadedBytes { get; set; }
+        public uint BootRequest { get; set; }
+        public uint BootAttempts { get; set; }
+        public uint PolicyEnabled { get; set; }
+
+        public static OtaStatusView FromBytes(byte[] payload)
+        {
+            if (payload == null || payload.Length < 28) return new OtaStatusView();
+            return new OtaStatusView
+            {
+                Status = (OtaStatusCode)BitConverter.ToUInt32(payload, 0),
+                Version = BitConverter.ToUInt32(payload, 4),
+                ImageSize = BitConverter.ToUInt32(payload, 8),
+                DownloadedBytes = BitConverter.ToUInt32(payload, 12),
+                BootRequest = BitConverter.ToUInt32(payload, 16),
+                BootAttempts = BitConverter.ToUInt32(payload, 20),
+                PolicyEnabled = BitConverter.ToUInt32(payload, 24)
+            };
+        }
+    }
+
+    public class QuectelNetStatus
+    {
+        public byte State { get; set; }
+        public bool Powered { get; set; }
+        public bool SimReady { get; set; }
+        public bool NetRegistered { get; set; }
+        public bool PdpActive { get; set; }
+        public byte CsqRssi { get; set; }
+        public string IpAddr { get; set; } = "";
+        public string Model { get; set; } = "";
+
+        public static QuectelNetStatus FromBytes(byte[] payload)
+        {
+            var s = new QuectelNetStatus();
+            if (payload == null || payload.Length < 6) return s;
+            s.State = payload[0];
+            s.Powered = payload[1] != 0;
+            s.SimReady = payload[2] != 0;
+            s.NetRegistered = payload[3] != 0;
+            s.PdpActive = payload[4] != 0;
+            s.CsqRssi = payload[5];
+
+            if (payload.Length >= 26)
+            {
+                s.IpAddr = System.Text.Encoding.ASCII.GetString(payload, 6, Math.Min(20, payload.Length - 6)).TrimEnd('\0', ' ');
+            }
+            if (payload.Length >= 50)
+            {
+                s.Model = System.Text.Encoding.ASCII.GetString(payload, 26, Math.Min(24, payload.Length - 26)).TrimEnd('\0', ' ');
+            }
+            return s;
+        }
+    }
+
     public enum DebugRsp : byte
     {
+        ACK = 0x82,
+        NACK = 0x83,
+        OTA_STATUS = 0x86,
+        _4G_STATUS = 0x89,
         MODULE_DATA = 0x90,
         ALL_MODULES = 0x91,
         COMM_STATS = 0x92,
@@ -249,6 +356,10 @@ namespace ChargerDebugApp.Protocol
         public event Action<SystemInfo>? OnSystemInfoReceived;
         public event Action<ChargeCycleConfig>? OnChargeConfigReceived;
         public event Action<byte, string>? OnErrorReceived;
+        public event Action<OtaStatusView>? OnOtaStatusReceived;
+        public event Action<QuectelNetStatus>? OnQuectelStatusReceived;
+        public event Action<byte>? OnAckReceived;
+        public event Action<byte, byte>? OnNackReceived;
 
         public void ParseFrame(byte cmdByte, byte[] payload)
         {
@@ -259,6 +370,23 @@ namespace ChargerDebugApp.Protocol
             {
                 switch (cmd)
                 {
+                    case DebugRsp.ACK:
+                        byte ackCmd = payload.Length > 0 ? payload[0] : (byte)0;
+                        OnAckReceived?.Invoke(ackCmd);
+                        break;
+                    case DebugRsp.NACK:
+                        byte nackCmd = payload.Length > 0 ? payload[0] : (byte)0;
+                        byte nackErr = payload.Length > 1 ? payload[1] : (byte)0;
+                        OnNackReceived?.Invoke(nackCmd, nackErr);
+                        break;
+                    case DebugRsp.OTA_STATUS:
+                        var ota = OtaStatusView.FromBytes(payload);
+                        OnOtaStatusReceived?.Invoke(ota);
+                        break;
+                    case DebugRsp._4G_STATUS:
+                        var qstatus = QuectelNetStatus.FromBytes(payload);
+                        OnQuectelStatusReceived?.Invoke(qstatus);
+                        break;
                     case DebugRsp.ALL_MODULES:
                         if (payload.Length < 2) return;
                         byte seq = payload[0];

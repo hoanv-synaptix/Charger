@@ -327,12 +327,12 @@ void ChargeCycleStorage_Init(void) {
     bool migrated = false;
 
     if (load_latest_configs(&fast_cfg, &norm_cfg, &active_mode, &migrated)) {
-        LOG("ChargeCycleStorage: Loaded configs from %s (active_mode=%u)\r\n",
-            BSP_SPIFlash_IsAvailable() ? "External SPI Flash" : "Internal Flash",
-            (unsigned)active_mode);
+        LOG("ChargeCycleStorage: Loaded configs from %s\r\n",
+            BSP_SPIFlash_IsAvailable() ? "External SPI Flash" : "Internal Flash");
         ChargeCycleConfig_SetProfile(CHARGE_MODE_FAST, &fast_cfg);
         ChargeCycleConfig_SetProfile(CHARGE_MODE_NORMAL, &norm_cfg);
-        ChargeCycleConfig_SetActiveMode(active_mode);
+        /* Always boot into default NORMAL mode and NO DELAY (Option A retains delay_hours/minutes) */
+        ChargeCycleConfig_ResetSessionDefaults();
         if (migrated) {
             LOG("ChargeCycleStorage: Migrated config to v%u on %s\r\n",
                 (unsigned)CHARGE_CYCLE_CONFIG_VERSION,
@@ -344,10 +344,10 @@ void ChargeCycleStorage_Init(void) {
         LOG("ChargeCycleStorage: Using default config on %s\r\n",
             BSP_SPIFlash_IsAvailable() ? "External SPI Flash" : "Internal Flash");
         ChargeCycleConfig_Init();
-        ChargeCycleConfig_Get(&fast_cfg);
-        ChargeCycleConfig_Set(&fast_cfg);
+        ChargeCycleConfig_Get(&norm_cfg);
+        ChargeCycleConfig_Set(&norm_cfg);
         /* Write default config immediately so flash is initialized */
-        (void)ChargeCycleStorage_SaveProfile(CHARGE_MODE_FAST, &fast_cfg);
+        (void)ChargeCycleStorage_SaveProfile(CHARGE_MODE_NORMAL, &norm_cfg);
     }
 }
 

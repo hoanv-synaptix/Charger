@@ -42,7 +42,16 @@ namespace ChargerDebugApp.Protocol
                 _serialPort.PortName = portName;
                 _serialPort.BaudRate = baudRate;
                 _serialPort.ReadTimeout = 100;
+                _serialPort.DtrEnable = true;
+                _serialPort.RtsEnable = true;
                 _serialPort.Open();
+
+                try
+                {
+                    _serialPort.DiscardInBuffer();
+                    _serialPort.DiscardOutBuffer();
+                }
+                catch { }
 
                 _keepReading = true;
                 _readThread = new Thread(ReadLoop);

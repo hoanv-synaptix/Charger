@@ -9,13 +9,14 @@
 /* Firmware Version */
 #define FW_VERSION_MAJOR        2U
 #define FW_VERSION_MINOR        0U
-#define FW_VERSION_PATCH        0U
-#define FW_VERSION_STRING       "V2.0"
+#define FW_VERSION_PATCH        1U
+#define FW_VERSION_STRING       "V2.0.1"
 
 /* Hardware Version */
 #define HW_VERSION_MAJOR        1U
 #define HW_VERSION_MINOR        0U
-#define HW_VERSION_STRING       "V1.0"
+#define HW_VERSION_PATCH        0U
+#define HW_VERSION_STRING       "V1.0.0"
 
 /* Default Device Identity */
 #define DEFAULT_DEVICE_ID       "PKG-0001"

@@ -37,6 +37,7 @@ static void transition_to(QuectelNetState_t new_state, uint32_t now_tick)
 void QuectelEngine_Init(void)
 {
     memset(&s_net_status, 0, sizeof(s_net_status));
+    strncpy(s_net_status.model, "EC200U / LTE", sizeof(s_net_status.model) - 1U);
     s_ota_exclusive = false;
     s_net_status.state = QUECTEL_NET_STATE_OFF;
     s_net_status.csq_rssi = 99U; /* Unknown */
@@ -76,7 +77,7 @@ void QuectelEngine_GetStatus(QuectelNetStatus_t *out_status)
 
 void QuectelEngine_Process(uint32_t now_tick)
 {
-    char line[128];
+    char line[256];
 
     s_net_status.powered = BSP_Quectel_IsReady();
 

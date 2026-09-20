@@ -10,8 +10,10 @@
 #include "charge_cycle_storage.h"
 #include "charge_controller.h"
 #include "ota_service.h"
+#include "sd_storage.h"
 #include "usbd_cdc_if.h"
 #include "debug_log.h"
+#include "quectel_at_engine.h"
 #include "pc_debug_protocol.h"
 #include <string.h>
 #include <math.h>
@@ -550,10 +552,25 @@ static void process_frame(uint8_t cmd, const uint8_t *payload, uint8_t len)
         return;
     }
 
-    case PC_CMD_OTA_CHECK_NOW:
+    case PC_CMD_OTA_CHECK_NOW: {
         if (len != 0U) { send_nack(cmd, PC_ERR_BAD_LENGTH); return; }
-        ok = OTAService_RequestCheckNow();
-        break;
+        OtaCheckResult_t res = OTAService_RequestCheckNowResult();
+        if (res == OTA_CHECK_OK) {
+            send_ack(cmd);
+        } else {
+            uint8_t err_code = PC_ERR_CAN_TX_FAIL;
+            switch (res) {
+            case OTA_CHECK_ERR_POLICY_DISABLED: err_code = PC_ERR_OTA_POLICY_DISABLED; break;
+            case OTA_CHECK_ERR_NOT_SAFE:         err_code = PC_ERR_OTA_NOT_SAFE; break;
+            case OTA_CHECK_ERR_FLASH_BUSY:      err_code = PC_ERR_OTA_FLASH_BUSY; break;
+            case OTA_CHECK_ERR_NET_NOT_READY:   err_code = PC_ERR_OTA_NET_NOT_READY; break;
+            case OTA_CHECK_ERR_BUSY:            err_code = PC_ERR_OTA_BUSY; break;
+            default:                            err_code = PC_ERR_BAD_PARAM; break;
+            }
+            send_nack(cmd, err_code);
+        }
+        return;
+    }
 
     case PC_CMD_OTA_APPLY:
         if (len != 0U) { send_nack(cmd, PC_ERR_BAD_LENGTH); return; }
@@ -583,6 +600,90 @@ static void process_frame(uint8_t cmd, const uint8_t *payload, uint8_t len)
         rsp[7] = (uint8_t)((cap_kb >> 16) & 0xFFU);
         rsp[8] = (uint8_t)((cap_kb >> 24) & 0xFFU);
         send_frame(PC_RSP_FLASH_TEST, rsp, sizeof(rsp));
+        return;
+    }
+
+    case PC_CMD_TEST_SD: {
+        SDStorageTestResult_t test;
+        uint8_t rsp[16];
+
+        if (len != 0U) { send_nack(cmd, PC_ERR_BAD_LENGTH); return; }
+        if (ChargeController_IsRunning()) {
+            send_nack(cmd, PC_ERR_BAD_PARAM);
+            return;
+        }
+
+        (void)SDStorage_RunSelfTest(&test);
+        rsp[0] = test.card_present ? 1U : 0U;
+        rsp[1] = test.card_ready ? 1U : 0U;
+        rsp[2] = test.mounted ? 1U : 0U;
+        rsp[3] = test.sector0_read ? 1U : 0U;
+        rsp[4] = test.mbr_signature ? 1U : 0U;
+        rsp[5] = test.file_write ? 1U : 0U;
+        rsp[6] = test.file_read ? 1U : 0U;
+        rsp[7] = test.file_match ? 1U : 0U;
+        rsp[8] = test.file_removed ? 1U : 0U;
+        rsp[9] = (uint8_t)test.last_result;
+        rsp[10] = (uint8_t)(test.block_count & 0xFFU);
+        rsp[11] = (uint8_t)((test.block_count >> 8U) & 0xFFU);
+        rsp[12] = (uint8_t)((test.block_count >> 16U) & 0xFFU);
+        rsp[13] = (uint8_t)((test.block_count >> 24U) & 0xFFU);
+        rsp[14] = (uint8_t)test.read_stage;
+        rsp[15] = test.read_response;
+        send_frame(PC_RSP_SD_TEST, rsp, sizeof(rsp));
+        return;
+    }
+
+    case PC_CMD_OTA_UPLOAD_START: {
+        if (len != 12U) { send_nack(cmd, PC_ERR_BAD_LENGTH); return; }
+        uint32_t total_size = unpack_u32_le(&payload[0]);
+        uint32_t expected_crc = unpack_u32_le(&payload[4]);
+        uint32_t version = unpack_u32_le(&payload[8]);
+        if (!OTAService_DirectUploadStart(total_size, expected_crc, version)) {
+            send_nack(cmd, PC_ERR_BAD_PARAM);
+            return;
+        }
+        ok = true;
+        break;
+    }
+
+    case PC_CMD_OTA_UPLOAD_CHUNK: {
+        if (len < 5U) { send_nack(cmd, PC_ERR_BAD_LENGTH); return; }
+        uint32_t offset = unpack_u32_le(&payload[0]);
+        uint16_t chunk_len = (uint16_t)(len - 4U);
+        if (!OTAService_DirectUploadChunk(offset, &payload[4], chunk_len)) {
+            send_nack(cmd, PC_ERR_BAD_PARAM);
+            return;
+        }
+        ok = true;
+        break;
+    }
+
+    case PC_CMD_OTA_UPLOAD_FINISH: {
+        if (len != 0U) { send_nack(cmd, PC_ERR_BAD_LENGTH); return; }
+        if (!OTAService_DirectUploadFinish()) {
+            send_nack(cmd, PC_ERR_BAD_PARAM);
+            return;
+        }
+        ok = true;
+        break;
+    }
+
+    case PC_CMD_GET_4G_STATUS: {
+        if (len != 0U) { send_nack(cmd, PC_ERR_BAD_LENGTH); return; }
+        QuectelNetStatus_t status;
+        QuectelEngine_GetStatus(&status);
+        uint8_t rsp[50];
+        memset(rsp, 0, sizeof(rsp));
+        rsp[0] = (uint8_t)status.state;
+        rsp[1] = status.powered ? 1U : 0U;
+        rsp[2] = status.sim_ready ? 1U : 0U;
+        rsp[3] = status.net_registered ? 1U : 0U;
+        rsp[4] = status.pdp_active ? 1U : 0U;
+        rsp[5] = status.csq_rssi;
+        memcpy(&rsp[6], status.ip_addr, 20U);
+        memcpy(&rsp[26], status.model, 24U);
+        send_frame(PC_RSP_4G_STATUS, rsp, sizeof(rsp));
         return;
     }
 

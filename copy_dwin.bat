@@ -2,7 +2,7 @@
 chcp 65001 >nul
 setlocal
 
-set "SOURCE=D:\Projects\Charger_CTRL\Charger\ui\DWIN_SET"
+set "SOURCE=D:\Projects\Charger_CTRL\Charger\ui_darkmode\DWIN_SET"
 set "DRIVE=E"
 set "TARGET=%DRIVE%:\DWIN_SET"
 

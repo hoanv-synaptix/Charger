@@ -8,6 +8,7 @@
 #include "charge_cycle_config.h"
 #include "charge_cycle_storage.h"
 #include "charge_energy_storage.h"
+#include "sd_storage.h"
 
 typedef struct {
     uint32_t status;
@@ -18,6 +19,17 @@ typedef struct {
     uint32_t boot_attempts;
     uint32_t policy_enabled;
 } OtaStatusView_t;
+
+typedef struct {
+    uint8_t state;
+    bool powered;
+    bool sim_ready;
+    bool net_registered;
+    bool pdp_active;
+    uint8_t csq_rssi;
+    char ip_addr[20];
+    char model[24];
+} QuectelNetStatus_t;
 
 void LOG(const char *fmt, ...)
 {
@@ -227,3 +239,29 @@ bool OTAService_SelfTestFlash(uint32_t *out_jedec, uint32_t *out_cap_kb)
     if (out_cap_kb != NULL) *out_cap_kb = 8192U;
     return true;
 }
+bool OTAService_DirectUploadStart(uint32_t total_size, uint32_t expected_crc32, uint32_t version)
+{
+    (void)total_size; (void)expected_crc32; (void)version; return true;
+}
+bool OTAService_DirectUploadChunk(uint32_t offset, const uint8_t *data, uint16_t len)
+{
+    (void)offset; (void)data; (void)len; return true;
+}
+bool OTAService_DirectUploadFinish(void) { return true; }
+
+void QuectelEngine_GetStatus(QuectelNetStatus_t *out_status)
+{
+    if (out_status != NULL) memset(out_status, 0, sizeof(*out_status));
+}
+
+bool SDStorage_RunSelfTest(SDStorageTestResult_t *result)
+{
+    if (result != NULL) {
+        memset(result, 0, sizeof(*result));
+        result->last_result = FR_NOT_READY;
+    }
+    return false;
+}
+
+void HAL_Delay(uint32_t ms) { (void)ms; }
+void NVIC_SystemReset(void) {}

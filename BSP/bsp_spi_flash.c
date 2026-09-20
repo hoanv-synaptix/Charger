@@ -363,7 +363,7 @@ bool BSP_SPIFlash_Write(uint32_t address, const uint8_t *data, uint32_t len)
     return true;
 }
 
-bool BSP_SPIFlash_EraseSector4K(uint32_t address)
+bool BSP_SPIFlash_StartEraseSector4K(uint32_t address)
 {
     if (!s_flash_available || address >= s_capacity_bytes) {
         return false;
@@ -385,7 +385,19 @@ bool BSP_SPIFlash_EraseSector4K(uint32_t address)
     bool ok = spi_transmit(cmd, 4U);
     cs_high();
 
-    if (!ok) return false;
+    return ok;
+}
+
+bool BSP_SPIFlash_IsBusy(void)
+{
+    if (!s_flash_available) return false;
+    uint8_t status = read_status_reg1();
+    return (status & STATUS_REG1_BUSY) != 0U;
+}
+
+bool BSP_SPIFlash_EraseSector4K(uint32_t address)
+{
+    if (!BSP_SPIFlash_StartEraseSector4K(address)) return false;
     return wait_not_busy(ERASE_TIMEOUT_MS);
 }
 

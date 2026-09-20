@@ -34,3 +34,7 @@ debug_app/*.log
 
 # Local test reports and captured HIL data
 /test/artifacts/
+
+# Node modules
+node_modules/
+*.bak

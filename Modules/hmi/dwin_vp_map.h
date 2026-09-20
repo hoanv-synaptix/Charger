@@ -36,7 +36,8 @@
 /* --- Dashboard: Battery (0x1010) --- */
 #define VP_BAT_PACK_VOLT_TEXT  0x1010U  /* Text GBK/ASCII, 8 bytes, 0x1010..1013 */
 #define VP_BAT_CELL_VOLT_TEXT  0x1014U  /* Text GBK/ASCII, 8 bytes: max cell voltage in volts with 3 decimals (e.g. "3.315") */
-#define VP_BAT_CHARGED_AH_TEXT 0x1018U  /* Text GBK/ASCII, 8 bytes, 0x1018..101B */
+#define VP_BAT_CHG_MODE_TEXT   0x1018U  /* Text GBK/ASCII, 8 bytes: "NORMAL" or "FAST", 0x1018..101B */
+#define VP_BAT_CHARGED_AH_TEXT VP_BAT_CHG_MODE_TEXT /* Legacy alias */
 
 /* --- Dashboard: Input AC (0x1020) --- */
 #define VP_AC_PHASE_L1       0x1020U  /* Text GBK/ASCII, 8 bytes, 0x1020..1023 */

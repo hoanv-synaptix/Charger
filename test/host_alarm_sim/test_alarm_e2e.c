@@ -233,7 +233,7 @@ static bool test_all_bms_alm_info_fields_from_pdf(void)
         const char *dwin_code;
         AlarmAction_t action;
     } cases[] = {
-        {0U,  BMS_ALARM_LOW_PACK_VOLT,   ALARM_BMS_LOW_PACK_VOLT,   "E001", ALARM_ACT_INFO},
+        {0U,  BMS_ALARM_LOW_PACK_VOLT,   ALARM_BMS_LOW_PACK_VOLT,   "E001", ALARM_ACT_STOP},
         {1U,  BMS_ALARM_LOW_CELL_VOLT,   ALARM_BMS_LOW_CELL_VOLT,   "E002", ALARM_ACT_INFO},
         {2U,  BMS_ALARM_HIGH_PACK_VOLT,  ALARM_BMS_HIGH_PACK_VOLT,  "E003", ALARM_ACT_STOP},
         {3U,  BMS_ALARM_HIGH_CELL_VOLT,  ALARM_BMS_HIGH_CELL_VOLT,  "E004", ALARM_ACT_STOP},
@@ -1004,6 +1004,106 @@ static bool test_bms_no_pack_voltage(void)
     return true;
 }
 
+static bool test_bms_low_pack_voltage_with_vmin(void)
+{
+    printf("Running test_bms_low_pack_voltage_with_vmin...\n");
+    ChargeCycleConfig_t cfg;
+    ASSERT(setup(&cfg), "setup");
+    /* In setup: vmax_v = 500.0f, vmin_v = 300.0f.
+     * Floor 0.5 * Vmax = 250.0f.
+     * Start running with healthy voltage (400V). */
+    healthy_bms(400.0f);
+    ASSERT(start_running(), "controller never RUNNING");
+
+    /* Drop pack voltage into [250V, 300V), e.g. 270.0V. */
+    g_sim_bms.pack_voltage_v = 270.0f;
+    drive_ms(200U);
+
+    ASSERT(alarm_logged_raise(ALARM_BMS_LOW_PACK_VOLT), "ALARM_BMS_LOW_PACK_VOLT (E001) never raised");
+    ChargeCtrlView_t cv; ChargeController_GetView(&cv);
+    ASSERT(cv.state != CHARGE_CTRL_STATE_RUNNING, "controller should have stopped on low pack voltage");
+    printf("[PASS] test_bms_low_pack_voltage_with_vmin\n");
+    return true;
+}
+
+static bool test_bms_low_pack_voltage_precharge_bypassed(void)
+{
+    printf("Running test_bms_low_pack_voltage_precharge_bypassed...\n");
+    ChargeCycleConfig_t cfg;
+    ASSERT(setup(&cfg), "setup");
+    /* In setup: vmax_v = 500.0f, vmin_v = 300.0f.
+     * Floor 0.5 * Vmax = 250.0f.
+     * Set pack voltage in [250V, 300V), e.g. 270.0V. */
+    healthy_bms(270.0f);
+    drive_ms(1500U);
+    ASSERT(ChargeController_StartPrecharge(CHARGE_CTRL_OWNER_PC, mock_tick),
+           "precharge must start");
+    drive_ms(500U);
+
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_PRECHARGE, "controller must be in PRECHARGE");
+    ASSERT(!alarm_active(ALARM_BMS_LOW_PACK_VOLT), "E001 must not trip in PRECHARGE mode");
+
+    ChargeController_Stop(mock_tick);
+    drive_ms(500U);
+    printf("[PASS] test_bms_low_pack_voltage_precharge_bypassed\n");
+    return true;
+}
+
+static bool test_config_temp_limit_halts_on_4th(void)
+{
+    printf("Running test_config_temp_limit_halts_on_4th...\n");
+    ChargeCycleConfig_t cfg;
+    ASSERT(setup(&cfg), "setup");
+    cfg.temp_limit_c = 60.0f;
+    ASSERT(ChargeCycleConfig_Set(&cfg), "config rejected");
+
+    healthy_bms(400.0f);
+    ASSERT(start_running(), "controller never RUNNING");
+    establish_load(400.0f, 40.0f);
+
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.bms_temp_trip_count == 0U, "initial trip count must be 0");
+
+    /* Trip 1, 2, 3: Must inhibit (0A) and auto-recover */
+    for (uint8_t trip = 1U; trip <= 3U; trip++) {
+        /* Exceed temp_limit_c (62.0C > 60.0C) without BMS ALM_INFO overtemp flag */
+        g_sim_bms.max_cell_temp_c = 62.0f;
+        drive_ms(1000U);
+
+        ChargeController_GetView(&cv);
+        ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "controller must stay RUNNING during recoverable trip");
+        ASSERT(cv.inhibit != 0U && cv.applied_current_per_module_a == 0.0f, "current must be clamped to 0A");
+        ASSERT(cv.bms_temp_trip_count == trip, "trip count mismatch");
+
+        /* Cool down below (60.0 - 5.0 = 55.0C), e.g. 54.0C and auto-recover */
+        g_sim_bms.max_cell_temp_c = 54.0f;
+        drive_ms(3500U);
+
+        ChargeController_GetView(&cv);
+        ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "controller must recover to RUNNING");
+        ASSERT(cv.inhibit == 0U, "inhibit must clear on recovery");
+        ASSERT(cv.bms_temp_trip_count == trip, "trip count must persist across recoveries");
+
+        /* Re-establish load for next cycle */
+        establish_load(400.0f, 40.0f);
+    }
+
+    /* Trip 4: Must halt charge completely (STATE_FAULT), not auto-recover */
+    g_sim_bms.max_cell_temp_c = 62.0f;
+    drive_ms(1000U);
+
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_FAULT, "controller must enter FAULT state on 4th trip");
+    ASSERT(cv.bms_temp_trip_count == 4U, "trip count must be 4 on 4th trip");
+    ASSERT(cv.stop_reason == CHARGE_STOP_BMS_ALARM, "stop_reason must be BMS_ALARM");
+
+    printf("[PASS] test_config_temp_limit_halts_on_4th\n");
+    return true;
+}
+
 static bool test_bms_critical_alarm_mirrored(void)
 {
     printf("Running test_bms_critical_alarm_mirrored...\n");
@@ -1419,6 +1519,9 @@ int main(void)
     ok &= test_e030_uses_fresh_multi_module_summary();
     ok &= test_bms_comm_lost_mid_charge();
     ok &= test_bms_no_pack_voltage();
+    ok &= test_bms_low_pack_voltage_with_vmin();
+    ok &= test_bms_low_pack_voltage_precharge_bypassed();
+    ok &= test_config_temp_limit_halts_on_4th();
     ok &= test_bms_critical_alarm_mirrored();
     ok &= test_module_ac_undervolt_mirrored_and_derived();
     ok &= test_module_offline_uses_fresh_snapshot();

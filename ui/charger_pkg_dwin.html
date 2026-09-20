@@ -1225,34 +1225,31 @@
                     
                     <div style="flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 6px; margin: 2px 0;">
                         <!-- Fast Mode -->
-                        <div id="mode-fast" class="mode-btn active" style="min-height: 44px; padding: 5px 8px;" onclick="selectChargeMode('FAST')">
-                            <div style="display: flex; align-items: center; gap: 8px;">
+                        <div id="mode-fast" class="mode-btn active" style="min-height: 40px; padding: 6px 10px;" onclick="selectChargeMode('FAST')">
+                            <div style="display: flex; align-items: center; gap: 9px;">
                                 <div style="width: 26px; height: 26px; border-radius: 5px; background: #fee2e2; color: #e12b18; display: flex; align-items: center; justify-content: center; font-size: 13px;">
                                     <i class="fa-solid fa-bolt"></i>
                                 </div>
-                                <div>
-                                    <div style="font-size: 11px; font-weight: 800; color: #1e293b;">FAST CHARGE</div>
-                                    <div style="font-size: 9px; color: #64748b; font-weight: 600;">High current (100A / Max)</div>
-                                </div>
+                                <div style="font-size: 12px; font-weight: 800; color: #1e293b; letter-spacing: 0.3px;">FAST CHARGE</div>
                             </div>
                             <div class="radio-circle"></div>
                         </div>
 
                         <!-- Normal Mode -->
-                        <div id="mode-normal" class="mode-btn" style="min-height: 44px; padding: 5px 8px;" onclick="selectChargeMode('NORMAL')">
-                            <div style="display: flex; align-items: center; gap: 8px;">
+                        <div id="mode-normal" class="mode-btn" style="min-height: 40px; padding: 6px 10px;" onclick="selectChargeMode('NORMAL')">
+                            <div style="display: flex; align-items: center; gap: 9px;">
                                 <div style="width: 26px; height: 26px; border-radius: 5px; background: #e0f2fe; color: #0284c7; display: flex; align-items: center; justify-content: center; font-size: 13px;">
                                     <i class="fa-solid fa-battery-half"></i>
                                 </div>
-                                <div>
-                                    <div style="font-size: 11px; font-weight: 800; color: #1e293b;">NORMAL CHARGE</div>
-                                    <div style="font-size: 9px; color: #64748b; font-weight: 600;">Standard current (40A)</div>
-                                </div>
+                                <div style="font-size: 12px; font-weight: 800; color: #1e293b; letter-spacing: 0.3px;">NORMAL CHARGE</div>
                             </div>
                             <div class="radio-circle"></div>
                         </div>
                     </div>
 
+                    <button id="btn-save-mode" class="btn-confirm" onclick="saveChargeConfig()">
+                        <i class="fa-solid fa-floppy-disk"></i> SAVE & APPLY
+                    </button>
                 </div>
 
                 <!-- Right Card: Timer Schedule -->
@@ -1487,13 +1484,7 @@
         }
     }
 
-    var chargeMode = "FAST";
-    var timerEnabled = true;
-    var timerHours = 2;
-    var timerMins = 30;
-
     function selectChargeMode(mode) {
-        chargeMode = mode;
         const btnFast = document.getElementById('mode-fast');
         const btnNormal = document.getElementById('mode-normal') || document.getElementById('mode-eco');
         if (mode === 'FAST') {
@@ -1502,56 +1493,6 @@
         } else {
             if (btnFast) btnFast.classList.remove('active');
             if (btnNormal) btnNormal.classList.add('active');
-        }
-    }
-
-    function toggleTimer() {
-        timerEnabled = !timerEnabled;
-        const sw = document.getElementById('timer-switch');
-        const picker = document.getElementById('timer-picker-area');
-        if (sw) {
-            if (timerEnabled) {
-                sw.classList.add('active');
-                if (picker) {
-                    picker.style.opacity = "1";
-                    picker.style.pointerEvents = "auto";
-                    picker.style.filter = "none";
-                }
-            } else {
-                sw.classList.remove('active');
-                if (picker) {
-                    picker.style.opacity = "0.25";
-                    picker.style.pointerEvents = "none";
-                    picker.style.filter = "grayscale(1)";
-                }
-            }
-        }
-    }
-
-    function stepTimerHour(delta) {
-        if (!timerEnabled) return;
-        timerHours = (timerHours + delta + 24) % 24;
-        const el = document.getElementById('timer-hours');
-        if (el) el.innerText = timerHours.toString().padStart(2, '0');
-    }
-
-    function stepTimerMin(delta) {
-        if (!timerEnabled) return;
-        timerMins = (timerMins + delta + 60) % 60;
-        const el = document.getElementById('timer-mins');
-        if (el) el.innerText = timerMins.toString().padStart(2, '0');
-    }
-
-    function saveChargeConfig() {
-        const btn = document.getElementById('btn-save-config');
-        if (btn) {
-            const oldHtml = btn.innerHTML;
-            btn.innerHTML = '<i class="fa-solid fa-check"></i> SAVED!';
-            btn.style.background = '#10b981';
-            setTimeout(() => {
-                btn.innerHTML = oldHtml;
-                btn.style.background = '#1a51a1';
-            }, 1000);
         }
     }
 </script>

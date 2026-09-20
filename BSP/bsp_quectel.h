@@ -98,6 +98,9 @@ uint16_t BSP_Quectel_Available(void);
 /** Number of RX bytes dropped because the fixed ring buffer was full. */
 uint32_t BSP_Quectel_GetRxOverflowCount(void);
 
+/** Number of lines dropped because line length exceeded buffer without newline. */
+uint32_t BSP_Quectel_GetLineOverflowCount(void);
+
 /**
  * @brief UART callbacks called from app_it_callbacks.c
  */

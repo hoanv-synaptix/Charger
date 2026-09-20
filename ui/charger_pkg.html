@@ -100,8 +100,8 @@
             padding: 6px 6px 4px 6px; 
             height: 216px;
         }
-        .col { width: 135px; display: flex; flex-direction: column; justify-content: space-between; }
-        .col-center { width: 186px; }
+        .col { width: 138px; display: flex; flex-direction: column; justify-content: space-between; }
+        .col-center { width: 180px; }
 
         /* Panels */
         .panel {
@@ -131,7 +131,7 @@
 
         .panel-body {
             flex: 1;
-            padding: 4px 8px;
+            padding: 4px 6px;
             display: flex;
             flex-direction: column;
             justify-content: space-around;
@@ -149,14 +149,16 @@
         .data-label { color: #334155; text-transform: uppercase; white-space: nowrap; }
         .data-value { 
             display: grid; 
-            grid-template-columns: 1fr 18px; 
-            gap: 4px; 
+            grid-template-columns: 1fr 16px; 
+            gap: 2px; 
             align-items: baseline; 
-            width: 72px; 
+            width: 66px; 
         }
         .data-num { font-size: 17px; color: #000; text-align: right; } 
         .data-unit { font-size: 13px; color: #333; text-align: right; } 
         .text-red { color: #e12b18; }
+        #home-charge-mode.mode-fast { color: #e12b18; }
+        #home-charge-mode.mode-normal { color: #0284c7; }
 
         /* SOC Panel */
         .soc-panel {
@@ -181,7 +183,7 @@
             top: -5px; 
             letter-spacing: 0.5px;
             box-shadow: 0 2px 4px rgba(26,81,161,0.2); 
-            cursor: pointer; /* Thêm con trỏ để báo hiệu click được */
+            cursor: pointer;
         }
         .soc-value {
             font-size: 68px; 
@@ -556,8 +558,7 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            padding-top: 0px;
-            padding-bottom: 2px;
+            padding: 0;
         }
         .num-btn:active { background: #f0f3f6; }
 
@@ -938,6 +939,8 @@
         }
         body.dark-theme .data-unit { color: #64748b !important; }
         body.dark-theme .text-red { color: #f87171 !important; }
+        body.dark-theme #home-charge-mode.mode-fast { color: #f87171 !important; }
+        body.dark-theme #home-charge-mode.mode-normal { color: #38bdf8 !important; }
 
         /* SOC Center Panel */
         body.dark-theme .soc-badge {
@@ -955,24 +958,25 @@
         /* Status Box & Action Buttons */
         body.dark-theme .status-box {
             background-color: #141d2e !important;
-            border: 1.5px solid #3b82f6 !important;
-            color: #60a5fa !important;
+            border: 1.5px solid #2563eb !important;
+            color: #93c5fd !important;
             box-shadow: none !important;
             text-shadow: none !important;
+            line-height: 1 !important;
         }
         body.dark-theme .status-green {
             background-color: #0c2419 !important;
-            border-color: #10b981 !important;
-            color: #34d399 !important;
+            border-color: #15803d !important;
+            color: #4ade80 !important;
         }
         body.dark-theme .status-orange {
             background-color: #261507 !important;
-            border-color: #d97706 !important;
-            color: #fbbf24 !important;
+            border-color: #c2410c !important;
+            color: #fb923c !important;
         }
         body.dark-theme .status-red {
             background-color: #260b0b !important;
-            border-color: #dc2626 !important;
+            border-color: #b91c1c !important;
             color: #f87171 !important;
         }
 
@@ -981,17 +985,18 @@
             box-shadow: none !important;
             color: #ffffff !important;
             border: none !important;
+            line-height: 1 !important;
         }
         body.dark-theme .btn-green {
-            background: #059669 !important;
+            background: #15803d !important;
             box-shadow: none !important;
         }
         body.dark-theme .btn-red {
-            background: #dc2626 !important;
+            background: #b91c1c !important;
             box-shadow: none !important;
         }
         body.dark-theme .btn-orange {
-            background: #d97706 !important;
+            background: #c2410c !important;
             box-shadow: none !important;
         }
 
@@ -1053,7 +1058,7 @@
         }
         body.dark-theme .mode-btn.active {
             background: #1c2b48 !important;
-            border-color: #3b82f6 !important;
+            border-color: #2563eb !important;
             box-shadow: none !important;
         }
         body.dark-theme .mode-btn .radio-circle {
@@ -1061,8 +1066,8 @@
             background: #111a2c !important;
         }
         body.dark-theme .mode-btn.active .radio-circle {
-            border-color: #3b82f6 !important;
-            background: #3b82f6 !important;
+            border-color: #2563eb !important;
+            background: #2563eb !important;
         }
         body.dark-theme .mode-btn div[style*="color: #1e293b"] {
             color: #f8fafc !important;
@@ -1079,22 +1084,28 @@
             border-color: #334155 !important;
             color: #f8fafc !important;
             box-shadow: none !important;
+            line-height: 1 !important;
         }
         body.dark-theme .time-val {
             background: #0a0f18 !important;
             border: 1px solid #334155 !important;
-            color: #f59e0b !important;
+            color: #f8fafc !important;
             box-shadow: none !important;
+            line-height: 1 !important;
         }
         body.dark-theme .time-colon {
-            color: #f59e0b !important;
+            color: #94a3b8 !important;
             text-shadow: none !important;
+        }
+        body.dark-theme .toggle-switch.active .toggle-track {
+            background: #15803d !important;
         }
         body.dark-theme .btn-confirm {
             background: #1d4ed8 !important;
             border: none !important;
             color: #ffffff !important;
             box-shadow: none !important;
+            line-height: 1 !important;
         }
         body.dark-theme .btn-confirm:active {
             background: #1e40af !important;
@@ -1320,11 +1331,10 @@
                             <span class="data-unit">V</span>
                         </div>
                     </div>
-                    <div class="data-row">
-                        <span class="data-label">CAPA</span>
-                        <div class="data-value">
-                            <span class="data-num">0.0</span>
-                            <span class="data-unit">Ah</span>
+                    <div class="data-row" style="cursor: pointer;" onclick="toggleHomeChargeMode()" title="Bấm để đổi chế độ FAST / NORMAL">
+                        <span class="data-label" style="font-size: 10px;">CHG MODE</span>
+                        <div class="data-value" style="display: flex; justify-content: flex-end; width: auto;">
+                            <span class="data-num mode-fast" id="home-charge-mode" style="font-size: 12px; font-weight: 800; letter-spacing: 0.3px;">FAST</span>
                         </div>
                     </div>
                 </div>
@@ -1504,18 +1514,18 @@
                     <span id="pass-stars">****</span>
                 </div>
                 <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; width: 100%;">
-                    <div class="num-btn" style="height: 33px; font-size: 17px; padding-bottom: 2px; border-radius: 4px;" onclick="pressPin('1')">1</div>
-                    <div class="num-btn" style="height: 33px; font-size: 17px; padding-bottom: 2px; border-radius: 4px;" onclick="pressPin('2')">2</div>
-                    <div class="num-btn" style="height: 33px; font-size: 17px; padding-bottom: 2px; border-radius: 4px;" onclick="pressPin('3')">3</div>
-                    <div class="num-btn" style="height: 33px; font-size: 17px; padding-bottom: 2px; border-radius: 4px;" onclick="pressPin('4')">4</div>
-                    <div class="num-btn" style="height: 33px; font-size: 17px; padding-bottom: 2px; border-radius: 4px;" onclick="pressPin('5')">5</div>
-                    <div class="num-btn" style="height: 33px; font-size: 17px; padding-bottom: 2px; border-radius: 4px;" onclick="pressPin('6')">6</div>
-                    <div class="num-btn" style="height: 33px; font-size: 17px; padding-bottom: 2px; border-radius: 4px;" onclick="pressPin('7')">7</div>
-                    <div class="num-btn" style="height: 33px; font-size: 17px; padding-bottom: 2px; border-radius: 4px;" onclick="pressPin('8')">8</div>
-                    <div class="num-btn" style="height: 33px; font-size: 17px; padding-bottom: 2px; border-radius: 4px;" onclick="pressPin('9')">9</div>
-                    <div class="num-btn num-del" style="height: 33px; background: #dc2626; color: white; border: 1px solid #dc2626; font-size: 12px; font-weight: 800; padding-bottom: 2px; border-radius: 4px;" onclick="pressPin('DEL')">DEL</div>
-                    <div class="num-btn" style="height: 33px; font-size: 17px; padding-bottom: 2px; border-radius: 4px;" onclick="pressPin('0')">0</div>
-                    <div class="num-btn num-ok" style="height: 33px; background: #1d4ed8; color: white; border: 1px solid #1d4ed8; font-size: 12px; font-weight: 800; padding-bottom: 2px; border-radius: 4px;" onclick="pressPin('OK')">OK</div>
+                    <div class="num-btn" style="height: 33px; font-size: 17px; border-radius: 4px;" onclick="pressPin('1')">1</div>
+                    <div class="num-btn" style="height: 33px; font-size: 17px; border-radius: 4px;" onclick="pressPin('2')">2</div>
+                    <div class="num-btn" style="height: 33px; font-size: 17px; border-radius: 4px;" onclick="pressPin('3')">3</div>
+                    <div class="num-btn" style="height: 33px; font-size: 17px; border-radius: 4px;" onclick="pressPin('4')">4</div>
+                    <div class="num-btn" style="height: 33px; font-size: 17px; border-radius: 4px;" onclick="pressPin('5')">5</div>
+                    <div class="num-btn" style="height: 33px; font-size: 17px; border-radius: 4px;" onclick="pressPin('6')">6</div>
+                    <div class="num-btn" style="height: 33px; font-size: 17px; border-radius: 4px;" onclick="pressPin('7')">7</div>
+                    <div class="num-btn" style="height: 33px; font-size: 17px; border-radius: 4px;" onclick="pressPin('8')">8</div>
+                    <div class="num-btn" style="height: 33px; font-size: 17px; border-radius: 4px;" onclick="pressPin('9')">9</div>
+                    <div class="num-btn num-del" style="height: 33px; background: #b91c1c; color: white; border: 1px solid #b91c1c; font-size: 12px; font-weight: 800; border-radius: 4px;" onclick="pressPin('DEL')">DEL</div>
+                    <div class="num-btn" style="height: 33px; font-size: 17px; border-radius: 4px;" onclick="pressPin('0')">0</div>
+                    <div class="num-btn num-ok" style="height: 33px; background: #1d4ed8; color: white; border: 1px solid #1d4ed8; font-size: 12px; font-weight: 800; border-radius: 4px;" onclick="pressPin('OK')">OK</div>
                 </div>
             </div>
         </div>
@@ -1714,8 +1724,8 @@
                     <div class="btn-scroll" onclick="changeAlarmPage(-1)">
                         <i class="fa-solid fa-caret-up"></i>
                     </div>
-                    <div class="page-indicator" style="height: 24px; display: flex; justify-content: center; align-items: center; font-size: 11px; font-weight: 900; color: #1a51a1; border: 1px solid #cbd5e1; background: white; border-radius: 4px;"><span id="alarm-page-num">1/3</span></div>
-                        <div class="btn-scroll" onclick="changeAlarmPage(1)">
+                    <div class="page-indicator" style="height: 24px; display: flex; justify-content: center; align-items: center; font-family: Arial, sans-serif; font-size: 12px; font-weight: bold; color: #1a51a1; border: 1px solid #cbd5e1; background: white; border-radius: 4px; padding: 0; line-height: 1;"><span id="alarm-page-num" style="display: flex; align-items: center; justify-content: center; line-height: 1; width: 100%; text-align: center;">1/3</span></div>
+                    <div class="btn-scroll" onclick="changeAlarmPage(1)">
                         <i class="fa-solid fa-caret-down"></i>
                     </div>
                 </div>
@@ -2020,13 +2030,26 @@
         chargeMode = mode;
         const btnFast = document.getElementById('mode-fast');
         const btnNormal = document.getElementById('mode-normal') || document.getElementById('mode-eco');
+        const homeMode = document.getElementById('home-charge-mode');
         if (mode === 'FAST') {
             if (btnFast) btnFast.classList.add('active');
             if (btnNormal) btnNormal.classList.remove('active');
+            if (homeMode) {
+                homeMode.innerText = 'FAST';
+                homeMode.className = 'data-num mode-fast';
+            }
         } else {
             if (btnFast) btnFast.classList.remove('active');
             if (btnNormal) btnNormal.classList.add('active');
+            if (homeMode) {
+                homeMode.innerText = 'NORMAL';
+                homeMode.className = 'data-num mode-normal';
+            }
         }
+    }
+
+    function toggleHomeChargeMode() {
+        selectChargeMode(chargeMode === 'FAST' ? 'NORMAL' : 'FAST');
     }
 
     function toggleTimer() {

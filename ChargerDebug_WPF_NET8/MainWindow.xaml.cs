@@ -84,25 +84,35 @@ public partial class MainWindow : Window
             string? port = cmbMainPort.SelectedItem as string;
             if (string.IsNullOrEmpty(port))
             {
-                MessageBox.Show("Please select a COM port.", "Warning", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MessageBox.Show("Vui lòng chọn cổng COM trước khi kết nối.", "Cảnh báo", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 
             if (_serialService.Connect(port))
             {
                 UpdateConnectionUi();
-                // Send ENTER command to wake up MCU debug stream
-                _serialService.SendFrame((byte)DebugCmd.ENTER);
 
-                // Auto-sync real-time clock from PC to MCU on every connect
-                if (!SyncRtcToMcu())
+                // Sequence commands with proper pacing to avoid USB CDC queue overflow
+                _ = Dispatcher.InvokeAsync(async () =>
                 {
-                    System.Diagnostics.Debug.WriteLine("[WARN] RTC sync write failed");
-                }
+                    await Task.Delay(400);
+                    if (!_serialService.IsConnected) return;
+
+                    // Send ENTER command to wake up MCU debug stream
+                    _serialService.SendFrame((byte)DebugCmd.ENTER);
+                    await Task.Delay(150);
+
+                    // Auto-sync real-time clock from PC to MCU
+                    SyncRtcToMcu();
+                    await Task.Delay(200);
+
+                    // Auto-load charge configuration from MCU
+                    await ReadMcuConfigInternalAsync(isAutoLoad: true);
+                });
             }
             else
             {
-                MessageBox.Show($"Failed to open port {port}. Please check if another app is using it.", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show($"Không thể mở cổng {port}. Vui lòng kiểm tra xem cổng COM có đang bị phần mềm khác sử dụng không.", "Lỗi kết nối", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
     }
@@ -146,17 +156,34 @@ public partial class MainWindow : Window
         monitorWindow.Show();
     }
 
+    private void OpenMcuFirmwareUpdate_Click(object sender, RoutedEventArgs e)
+    {
+        var updateDialog = new McuFirmwareUpdateDialog(_serialService)
+        {
+            Owner = this
+        };
+        updateDialog.ShowDialog();
+    }
+
     private async void BtnReadMcu_Click(object sender, RoutedEventArgs e)
+    {
+        await ReadMcuConfigInternalAsync(isAutoLoad: false);
+    }
+
+    private async Task ReadMcuConfigInternalAsync(bool isAutoLoad)
     {
         if (!_serialService.IsConnected)
         {
-            MessageBox.Show("Please connect to MCU first.", "Not Connected", MessageBoxButton.OK, MessageBoxImage.Warning);
+            if (!isAutoLoad)
+            {
+                MessageBox.Show("Vui lòng kết nối với MCU trước.", "Chưa kết nối", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
             return;
         }
 
         btnReadMcu.IsEnabled = false;
-        btnReadMcu.Content = "Reading...";
-        lblStatusPrompt.Text = "Requesting charge configuration from MCU...";
+        btnReadMcu.Content = "Đang đọc...";
+        lblStatusPrompt.Text = isAutoLoad ? "Đang tự động tải cấu hình sạc từ MCU..." : "Đang yêu cầu cấu hình sạc từ MCU...";
 
         _cfgReadTcs = new TaskCompletionSource<ChargeCycleConfig>();
 
@@ -166,14 +193,24 @@ public partial class MainWindow : Window
         {
             btnReadMcu.IsEnabled = true;
             btnReadMcu.Content = "Read MCU";
-            lblStatusPrompt.Text = "Failed to send read command";
-            MessageBox.Show("Failed to transmit command to MCU.", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            lblStatusPrompt.Text = "Không thể gửi lệnh đọc cấu hình";
+            if (!isAutoLoad)
+            {
+                MessageBox.Show("Không thể truyền lệnh đọc tới MCU. Vui lòng kiểm tra cáp kết nối.", "Lỗi truyền thông", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
             return;
         }
 
-        // Wait with 3-second timeout
-        var delayTask = Task.Delay(3000);
+        // Wait with 2.5-second timeout, retry once if needed
+        var delayTask = Task.Delay(2500);
         var completedTask = await Task.WhenAny(_cfgReadTcs.Task, delayTask);
+
+        if (completedTask != _cfgReadTcs.Task && _serialService.IsConnected)
+        {
+            // Auto-retry once in case first frame arrived during CDC line transition
+            _serialService.SendFrame((byte)DebugCmd.GET_CHARGE_CFG);
+            completedTask = await Task.WhenAny(_cfgReadTcs.Task, Task.Delay(2500));
+        }
 
         btnReadMcu.IsEnabled = true;
         btnReadMcu.Content = "Read MCU";
@@ -183,13 +220,19 @@ public partial class MainWindow : Window
             var config = await _cfgReadTcs.Task;
             ViewModel.LoadConfig(config);
             ResetTextBoxBorders(this);
-            lblStatusPrompt.Text = "Config loaded from MCU successfully";
-            MessageBox.Show("Charge cycle config read from MCU successfully!", "Read MCU", MessageBoxButton.OK, MessageBoxImage.Information);
+            lblStatusPrompt.Text = isAutoLoad ? "Cấu hình từ MCU đã được tự động đồng bộ!" : "Đã tải và đồng bộ cấu hình từ MCU thành công!";
+            string msg = isAutoLoad 
+                ? "Đã kết nối và tự động tải cấu hình từ MCU thành công!" 
+                : "Đã đọc và tải cấu hình chu kỳ sạc từ MCU thành công!";
+            MessageBox.Show(msg, "Đọc cấu hình MCU", MessageBoxButton.OK, MessageBoxImage.Information);
         }
         else
         {
-            lblStatusPrompt.Text = "Timeout waiting for MCU response";
-            MessageBox.Show("No response from MCU within 3 seconds. Check connection and firmware status.", "Timeout", MessageBoxButton.OK, MessageBoxImage.Warning);
+            lblStatusPrompt.Text = isAutoLoad ? "Tự động tải cấu hình: MCU chưa phản hồi kịp" : "Hết thời gian chờ phản hồi từ MCU";
+            if (!isAutoLoad)
+            {
+                MessageBox.Show("Không nhận được phản hồi từ MCU sau 5 giây. Vui lòng kiểm tra kết nối và trạng thái hoạt động của MCU.", "Hết thời gian chờ (Timeout)", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
         }
 
         _cfgReadTcs = null;
@@ -199,6 +242,9 @@ public partial class MainWindow : Window
     {
         Dispatcher.Invoke(() =>
         {
+            ViewModel.LoadConfig(config);
+            ResetTextBoxBorders(this);
+            lblStatusPrompt.Text = "Đã nhận và đồng bộ cấu hình từ MCU!";
             _cfgReadTcs?.TrySetResult(config);
         });
     }
@@ -207,7 +253,7 @@ public partial class MainWindow : Window
     {
         Dispatcher.Invoke(() =>
         {
-            lblStatusPrompt.Text = $"MCU Error: {msg}";
+            lblStatusPrompt.Text = $"Lỗi MCU: {msg}";
         });
     }
 
@@ -215,37 +261,37 @@ public partial class MainWindow : Window
     {
         if (!_serialService.IsConnected)
         {
-            MessageBox.Show("Please connect to MCU first.", "Not Connected", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show("Vui lòng kết nối với MCU trước.", "Chưa kết nối", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
         try
         {
             byte[] payload = ViewModel.GetBytes();
-            if (payload.Length != ChargeCycleConfig.EXPECTED_BINARY_SIZE)
+            if (payload.Length != ChargeCycleConfig.EXPECTED_BINARY_SIZE && payload.Length != ChargeCycleConfig.V7_BINARY_SIZE)
             {
-                MessageBox.Show($"Config serialization error: expected {ChargeCycleConfig.EXPECTED_BINARY_SIZE} bytes, got {payload.Length}", "Validation Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show($"Lỗi đóng gói cấu hình: Kích thước dữ liệu không hợp lệ (nhận {payload.Length} bytes).", "Lỗi dữ liệu", MessageBoxButton.OK, MessageBoxImage.Error);
                 return;
             }
 
-            lblStatusPrompt.Text = "Writing configuration to MCU flash...";
+            lblStatusPrompt.Text = "Đang ghi cấu hình vào Flash MCU...";
             bool sent = _serialService.SendFrame((byte)DebugCmd.SET_CHARGE_CFG, payload);
 
             if (sent)
             {
                 ResetTextBoxBorders(this);
-                lblStatusPrompt.Text = "Configuration saved to MCU flash successfully";
-                MessageBox.Show("Configuration successfully sent and written to MCU Flash!", "Write MCU", MessageBoxButton.OK, MessageBoxImage.Information);
+                lblStatusPrompt.Text = "Đã lưu cấu hình vào Flash MCU thành công";
+                MessageBox.Show("Cấu hình đã được gửi và lưu thành công vào bộ nhớ Flash của MCU!", "Ghi cấu hình MCU", MessageBoxButton.OK, MessageBoxImage.Information);
             }
             else
             {
-                lblStatusPrompt.Text = "Failed to transmit config to MCU";
-                MessageBox.Show("Failed to transmit configuration packet to MCU.", "Write Failed", MessageBoxButton.OK, MessageBoxImage.Error);
+                lblStatusPrompt.Text = "Gửi cấu hình tới MCU thất bại";
+                MessageBox.Show("Không thể gửi gói cấu hình tới MCU.", "Ghi thất bại", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"Error packing configuration: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show($"Lỗi đóng gói dữ liệu cấu hình: {ex.Message}", "Lỗi", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 
@@ -253,8 +299,8 @@ public partial class MainWindow : Window
     {
         var dlg = new OpenFileDialog
         {
-            Filter = "JSON Files (*.json)|*.json|All Files (*.*)|*.*",
-            Title = "Import Charge Configuration"
+            Filter = "Tệp JSON (*.json)|*.json|Tất cả tệp (*.*)|*.*",
+            Title = "Nhập (Import) cấu hình sạc"
         };
 
         if (dlg.ShowDialog() == true)
@@ -264,12 +310,12 @@ public partial class MainWindow : Window
                 string json = File.ReadAllText(dlg.FileName);
                 ViewModel.LoadFromJson(json);
                 ResetTextBoxBorders(this);
-                lblStatusPrompt.Text = $"Config imported from {Path.GetFileName(dlg.FileName)}";
-                MessageBox.Show($"Configuration imported successfully from:\n{dlg.FileName}", "Import Config", MessageBoxButton.OK, MessageBoxImage.Information);
+                lblStatusPrompt.Text = $"Đã nhập cấu hình từ {Path.GetFileName(dlg.FileName)}";
+                MessageBox.Show($"Đã nhập (Import) cấu hình thành công từ tệp:\n{dlg.FileName}", "Nhập cấu hình", MessageBoxButton.OK, MessageBoxImage.Information);
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Failed to parse config file:\n{ex.Message}", "Import Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show($"Lỗi đọc tệp cấu hình JSON:\n{ex.Message}", "Lỗi nhập cấu hình", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
     }
@@ -278,9 +324,9 @@ public partial class MainWindow : Window
     {
         var dlg = new SaveFileDialog
         {
-            Filter = "JSON Files (*.json)|*.json|All Files (*.*)|*.*",
+            Filter = "Tệp JSON (*.json)|*.json|Tất cả tệp (*.*)|*.*",
             FileName = "charge_config.json",
-            Title = "Export Charge Configuration"
+            Title = "Xuất (Export) cấu hình sạc"
         };
 
         if (dlg.ShowDialog() == true)
@@ -289,24 +335,24 @@ public partial class MainWindow : Window
             {
                 string json = ViewModel.GetJson();
                 File.WriteAllText(dlg.FileName, json);
-                lblStatusPrompt.Text = $"Config exported to {Path.GetFileName(dlg.FileName)}";
-                MessageBox.Show($"Configuration exported successfully to:\n{dlg.FileName}", "Export Config", MessageBoxButton.OK, MessageBoxImage.Information);
+                lblStatusPrompt.Text = $"Đã xuất cấu hình ra {Path.GetFileName(dlg.FileName)}";
+                MessageBox.Show($"Đã xuất (Export) cấu hình thành công ra tệp:\n{dlg.FileName}", "Xuất cấu hình", MessageBoxButton.OK, MessageBoxImage.Information);
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Failed to save config file:\n{ex.Message}", "Export Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show($"Lỗi lưu tệp cấu hình:\n{ex.Message}", "Lỗi xuất cấu hình", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
     }
 
     private void Defaults_Click(object sender, RoutedEventArgs e)
     {
-        if (MessageBox.Show("Reset all parameters to factory defaults?", "Confirm Defaults", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
+        if (MessageBox.Show("Bạn có chắc chắn muốn khôi phục tất cả thông số về giá trị mặc định xuất xưởng?", "Xác nhận khôi phục mặc định", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
         {
             ViewModel.ResetToDefaults();
             ResetTextBoxBorders(this);
-            lblStatusPrompt.Text = "Factory default configuration loaded";
-            MessageBox.Show("Default configuration parameters loaded.", "Defaults", MessageBoxButton.OK, MessageBoxImage.Information);
+            lblStatusPrompt.Text = "Đã tải cấu hình mặc định xuất xưởng";
+            MessageBox.Show("Đã khôi phục các thông số cấu hình mặc định xuất xưởng thành công.", "Mặc định", MessageBoxButton.OK, MessageBoxImage.Information);
         }
     }
 

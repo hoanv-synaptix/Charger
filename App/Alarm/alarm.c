@@ -87,6 +87,8 @@ typedef struct {
     CHG_LIB_SystemSummary_t mod_summary;
 
     float    cfg_vmax_v;
+    float    cfg_vmin_v;
+    float    cfg_temp_limit_c;
     uint8_t  cfg_source_mode;
 } AlarmInputs_t;
 
@@ -130,6 +132,29 @@ static bool ev_bms(const AlarmInputs_t *in, uint32_t bit) {
     return (in->bms.alarm_flags & bit) != 0U;
 }
 
+static bool ev_bms_low_pack_volt(const AlarmInputs_t *in, uint32_t bit) {
+    if (in->cfg_source_mode != CHARGE_SOURCE_BMS_CONTROLLED) return false;
+    /* During PRECHARGE, low-voltage recovery is expected and allowed */
+    if (in->cc.state == CHARGE_CTRL_STATE_PRECHARGE) return false;
+
+    /* 1. BMS self-reported low pack voltage alarm bit */
+    if ((in->bms.alarm_flags & bit) != 0U) {
+        return true;
+    }
+
+    /* 2. Controller-derived: in RUNNING or READY session, pack voltage in [0.5*Vmax, Vmin) */
+    if ((in->cc.state == CHARGE_CTRL_STATE_RUNNING ||
+         in->cc.state == CHARGE_CTRL_STATE_READY) &&
+        in->bms.online && in->cfg_vmax_v > 0.0f && in->cfg_vmin_v > 0.0f) {
+        float floor_v = in->cfg_vmax_v * ALARM_V_PACK_FLOOR_FRAC;
+        if (in->bms.batt_voltage >= floor_v && in->bms.batt_voltage < in->cfg_vmin_v) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 static bool ev_bms_temp_high(const AlarmInputs_t *in, uint32_t bit) {
     if (ev_bms(in, bit)) return true;
     if (in->cc.bms_temp_trip_count >= 4U &&
@@ -138,6 +163,10 @@ static bool ev_bms_temp_high(const AlarmInputs_t *in, uint32_t bit) {
     }
     if (in->cc.active_limit_source == CHARGE_LIMIT_SOURCE_TEMPERATURE &&
         in->cc.active_stage_band == CHARGE_STAGE_BAND_ABOVE_MAX) {
+        return true;
+    }
+    if (in->bms.online && in->cfg_temp_limit_c > 0.0f &&
+        (float)in->bms.max_cell_temp >= in->cfg_temp_limit_c) {
         return true;
     }
     return false;
@@ -180,7 +209,7 @@ static const AlarmSpec_t k_specs[] = {
     /* code, action, latch, set_ms, clear_ms, eval, param, desc */
 
     /* --- BMS-reported --- */
-    { ALARM_BMS_LOW_PACK_VOLT,   ALARM_ACT_INFO,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms, BMS_ALARM_LOW_PACK_VOLT,   "BMS low pack voltage" },
+    { ALARM_BMS_LOW_PACK_VOLT,   ALARM_ACT_STOP,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms_low_pack_volt, BMS_ALARM_LOW_PACK_VOLT,   "BMS low pack voltage" },
     { ALARM_BMS_LOW_CELL_VOLT,   ALARM_ACT_INFO,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms, BMS_ALARM_LOW_CELL_VOLT,   "BMS low cell voltage" },
     { ALARM_BMS_HIGH_PACK_VOLT,  ALARM_ACT_STOP,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms, BMS_ALARM_HIGH_PACK_VOLT,  "BMS high pack voltage" },
     { ALARM_BMS_HIGH_CELL_VOLT,  ALARM_ACT_STOP,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms, BMS_ALARM_HIGH_CELL_VOLT,  "BMS high cell voltage" },
@@ -355,6 +384,8 @@ static void gather_inputs(uint32_t now, AlarmInputs_t *in) {
     ChargeCycleConfig_t cfg;
     ChargeCycleConfig_Get(&cfg);
     in->cfg_vmax_v = cfg.vmax_v;
+    in->cfg_vmin_v = cfg.vmin_v;
+    in->cfg_temp_limit_c = cfg.temp_limit_c;
     in->cfg_source_mode = cfg.charge_source_mode;
 
     in->mod_current_max = -1.0f;

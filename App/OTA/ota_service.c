@@ -25,9 +25,9 @@
 #define OTA_URL_MAX_LENGTH       ((uint32_t)127U)
 #define OTA_STREAM_CHUNK_SIZE    256U
 #define OTA_ERASE_TIMEOUT_MS     10000U
-#define OTA_AT_TIMEOUT_MS        5000U
-#define OTA_HTTP_TIMEOUT_MS      60000U
-#define OTA_BODY_TIMEOUT_MS      10000U
+#define OTA_AT_TIMEOUT_MS        12000U  /* AT cmds on EC200U can take up to 10s */
+#define OTA_HTTP_TIMEOUT_MS      90000U  /* HTTP GET/READ requests over 4G */
+#define OTA_BODY_TIMEOUT_MS      45000U  /* Stream chunk timeout tolerating 4G cellular jitter */
 #define OTA_CURRENT_SAFE_A       0.5f
 #define OTA_DEFAULT_CHECK_INTERVAL_MS (6UL * 60UL * 60UL * 1000UL)
 
@@ -49,7 +49,12 @@ static char s_policy_manifest_url[OTA_URL_MAX_LENGTH + 1U];
 
 typedef enum {
     OTA_STEP_IDLE = 0,
-    OTA_STEP_PREPARE_FLASH,
+    OTA_STEP_ERASE_START,
+    OTA_STEP_ERASE_WAIT,
+    OTA_STEP_CHECK_PDP,          /* AT+QIACT? — verify PDP context active before QHTTP */
+    OTA_STEP_WAIT_CHECK_PDP,
+    OTA_STEP_ACTIVATE_PDP,       /* AT+QIACT=1 — re-activate if not active */
+    OTA_STEP_WAIT_ACTIVATE_PDP,
     OTA_STEP_CFG_HTTP_CTX,
     OTA_STEP_WAIT_CFG_HTTP_CTX,
     OTA_STEP_CFG_HTTP_SSL,
@@ -165,12 +170,15 @@ static bool ota_is_safe(void)
     CHG_LIB_GetSystemSummary(&summary);
     BMS_GetView(&bms);
 
-    if (controller.running || controller.relay_should_close) {
+    /* Critical safety interlocks: block if charging, faulted, or in emergency stop */
+    if (controller.running || controller.relay_should_close ||
+        controller.faulted || controller.emergency_stop) {
         return false;
     }
     if (controller.state == CHARGE_CTRL_STATE_RUNNING ||
         controller.state == CHARGE_CTRL_STATE_PRECHARGE ||
-        controller.state == CHARGE_CTRL_STATE_STOPPING) {
+        controller.state == CHARGE_CTRL_STATE_STOPPING ||
+        controller.state == CHARGE_CTRL_STATE_FAULT) {
         return false;
     }
     if (!isfinite(summary.total_current) || fabsf(summary.total_current) > OTA_CURRENT_SAFE_A) {
@@ -184,6 +192,10 @@ static bool ota_is_safe(void)
 
 static void fail_ota(OtaStatusCode_t status)
 {
+    LOG("OTA: FAILED in step %d with status %d\r\n", (int)s_step, (int)status);
+    /* Clean up modem HTTP transport and purge stale bytes */
+    BSP_Quectel_SendCmd("AT+QHTTPSTOP");
+    BSP_Quectel_ClearRx();
     QuectelEngine_SetOtaExclusive(false);
     s_desc.status = status;
     s_desc.boot_request = OTA_BOOT_FLAG_CLEARED;
@@ -343,7 +355,7 @@ bool OTAService_StartDownload(const char *url, uint32_t version,
     BSP_Quectel_ClearRx();
     s_erase_index = 0U;
     s_erase_count = (expected_size + SPI_FLASH_SECTOR_SIZE - 1U) / SPI_FLASH_SECTOR_SIZE;
-    s_step = OTA_STEP_PREPARE_FLASH;
+    s_step = OTA_STEP_ERASE_START;
     s_step_tick = HAL_GetTick();
     return true;
 }
@@ -351,6 +363,12 @@ bool OTAService_StartDownload(const char *url, uint32_t version,
 bool OTAService_StartManifestCheck(const char *manifest_url)
 {
     size_t url_len;
+    /* Clean recovery if previous attempt was in error state */
+    if (s_step == OTA_STEP_ERROR) {
+        QuectelEngine_SetOtaExclusive(false);
+        s_step = OTA_STEP_IDLE;
+    }
+
     if (manifest_url == NULL || !ota_is_safe() || !BSP_SPIFlash_IsAvailable() ||
         !BSP_Quectel_IsReady() || !QuectelEngine_IsNetReady() || s_step != OTA_STEP_IDLE) return false;
     url_len = strlen(manifest_url);
@@ -363,8 +381,9 @@ bool OTAService_StartManifestCheck(const char *manifest_url)
     s_manifest_received = 0U;
     s_read_expected_bytes = 0U;
     s_desc.status = OTA_STATUS_DOWNLOADING;
-    s_step = OTA_STEP_CFG_HTTP_CTX;
+    s_step = OTA_STEP_CHECK_PDP;   /* Verify PDP context before QHTTP */
     s_step_tick = HAL_GetTick();
+    LOG("OTA: StartManifestCheck -> CHECK_PDP, URL=%s\r\n", manifest_url);
     return true;
 }
 
@@ -380,6 +399,13 @@ bool OTAService_SetPolicy(bool enabled, uint32_t interval_ms, const char *manife
     uint32_t old_interval = s_policy_interval_ms;
     char old_url[sizeof(s_policy_manifest_url)];
     memcpy(old_url, s_policy_manifest_url, sizeof(old_url));
+
+    /* Preserve descriptor fields for full rollback */
+    uint32_t old_desc_enabled = s_desc.policy_enabled;
+    uint32_t old_desc_interval = s_desc.policy_interval_ms;
+    char old_desc_url[sizeof(s_desc.policy_manifest_url)];
+    memcpy(old_desc_url, s_desc.policy_manifest_url, sizeof(old_desc_url));
+
     s_policy_enabled = enabled;
     s_policy_interval_ms = (interval_ms == 0U) ? OTA_DEFAULT_CHECK_INTERVAL_MS : interval_ms;
     if (enabled) memcpy(s_policy_manifest_url, manifest_url, length + 1U);
@@ -390,16 +416,51 @@ bool OTAService_SetPolicy(bool enabled, uint32_t interval_ms, const char *manife
     memcpy(s_desc.policy_manifest_url, s_policy_manifest_url, strlen(s_policy_manifest_url) + 1U);
     s_next_policy_tick = HAL_GetTick();
     if (save_descriptor()) return true;
+
+    /* Rollback both runtime variables and persistent descriptor state */
     s_policy_enabled = old_enabled;
     s_policy_interval_ms = old_interval;
     memcpy(s_policy_manifest_url, old_url, sizeof(old_url));
+
+    s_desc.policy_enabled = old_desc_enabled;
+    s_desc.policy_interval_ms = old_desc_interval;
+    memcpy(s_desc.policy_manifest_url, old_desc_url, sizeof(s_desc.policy_manifest_url));
     return false;
+}
+
+OtaCheckResult_t OTAService_RequestCheckNowResult(void)
+{
+    if (s_step == OTA_STEP_ERROR) {
+        QuectelEngine_SetOtaExclusive(false);
+        s_step = OTA_STEP_IDLE;
+    }
+    if (!s_policy_enabled || s_policy_manifest_url[0] == '\0') {
+        return OTA_CHECK_ERR_POLICY_DISABLED;
+    }
+    if (strncmp(s_policy_manifest_url, "https://", 8U) != 0) {
+        return OTA_CHECK_ERR_INVALID_URL;
+    }
+    if (!ota_is_safe()) {
+        return OTA_CHECK_ERR_NOT_SAFE;
+    }
+    if (!BSP_SPIFlash_IsAvailable()) {
+        return OTA_CHECK_ERR_FLASH_BUSY;
+    }
+    if (!BSP_Quectel_IsReady() || !QuectelEngine_IsNetReady()) {
+        return OTA_CHECK_ERR_NET_NOT_READY;
+    }
+    if (s_step != OTA_STEP_IDLE) {
+        return OTA_CHECK_ERR_BUSY;
+    }
+    if (OTAService_StartManifestCheck(s_policy_manifest_url)) {
+        return OTA_CHECK_OK;
+    }
+    return OTA_CHECK_ERR_BUSY;
 }
 
 bool OTAService_RequestCheckNow(void)
 {
-    if (!s_policy_enabled || s_policy_manifest_url[0] == '\0' || s_step != OTA_STEP_IDLE) return false;
-    return OTAService_StartManifestCheck(s_policy_manifest_url);
+    return (OTAService_RequestCheckNowResult() == OTA_CHECK_OK);
 }
 
 void OTAService_GetStatus(OtaStatusView_t *out_status)
@@ -420,6 +481,10 @@ void OTAService_Abort(void)
     uint32_t policy_interval_ms = s_policy_interval_ms;
     char policy_url[sizeof(s_policy_manifest_url)];
     memcpy(policy_url, s_policy_manifest_url, sizeof(policy_url));
+
+    /* Send abort to modem and flush stale bytes */
+    BSP_Quectel_SendCmd("AT+QHTTPSTOP");
+    BSP_Quectel_ClearRx();
     QuectelEngine_SetOtaExclusive(false);
     s_step = OTA_STEP_IDLE;
     reset_descriptor();
@@ -459,7 +524,7 @@ void OTAService_ConfirmBoot(void)
 
 void OTAService_Process(uint32_t now_tick)
 {
-    char line[128];
+    char line[256];
 
     if (s_step == OTA_STEP_IDLE && s_policy_enabled && s_policy_manifest_url[0] != '\0' &&
         (uint32_t)(now_tick - s_next_policy_tick) >= s_policy_interval_ms) {
@@ -471,25 +536,111 @@ void OTAService_Process(uint32_t now_tick)
     case OTA_STEP_IDLE:
         break;
 
-    case OTA_STEP_PREPARE_FLASH:
+    case OTA_STEP_ERASE_START:
         if (s_erase_index >= s_erase_count) {
-            s_step = OTA_STEP_CFG_HTTP_CTX;
+            LOG("OTA: Erase completed %lu sectors, verifying PDP context...\r\n", s_erase_count);
+            s_step = OTA_STEP_CHECK_PDP;
             s_step_tick = now_tick;
             break;
         }
         s_step_tick = now_tick;
-        if (!BSP_SPIFlash_EraseSector4K(SPI_FLASH_OTA_STAGING_BASE +
-                                        s_erase_index * SPI_FLASH_SECTOR_SIZE)) {
+        if (!BSP_SPIFlash_StartEraseSector4K(SPI_FLASH_OTA_STAGING_BASE +
+                                             s_erase_index * SPI_FLASH_SECTOR_SIZE)) {
             fail_ota(OTA_STATUS_ERROR_FLASH);
             break;
         }
+        s_step = OTA_STEP_ERASE_WAIT;
+        break;
+
+    case OTA_STEP_ERASE_WAIT:
+        if (BSP_SPIFlash_IsBusy()) {
+            if ((uint32_t)(now_tick - s_step_tick) > OTA_ERASE_TIMEOUT_MS) {
+                LOG("OTA: Erase timeout sector %lu\r\n", s_erase_index);
+                fail_ota(OTA_STATUS_ERROR_TIMEOUT);
+            }
+            break; /* Yield execution back to main loop to feed IWDG */
+        }
+        /* Sector erase complete, advance to next sector */
         ++s_erase_index;
-        if ((uint32_t)(HAL_GetTick() - s_step_tick) > OTA_ERASE_TIMEOUT_MS) {
+        s_step = OTA_STEP_ERASE_START;
+        s_step_tick = now_tick;
+        break;
+
+    /* ── PDP context verification (manifest & firmware download) ─────── */
+    case OTA_STEP_CHECK_PDP:
+        LOG("OTA: CHECK_PDP -> AT+QIACT?\r\n");
+        if (!BSP_Quectel_SendCmd("AT+QIACT?")) {
+            fail_ota(OTA_STATUS_ERROR_NETWORK);
+        } else {
+            s_step = OTA_STEP_WAIT_CHECK_PDP;
+            s_step_tick = now_tick;
+        }
+        break;
+
+    case OTA_STEP_WAIT_CHECK_PDP: {
+        /* +QIACT: 1,1,1,"10.x.x.x" → PDP active, proceed
+         * OK without +QIACT line    → PDP not active, re-activate */
+        static bool pdp_found;
+        if (s_step_tick == now_tick) pdp_found = false; /* Reset on entry */
+        if (BSP_Quectel_ReadLine(line, sizeof(line))) {
+            if (line[0] == '\0') break;
+            if (strncmp(line, "+QIACT:", 7) == 0) {
+                pdp_found = true;
+                LOG("OTA: PDP confirmed active: %s\r\n", line);
+            } else if (strcmp(line, "OK") == 0) {
+                if (pdp_found) {
+                    s_step = OTA_STEP_CFG_HTTP_CTX;
+                    LOG("OTA: PDP OK -> CFG_HTTP_CTX\r\n");
+                } else {
+                    LOG("OTA: PDP not active -> ACTIVATE_PDP\r\n");
+                    s_step = OTA_STEP_ACTIVATE_PDP;
+                }
+                s_step_tick = now_tick;
+            } else if (strstr(line, "ERROR") != NULL) {
+                LOG("OTA: QIACT? ERROR -> ACTIVATE_PDP\r\n");
+                s_step = OTA_STEP_ACTIVATE_PDP;
+                s_step_tick = now_tick;
+            }
+        } else if ((uint32_t)(now_tick - s_step_tick) >= OTA_AT_TIMEOUT_MS) {
+            LOG("OTA: WAIT_CHECK_PDP timeout\r\n");
+            fail_ota(OTA_STATUS_ERROR_TIMEOUT);
+        }
+        break;
+    }
+
+    case OTA_STEP_ACTIVATE_PDP:
+        LOG("OTA: ACTIVATE_PDP -> AT+QIACT=1\r\n");
+        if (!BSP_Quectel_SendCmd("AT+QIACT=1")) {
+            fail_ota(OTA_STATUS_ERROR_NETWORK);
+        } else {
+            s_step = OTA_STEP_WAIT_ACTIVATE_PDP;
+            s_step_tick = now_tick;
+        }
+        break;
+
+    case OTA_STEP_WAIT_ACTIVATE_PDP:
+        if (BSP_Quectel_ReadLine(line, sizeof(line))) {
+            if (line[0] == '\0') break;
+            if (strcmp(line, "OK") == 0) {
+                LOG("OTA: PDP re-activated -> CFG_HTTP_CTX\r\n");
+                s_step = OTA_STEP_CFG_HTTP_CTX;
+                s_step_tick = now_tick;
+            } else if (strstr(line, "ERROR") != NULL) {
+                /* Already active (CME ERROR: 148) is acceptable */
+                LOG("OTA: QIACT=1 response: %s (treating as active)\r\n", line);
+                s_step = OTA_STEP_CFG_HTTP_CTX;
+                s_step_tick = now_tick;
+            }
+        } else if ((uint32_t)(now_tick - s_step_tick) >= 20000U) {
+            /* PDP activation can take up to 15s on first attach */
+            LOG("OTA: WAIT_ACTIVATE_PDP timeout\r\n");
             fail_ota(OTA_STATUS_ERROR_TIMEOUT);
         }
         break;
 
+    /* ── HTTP configuration steps ─────────────────────────────────────── */
     case OTA_STEP_CFG_HTTP_CTX:
+        LOG("OTA: CFG_HTTP_CTX -> AT+QHTTPCFG=\"contextid\",1\r\n");
         if (!BSP_Quectel_SendCmd("AT+QHTTPCFG=\"contextid\",1")) {
             fail_ota(OTA_STATUS_ERROR_NETWORK);
         } else {
@@ -500,16 +651,20 @@ void OTAService_Process(uint32_t now_tick)
 
     case OTA_STEP_WAIT_CFG_HTTP_CTX:
         if (BSP_Quectel_ReadLine(line, sizeof(line))) {
+            if (line[0] == '\0') break; /* Skip empty lines / unsolicited URCs */
             if (strcmp(line, "OK") == 0 || strstr(line, "ERROR") != NULL) {
+                LOG("OTA: QHTTPCFG contextid -> %s\r\n", line);
                 s_step = OTA_STEP_CFG_HTTP_SSL;
                 s_step_tick = now_tick;
             }
         } else if ((uint32_t)(now_tick - s_step_tick) >= OTA_AT_TIMEOUT_MS) {
+            LOG("OTA: WAIT_CFG_HTTP_CTX timeout\r\n");
             fail_ota(OTA_STATUS_ERROR_TIMEOUT);
         }
         break;
 
     case OTA_STEP_CFG_HTTP_SSL:
+        LOG("OTA: CFG_HTTP_SSL -> AT+QHTTPCFG=\"sslctxid\",1\r\n");
         if (!BSP_Quectel_SendCmd("AT+QHTTPCFG=\"sslctxid\",1")) {
             fail_ota(OTA_STATUS_ERROR_NETWORK);
         } else {
@@ -520,16 +675,20 @@ void OTAService_Process(uint32_t now_tick)
 
     case OTA_STEP_WAIT_CFG_HTTP_SSL:
         if (BSP_Quectel_ReadLine(line, sizeof(line))) {
+            if (line[0] == '\0') break; /* Skip empty lines / unsolicited URCs */
             if (strcmp(line, "OK") == 0 || strstr(line, "ERROR") != NULL) {
+                LOG("OTA: QHTTPCFG sslctxid -> %s\r\n", line);
                 s_step = OTA_STEP_CFG_SSL_SNI;
                 s_step_tick = now_tick;
             }
         } else if ((uint32_t)(now_tick - s_step_tick) >= OTA_AT_TIMEOUT_MS) {
+            LOG("OTA: WAIT_CFG_HTTP_SSL timeout\r\n");
             fail_ota(OTA_STATUS_ERROR_TIMEOUT);
         }
         break;
 
     case OTA_STEP_CFG_SSL_SNI:
+        LOG("OTA: CFG_SSL_SNI -> AT+QSSLCFG=\"sni\",1,1\r\n");
         if (!BSP_Quectel_SendCmd("AT+QSSLCFG=\"sni\",1,1")) {
             fail_ota(OTA_STATUS_ERROR_NETWORK);
         } else {
@@ -540,16 +699,20 @@ void OTAService_Process(uint32_t now_tick)
 
     case OTA_STEP_WAIT_CFG_SSL_SNI:
         if (BSP_Quectel_ReadLine(line, sizeof(line))) {
+            if (line[0] == '\0') break; /* Skip empty lines / unsolicited URCs */
             if (strcmp(line, "OK") == 0 || strstr(line, "ERROR") != NULL) {
+                LOG("OTA: QSSLCFG sni -> %s\r\n", line);
                 s_step = OTA_STEP_CFG_SSL_SEC;
                 s_step_tick = now_tick;
             }
         } else if ((uint32_t)(now_tick - s_step_tick) >= OTA_AT_TIMEOUT_MS) {
+            LOG("OTA: WAIT_CFG_SSL_SNI timeout\r\n");
             fail_ota(OTA_STATUS_ERROR_TIMEOUT);
         }
         break;
 
     case OTA_STEP_CFG_SSL_SEC:
+        LOG("OTA: CFG_SSL_SEC -> AT+QSSLCFG=\"seclevel\",1,0\r\n");
         if (!BSP_Quectel_SendCmd("AT+QSSLCFG=\"seclevel\",1,0")) {
             fail_ota(OTA_STATUS_ERROR_NETWORK);
         } else {
@@ -560,11 +723,14 @@ void OTAService_Process(uint32_t now_tick)
 
     case OTA_STEP_WAIT_CFG_SSL_SEC:
         if (BSP_Quectel_ReadLine(line, sizeof(line))) {
+            if (line[0] == '\0') break; /* Skip empty lines / unsolicited URCs */
             if (strcmp(line, "OK") == 0 || strstr(line, "ERROR") != NULL) {
+                LOG("OTA: QSSLCFG seclevel -> %s\r\n", line);
                 s_step = OTA_STEP_SET_URL_CMD;
                 s_step_tick = now_tick;
             }
         } else if ((uint32_t)(now_tick - s_step_tick) >= OTA_AT_TIMEOUT_MS) {
+            LOG("OTA: WAIT_CFG_SSL_SEC timeout\r\n");
             fail_ota(OTA_STATUS_ERROR_TIMEOUT);
         }
         break;
@@ -572,6 +738,7 @@ void OTAService_Process(uint32_t now_tick)
     case OTA_STEP_SET_URL_CMD: {
         char cmd[32];
         int written = snprintf(cmd, sizeof(cmd), "AT+QHTTPURL=%u,30", (unsigned)strlen(s_url));
+        LOG("OTA: SET_URL_CMD -> %s\r\n", cmd);
         if (written <= 0 || (size_t)written >= sizeof(cmd) || !BSP_Quectel_SendCmd(cmd)) {
             fail_ota(OTA_STATUS_ERROR_NETWORK);
         } else {
@@ -583,49 +750,61 @@ void OTAService_Process(uint32_t now_tick)
 
     case OTA_STEP_WAIT_CONNECT_URL:
         if (BSP_Quectel_ReadLine(line, sizeof(line))) {
+            if (line[0] == '\0') break; /* Skip empty lines / unsolicited URCs */
             if (strcmp(line, "CONNECT") == 0) {
+                LOG("OTA: CONNECT received, sending URL body\r\n");
                 if (!BSP_Quectel_SendString(s_url)) fail_ota(OTA_STATUS_ERROR_NETWORK);
                 else {
                     s_step = OTA_STEP_SEND_URL_BODY;
                     s_step_tick = now_tick;
                 }
             } else if (strstr(line, "ERROR") != NULL) {
+                LOG("OTA: WAIT_CONNECT_URL ERROR: %s\r\n", line);
                 fail_ota(OTA_STATUS_ERROR_NETWORK);
             }
         } else if ((uint32_t)(now_tick - s_step_tick) >= OTA_AT_TIMEOUT_MS) {
+            LOG("OTA: WAIT_CONNECT_URL timeout\r\n");
             fail_ota(OTA_STATUS_ERROR_TIMEOUT);
         }
         break;
 
     case OTA_STEP_SEND_URL_BODY:
         if (BSP_Quectel_ReadLine(line, sizeof(line))) {
+            if (line[0] == '\0') break; /* Skip empty lines between AT responses */
             if (strcmp(line, "OK") == 0) {
+                LOG("OTA: URL accepted, sending AT+QHTTPGET=60\r\n");
                 if (!BSP_Quectel_SendCmd("AT+QHTTPGET=60")) fail_ota(OTA_STATUS_ERROR_NETWORK);
                 else {
                     s_step = OTA_STEP_WAIT_GET_RESP;
                     s_step_tick = now_tick;
                 }
             } else if (strstr(line, "ERROR") != NULL) {
+                LOG("OTA: SEND_URL_BODY ERROR: %s\r\n", line);
                 fail_ota(OTA_STATUS_ERROR_NETWORK);
             }
         } else if ((uint32_t)(now_tick - s_step_tick) >= OTA_AT_TIMEOUT_MS) {
+            LOG("OTA: SEND_URL_BODY timeout\r\n");
             fail_ota(OTA_STATUS_ERROR_TIMEOUT);
         }
         break;
 
     case OTA_STEP_WAIT_GET_RESP:
         if (BSP_Quectel_ReadLine(line, sizeof(line))) {
+            if (line[0] == '\0') break; /* Skip empty lines / unsolicited URCs */
             if (strncmp(line, "+QHTTPGET:", 10U) == 0) {
                 int err = -1;
                 int status_code = 0;
                 unsigned content_len = 0U;
                 int fields = sscanf(line + 10, "%d,%d,%u", &err, &status_code, &content_len);
+                LOG("OTA: +QHTTPGET: err=%d code=%d len=%u\r\n", err, status_code, content_len);
                 if (fields >= 3 && err == 0 && status_code == 200 &&
                     content_len > 0U &&
                     (s_manifest_mode ? content_len < sizeof(s_manifest_buf)
                                      : content_len == s_desc.image_size)) {
                     s_read_expected_bytes = s_manifest_mode ? content_len : s_desc.image_size;
-                    if (!BSP_Quectel_SendCmd("AT+QHTTPREAD=60")) fail_ota(OTA_STATUS_ERROR_NETWORK);
+                    LOG("OTA: QHTTPGET 200 OK, requesting QHTTPREAD=120 for %lu bytes\r\n",
+                        (unsigned long)s_read_expected_bytes);
+                    if (!BSP_Quectel_SendCmd("AT+QHTTPREAD=120")) fail_ota(OTA_STATUS_ERROR_NETWORK);
                     else {
                         s_step = OTA_STEP_WAIT_READ_CONNECT;
                         s_step_tick = now_tick;
@@ -637,19 +816,25 @@ void OTAService_Process(uint32_t now_tick)
                 fail_ota(OTA_STATUS_ERROR_NETWORK);
             }
         } else if ((uint32_t)(now_tick - s_step_tick) >= OTA_HTTP_TIMEOUT_MS) {
+            LOG("OTA: WAIT_GET_RESP timeout\r\n");
             fail_ota(OTA_STATUS_ERROR_TIMEOUT);
         }
         break;
 
     case OTA_STEP_WAIT_READ_CONNECT:
         if (BSP_Quectel_ReadLine(line, sizeof(line))) {
+            if (line[0] == '\0') break; /* Skip empty lines / unsolicited URCs */
             if (strcmp(line, "CONNECT") == 0) {
+                LOG("OTA: QHTTPREAD CONNECT -> READING_STREAM, expect %lu bytes\r\n",
+                    (unsigned long)s_read_expected_bytes);
                 s_step = OTA_STEP_READING_STREAM;
                 s_step_tick = now_tick;
             } else if (strstr(line, "ERROR") != NULL) {
+                LOG("OTA: WAIT_READ_CONNECT ERROR: %s\r\n", line);
                 fail_ota(OTA_STATUS_ERROR_NETWORK);
             }
-        } else if ((uint32_t)(now_tick - s_step_tick) >= OTA_AT_TIMEOUT_MS) {
+        } else if ((uint32_t)(now_tick - s_step_tick) >= OTA_HTTP_TIMEOUT_MS) {
+            LOG("OTA: WAIT_READ_CONNECT timeout\r\n");
             fail_ota(OTA_STATUS_ERROR_TIMEOUT);
         }
         break;
@@ -667,19 +852,35 @@ void OTAService_Process(uint32_t now_tick)
             } else {
                 uint32_t address = SPI_FLASH_OTA_STAGING_BASE + s_desc.downloaded_bytes;
                 if (!BSP_SPIFlash_Write(address, chunk, received)) {
+                    LOG("OTA: Flash write failed at 0x%08lX\r\n", (unsigned long)address);
                     fail_ota(OTA_STATUS_ERROR_FLASH);
                     break;
                 }
                 s_crc_state = crc32_update(s_crc_state, chunk, received);
                 OTA_SHA256_Update(&s_sha256, chunk, received);
                 s_desc.downloaded_bytes += received;
+
+                if (s_desc.downloaded_bytes % 10240U < received) {
+                    LOG("OTA: Download progress: %lu / %lu bytes\r\n",
+                        (unsigned long)s_desc.downloaded_bytes, (unsigned long)s_read_expected_bytes);
+                }
             }
             s_step_tick = now_tick;
             if ((s_manifest_mode ? s_manifest_received : s_desc.downloaded_bytes) == s_read_expected_bytes) {
-                s_step = OTA_STEP_WAIT_READ_DONE;
-                s_step_tick = now_tick;
+                if (s_manifest_mode) {
+                    LOG("OTA: Manifest read complete (%lu bytes), waiting for OK\r\n",
+                        (unsigned long)s_read_expected_bytes);
+                    s_step = OTA_STEP_WAIT_READ_DONE;
+                    s_step_tick = now_tick;
+                } else {
+                    LOG("OTA: Firmware stream complete (%lu bytes), proceeding directly to VERIFY\r\n",
+                        (unsigned long)s_desc.downloaded_bytes);
+                    s_step = OTA_STEP_VERIFY;
+                    s_step_tick = now_tick;
+                }
             }
         } else if ((uint32_t)(now_tick - s_step_tick) >= OTA_BODY_TIMEOUT_MS) {
+            LOG("OTA: READING_STREAM stall timeout\r\n");
             fail_ota(OTA_STATUS_ERROR_TIMEOUT);
         }
         break;
@@ -687,7 +888,9 @@ void OTAService_Process(uint32_t now_tick)
 
     case OTA_STEP_WAIT_READ_DONE:
         if (BSP_Quectel_ReadLine(line, sizeof(line))) {
-            if (strcmp(line, "OK") == 0) {
+            if (line[0] == '\0') break; /* Skip empty lines / unsolicited URCs */
+            if (strcmp(line, "OK") == 0 || strncmp(line, "+QHTTPREAD: 0", 13) == 0) {
+                LOG("OTA: QHTTPREAD complete (line: %s)\r\n", line);
                 if (s_manifest_mode) {
                     uint32_t version;
                     uint32_t size;
@@ -705,11 +908,16 @@ void OTAService_Process(uint32_t now_tick)
                         }
                     }
                 } else {
+                    LOG("OTA: Firmware download complete, entering VERIFY\r\n");
                     s_step = OTA_STEP_VERIFY;
                 }
             }
-            else if (strstr(line, "ERROR") != NULL) fail_ota(OTA_STATUS_ERROR_NETWORK);
-        } else if ((uint32_t)(now_tick - s_step_tick) >= OTA_AT_TIMEOUT_MS) {
+            else if (strstr(line, "ERROR") != NULL) {
+                LOG("OTA: WAIT_READ_DONE ERROR: %s\r\n", line);
+                fail_ota(OTA_STATUS_ERROR_NETWORK);
+            }
+        } else if ((uint32_t)(now_tick - s_step_tick) >= 30000U) {
+            LOG("OTA: WAIT_READ_DONE timeout\r\n");
             fail_ota(OTA_STATUS_ERROR_TIMEOUT);
         }
         break;
@@ -738,8 +946,12 @@ void OTAService_Process(uint32_t now_tick)
             s_desc.boot_request = OTA_BOOT_FLAG_CLEARED;
             if (!save_descriptor()) fail_ota(OTA_STATUS_ERROR_FLASH);
             else {
+                BSP_Quectel_SendCmd("AT+QHTTPSTOP");
+                BSP_Quectel_ClearRx();
                 QuectelEngine_SetOtaExclusive(false);
                 s_step = OTA_STEP_IDLE;
+                LOG("OTA: VERIFY SUCCESS! Image valid (size=%lu, crc32=0x%08lX)\r\n",
+                    (unsigned long)s_desc.image_size, (unsigned long)s_desc.calc_crc32);
             }
         }
         break;
@@ -758,4 +970,111 @@ void OTAService_Process(uint32_t now_tick)
 bool OTAService_SelfTestFlash(uint32_t *out_jedec, uint32_t *out_cap_kb)
 {
     return BSP_SPIFlash_SelfTest(out_jedec, out_cap_kb);
+}
+
+typedef struct {
+    bool active;
+    uint32_t total_size;
+    uint32_t expected_crc32;
+    uint32_t version;
+    uint32_t received_bytes;
+} DirectUploadState_t;
+
+static DirectUploadState_t s_direct_upload;
+
+bool OTAService_DirectUploadStart(uint32_t total_size, uint32_t expected_crc32, uint32_t version)
+{
+    if (!ota_is_safe() || !BSP_SPIFlash_IsAvailable()) {
+        return false;
+    }
+    if (total_size == 0U || total_size > OTA_MAX_IMAGE_SIZE) {
+        return false;
+    }
+    if (s_step != OTA_STEP_IDLE) {
+        return false;
+    }
+
+    uint32_t sectors = (total_size + SPI_FLASH_SECTOR_SIZE - 1U) / SPI_FLASH_SECTOR_SIZE;
+    for (uint32_t i = 0U; i < sectors; ++i) {
+        if (!BSP_SPIFlash_EraseSector4K(SPI_FLASH_OTA_STAGING_BASE + i * SPI_FLASH_SECTOR_SIZE)) {
+            return false;
+        }
+    }
+
+    s_direct_upload.active = true;
+    s_direct_upload.total_size = total_size;
+    s_direct_upload.expected_crc32 = expected_crc32;
+    s_direct_upload.version = version;
+    s_direct_upload.received_bytes = 0U;
+
+    reset_descriptor();
+    s_desc.image_size = total_size;
+    s_desc.image_crc32 = expected_crc32;
+    s_desc.version = version;
+    s_desc.status = OTA_STATUS_DOWNLOADING;
+    s_desc.downloaded_bytes = 0U;
+
+    return true;
+}
+
+bool OTAService_DirectUploadChunk(uint32_t offset, const uint8_t *data, uint16_t len)
+{
+    if (!s_direct_upload.active || data == NULL || len == 0U) {
+        return false;
+    }
+    if ((offset + len) > s_direct_upload.total_size) {
+        return false;
+    }
+
+    if (!BSP_SPIFlash_Write(SPI_FLASH_OTA_STAGING_BASE + offset, data, len)) {
+        return false;
+    }
+
+    s_direct_upload.received_bytes += len;
+    s_desc.downloaded_bytes = s_direct_upload.received_bytes;
+    return true;
+}
+
+bool OTAService_DirectUploadFinish(void)
+{
+    if (!s_direct_upload.active) {
+        return false;
+    }
+    if (s_direct_upload.received_bytes != s_direct_upload.total_size) {
+        s_direct_upload.active = false;
+        s_desc.status = OTA_STATUS_ERROR_SIZE;
+        return false;
+    }
+
+    uint32_t calc_crc = 0xFFFFFFFFU;
+    uint8_t buf[256];
+    uint32_t remaining = s_direct_upload.total_size;
+    uint32_t addr = SPI_FLASH_OTA_STAGING_BASE;
+    while (remaining > 0U) {
+        uint32_t chunk = (remaining > sizeof(buf)) ? sizeof(buf) : remaining;
+        if (!BSP_SPIFlash_Read(addr, buf, chunk)) {
+            s_direct_upload.active = false;
+            s_desc.status = OTA_STATUS_ERROR_FLASH;
+            return false;
+        }
+        calc_crc = crc32_update(calc_crc, buf, chunk);
+        addr += chunk;
+        remaining -= chunk;
+    }
+    calc_crc ^= 0xFFFFFFFFU;
+
+    if (calc_crc != s_direct_upload.expected_crc32) {
+        s_desc.status = OTA_STATUS_ERROR_CRC;
+        s_direct_upload.active = false;
+        return false;
+    }
+
+    s_desc.calc_crc32 = calc_crc;
+    s_desc.status = OTA_STATUS_VERIFIED;
+    s_desc.boot_request = OTA_BOOT_FLAG_REQUEST;
+    s_desc.boot_attempts = 0U;
+    s_desc.health_marker = OTA_HEALTH_MARKER_PENDING;
+    s_direct_upload.active = false;
+
+    return save_descriptor();
 }

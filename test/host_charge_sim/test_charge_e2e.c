@@ -2074,6 +2074,7 @@ static bool test_temp_stage_asymmetric_hysteresis(void)
     cfg.temp_curr_3_c = 1.0f;
     cfg.temp_curr_4_c = 0.3f;
     cfg.temp_delta_c = 3.0f;
+    cfg.temp_limit_c = 70.0f;
     cfg.cell_volt_enabled = 0;
     cfg.soc_enabled = 0;
     ASSERT(ChargeCycleConfig_Set(&cfg), "config set failed");

@@ -37,6 +37,8 @@
 #include "bsp_sys.h"
 #include "bsp_rtc.h"
 #include "bsp_spi_flash.h"
+#include "bsp_sd_card.h"
+#include "sd_storage.h"
 #include "bsp_quectel.h"
 #include "quectel_at_engine.h"
 #include "ota_service.h"
@@ -268,11 +270,50 @@ static void dwin_send_identity_and_page(uint32_t now)
         hw_str += 2;
     }
 
+    char hw_buf[16];
+    if (hw_str[0] != 'V' && hw_str[0] != 'v' && hw_str[0] != '\0') {
+        (void)snprintf(hw_buf, sizeof(hw_buf), "V%s", hw_str);
+        hw_str = hw_buf;
+    }
+
     DWIN_SendSettingStrings(hw_str, FW_VERSION_STRING,
                             ChargeCycleConfig_GetDeviceId());
     DWIN_SetPage(dwin_page_after_panel_reset());
     DWIN_ForceFullRefresh();
     last_dwin_full_tick = now;
+}
+
+static void dwin_check_and_send_identity_update(void)
+{
+    static char s_last_dev_id[16] = "";
+    static char s_last_hw_rev[12] = "";
+    const char *cur_dev = ChargeCycleConfig_GetDeviceId();
+    const char *cur_hw = ChargeCycleConfig_GetHwRev();
+
+    if (s_last_dev_id[0] == '\0') {
+        strncpy(s_last_dev_id, cur_dev, sizeof(s_last_dev_id) - 1U);
+        strncpy(s_last_hw_rev, cur_hw, sizeof(s_last_hw_rev) - 1U);
+        return;
+    }
+
+    if (strncmp(s_last_dev_id, cur_dev, sizeof(s_last_dev_id)) != 0 ||
+        strncmp(s_last_hw_rev, cur_hw, sizeof(s_last_hw_rev)) != 0) {
+        strncpy(s_last_dev_id, cur_dev, sizeof(s_last_dev_id) - 1U);
+        strncpy(s_last_hw_rev, cur_hw, sizeof(s_last_hw_rev) - 1U);
+
+        const char *hw_str = cur_hw;
+        if (strncmp(hw_str, "HW ", 3) == 0) {
+            hw_str += 3;
+        } else if (strncmp(hw_str, "HW", 2) == 0) {
+            hw_str += 2;
+        }
+        char hw_buf[16];
+        if (hw_str[0] != 'V' && hw_str[0] != 'v' && hw_str[0] != '\0') {
+            (void)snprintf(hw_buf, sizeof(hw_buf), "V%s", hw_str);
+            hw_str = hw_buf;
+        }
+        DWIN_SendSettingStrings(hw_str, FW_VERSION_STRING, cur_dev);
+    }
 }
 
 static void dwin_service_recovery(uint32_t now)
@@ -560,6 +601,17 @@ void App_Init(void)
             (unsigned long)(BSP_SPIFlash_GetCapacity() / 1024UL));
     } else {
         LOG("App_Init: WARNING - External SPI Flash not detected, using fallback.\r\n");
+    }
+
+    /* SD is optional storage. Keep card absence non-fatal so a charger can
+     * boot and charge normally without a card inserted. */
+    if (SDStorage_Mount()) {
+        LOG("App_Init: SD card ready (type=%u, blocks=%lu).\r\n",
+            (unsigned)BSP_SDCard_GetType(),
+            (unsigned long)BSP_SDCard_GetBlockCount());
+    } else {
+        LOG("App_Init: SD card not mounted (FatFs=%u).\r\n",
+            (unsigned)SDStorage_GetLastResult());
     }
 
     ChargeCycleConfig_Init();
@@ -859,9 +911,12 @@ void App_Loop(void)
         /* Heartbeat: re-send every field periodically so a panel that booted
          * late, or brown-out-rebooted, catches up without needing a value to
          * change. Diff-suppressed in between. */
-        if (dwin_boot_sent && (now - last_dwin_full_tick) >= DWIN_HEARTBEAT_INTERVAL_MS) {
-            last_dwin_full_tick = now;
-            DWIN_ForceFullRefresh();
+        if (dwin_boot_sent) {
+            dwin_check_and_send_identity_update();
+            if ((now - last_dwin_full_tick) >= DWIN_HEARTBEAT_INTERVAL_MS) {
+                last_dwin_full_tick = now;
+                DWIN_ForceFullRefresh();
+            }
         }
 
         DWIN_SystemData_t dd;
@@ -926,10 +981,6 @@ void App_Loop(void)
                          (unsigned)(bms.max_cell_volt % 1000U)) < 0)
                 dwin_set_unavailable(dd.bat_cell_volt_text, sizeof(dd.bat_cell_volt_text));
 
-            if (!dwin_format_fixed(dd.bat_cap_text, sizeof(dd.bat_cap_text),
-                                   (float)bms.cap_remain * 0.1f, 1U, ""))
-                dwin_set_unavailable(dd.bat_cap_text, sizeof(dd.bat_cap_text));
-
             if (!dwin_format_fixed(dd.temp_battery_text, sizeof(dd.temp_battery_text), bms.max_cell_temp, 1U, ""))
                 dwin_set_unavailable(dd.temp_battery_text, sizeof(dd.temp_battery_text));
 
@@ -937,8 +988,14 @@ void App_Loop(void)
             dwin_set_soc_unavailable(dd.soc_text, sizeof(dd.soc_text));
             dwin_set_unavailable(dd.bat_pack_volt_text, sizeof(dd.bat_pack_volt_text));
             dwin_set_unavailable(dd.bat_cell_volt_text, sizeof(dd.bat_cell_volt_text));
-            dwin_set_unavailable(dd.bat_cap_text, sizeof(dd.bat_cap_text));
             dwin_set_unavailable(dd.temp_battery_text, sizeof(dd.temp_battery_text));
+        }
+
+        /* Home battery row 3: active charge mode ("NORMAL" or "FAST") */
+        {
+            const char *mode_str = (ChargeCycleConfig_GetActiveMode() == CHARGE_MODE_FAST) ? "FAST" : "NORMAL";
+            strncpy(dd.bat_cap_text, mode_str, sizeof(dd.bat_cap_text) - 1U);
+            dd.bat_cap_text[sizeof(dd.bat_cap_text) - 1U] = '\0';
         }
         DWIN_SetSocColor(dwin_soc_color_for_bms(&bms));
 
@@ -1245,11 +1302,16 @@ void DWIN_OnKeyEvent(uint16_t vp, uint16_t keyval)
         cfg.delay_hours = s_cfg_hours;
         cfg.delay_minutes = s_cfg_minutes;
 
+        /* Apply session config in RAM for the upcoming charge cycle */
         ChargeCycleConfig_SetProfile(target_mode, &cfg);
         ChargeCycleConfig_SetActiveMode(target_mode);
-        (void)ChargeCycleStorage_SaveProfile(target_mode, &cfg);
 
-        LOG("DWIN: Charge config saved (mode=%u delay=%u %02u:%02u)\r\n",
+        /* Save delay time preferences to flash (Option A) while keeping startup default safe (NO DELAY) */
+        ChargeCycleConfig_t flash_cfg = cfg;
+        flash_cfg.delay_enabled = 0U;
+        (void)ChargeCycleStorage_SaveProfile(target_mode, &flash_cfg);
+
+        LOG("DWIN: Session charge config applied (mode=%u delay=%u %02u:%02u)\r\n",
             (unsigned)cfg.charge_mode, (unsigned)cfg.delay_enabled,
             (unsigned)cfg.delay_hours, (unsigned)cfg.delay_minutes);
         return;

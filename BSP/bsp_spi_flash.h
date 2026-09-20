@@ -81,11 +81,24 @@ bool BSP_SPIFlash_Read(uint32_t address, uint8_t *buf, uint32_t len);
 bool BSP_SPIFlash_Write(uint32_t address, const uint8_t *data, uint32_t len);
 
 /**
- * @brief Erase a 4 KB sector
+ * @brief Erase a 4 KB sector (blocking wait for completion)
  * @param address Any address within the 4 KB sector
  * @return true on success, false on error
  */
 bool BSP_SPIFlash_EraseSector4K(uint32_t address);
+
+/**
+ * @brief Start non-blocking erase of a 4 KB sector
+ * @param address Any address within the 4 KB sector
+ * @return true if command dispatched successfully, false on error
+ */
+bool BSP_SPIFlash_StartEraseSector4K(uint32_t address);
+
+/**
+ * @brief Check if SPI Flash is busy writing or erasing
+ * @return true if busy, false if ready
+ */
+bool BSP_SPIFlash_IsBusy(void);
 
 /**
  * @brief Erase a 32 KB block

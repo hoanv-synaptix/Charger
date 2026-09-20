@@ -135,6 +135,12 @@
                 <MenuItem Header="Serial Terminal Log"/>
                 <Separator/>
                 <MenuItem Header="Device Calibration"/>
+                <Separator/>
+                <MenuItem Header="MCU Firmware Update (OTA)..." Click="OpenMcuFirmwareUpdate_Click">
+                    <MenuItem.Icon>
+                        <TextBlock Text="⚡" Margin="0,-2,0,0"/>
+                    </MenuItem.Icon>
+                </MenuItem>
             </MenuItem>
             <MenuItem Header="_View">
                 <MenuItem Header="Show ToolBar" IsCheckable="True" IsChecked="True"/>
@@ -199,11 +205,9 @@
                                                 <StackPanel Margin="0,5"><TextBlock Text="I Max (C)" Style="{StaticResource LabelStyle}"/><TextBox Text="{Binding Config.IMaxC, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
                                             </UniformGrid>
                                         </GroupBox>
-                                        <GroupBox Header="Charge Window">
-                                            <UniformGrid Columns="4">
-                                                <StackPanel Margin="0,5"><TextBlock Text="V Precharge (V)" Style="{StaticResource LabelStyle}"/><TextBox Text="{Binding Config.VPreV, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
+                                        <GroupBox Header="Charge Window (Precharge / Recovery)">
+                                            <UniformGrid Columns="2">
                                                 <StackPanel Margin="0,5"><TextBlock Text="V Low (V)" Style="{StaticResource LabelStyle}"/><TextBox Text="{Binding Config.VLowV, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
-                                                <StackPanel Margin="0,5"><TextBlock Text="I Precharge (C)" Style="{StaticResource LabelStyle}"/><TextBox Text="{Binding Config.IPreC, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
                                                 <StackPanel Margin="0,5"><TextBlock Text="I Low (C)" Style="{StaticResource LabelStyle}"/><TextBox Text="{Binding Config.ILowC, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
                                             </UniformGrid>
                                         </GroupBox>

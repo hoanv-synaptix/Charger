@@ -55,6 +55,7 @@ LAYER_DIRS = [
     ("App/Alarm", "APP_ALARM"),
     ("App/Charge", "APP_CHARGE"),
     ("App/Protocol", "APP_PROTOCOL"),
+    ("App/Storage", "APP_STORAGE"),
     ("Modules", "MODULES"),
     ("BSP", "PLATFORM_BSP"),
     ("USB_Device/App", "PLATFORM_USB"),
@@ -81,10 +82,11 @@ SCAN_DIRS = ["App", "BSP", "Modules", "Utils", "Core", "Drivers", "Middlewares",
 # source_layer -> set of layers it may #include "local_header.h" from.
 # A layer may always include its own layer.
 ALLOWED_TARGETS = {
-    "APP_SYSTEM":   {"APP_ALARM", "APP_CHARGE", "APP_PROTOCOL", "MODULES", "PLATFORM_BSP", "PLATFORM_USB", "UTILS", "GENERATED"},
+    "APP_SYSTEM":   {"APP_ALARM", "APP_CHARGE", "APP_PROTOCOL", "APP_STORAGE", "MODULES", "PLATFORM_BSP", "PLATFORM_USB", "UTILS", "GENERATED"},
     "APP_ALARM":    {"APP_CHARGE", "MODULES", "UTILS"},
     "APP_CHARGE":   {"MODULES", "UTILS"},
-    "APP_PROTOCOL": {"APP_ALARM", "APP_CHARGE", "MODULES", "UTILS", "PLATFORM_USB"},
+    "APP_PROTOCOL": {"APP_ALARM", "APP_CHARGE", "APP_STORAGE", "MODULES", "UTILS", "PLATFORM_USB"},
+    "APP_STORAGE":  {"PLATFORM_BSP", "GENERATED", "UTILS"},
     "MODULES":      {"PLATFORM_BSP", "UTILS"},
     "PLATFORM_BSP": {"GENERATED", "UTILS"},
     "PLATFORM_USB": {"GENERATED", "UTILS"},
