@@ -22,6 +22,7 @@ typedef enum {
     QUECTEL_NET_STATE_ECHO_OFF,
     QUECTEL_NET_STATE_CHECK_INFO,
     QUECTEL_NET_STATE_CHECK_SIM,
+    QUECTEL_NET_STATE_CONFIG_TIMEZONE,
     QUECTEL_NET_STATE_CHECK_CSQ,
     QUECTEL_NET_STATE_CHECK_REG,
     QUECTEL_NET_STATE_CONFIG_APN,
@@ -41,6 +42,8 @@ typedef struct {
     char model[24];             /* E.g. "EC200U-CN" */
     char ip_addr[20];           /* E.g. "10.154.22.8" */
     uint32_t last_csq_update_ms;
+    uint32_t last_rtc_sync_ms;  /* Tick of last successful LTE time sync */
+    bool rtc_synced;            /* True if RTC was synchronized at least once via LTE */
 } QuectelNetStatus_t;
 
 /**
@@ -61,6 +64,11 @@ bool QuectelEngine_IsNetReady(void);
 
 /** Temporarily give the UART RX line parser exclusively to OTA QHTTP. */
 void QuectelEngine_SetOtaExclusive(bool exclusive);
+
+/**
+ * @brief Check if real-time clock has been synchronized from cellular network.
+ */
+bool QuectelEngine_IsRtcSynced(void);
 
 /**
  * @brief Get current network and modem status snapshot.
