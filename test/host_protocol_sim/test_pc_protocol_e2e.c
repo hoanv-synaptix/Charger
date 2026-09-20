@@ -589,6 +589,39 @@ static bool test_debug_set_charge_cfg_v6_compat_persists(void)
     return true;
 }
 
+static bool test_debug_set_charge_cfg_v7_compat_persists(void)
+{
+    printf("Running test_debug_set_charge_cfg_v7_compat_persists...\n");
+    ASSERT(setup_scenario(), "setup failed");
+    PC_Protocol_ResetTx();
+
+    ChargeCycleConfig_t curr_cfg;
+    ChargeCycleConfig_GetDefaults(&curr_cfg);
+    curr_cfg.charge_mode = 0U; /* FAST */
+    ChargeCycleConfig_Set(&curr_cfg);
+
+    /* Simulate a v7 app sending 249 bytes (v7 payload without imax_a) */
+    uint8_t v7_payload[249];
+    memcpy(v7_payload, &curr_cfg, 249);
+    ChargeCycleConfig_t *p_v7 = (ChargeCycleConfig_t *)v7_payload;
+    p_v7->battery_capacity_ah = 150.0f;
+
+    send_pc_frame(DEBUG_CMD_SET_CHARGE_CFG, v7_payload, 249U);
+    uint8_t cmd, resp[255], len;
+    ASSERT(only_tx_frame(&cmd, resp, &len), "expected exactly one response");
+    ASSERT(cmd == DEBUG_RSP_CHARGE_CFG, "v7 config should succeed and echo back DEBUG_RSP_CHARGE_CFG");
+    ASSERT(g_storage_save_called, "v7 config should reach ChargeCycleStorage_Save()");
+
+    ChargeCycleConfig_t stored;
+    ChargeCycleConfig_Get(&stored);
+    ASSERT(stored.battery_capacity_ah == 150.0f, "v7 battery_capacity_ah should be updated");
+    ASSERT(stored.imax_a == DEFAULT_IMAX_A, "v7 imax_a should default to DEFAULT_IMAX_A");
+    ASSERT(stored.version == CHARGE_CYCLE_CONFIG_VERSION, "version must be bumped to current version");
+
+    printf("[PASS] test_debug_set_charge_cfg_v7_compat_persists\n");
+    return true;
+}
+
 static bool test_debug_set_charge_cfg_wrong_length_rejected(void)
 {
     printf("Running test_debug_set_charge_cfg_wrong_length_rejected...\n");
@@ -821,6 +854,7 @@ int main(void)
     pass &= test_debug_set_charge_cfg_rejects_invalid_config();
     pass &= test_debug_set_charge_cfg_valid_config_persists();
     pass &= test_debug_set_charge_cfg_v6_compat_persists();
+    pass &= test_debug_set_charge_cfg_v7_compat_persists();
     pass &= test_debug_set_charge_cfg_wrong_length_rejected();
     pass &= test_debug_dual_profiles_protocol_roundtrip();
     pass &= test_debug_get_system_info_matches_wire_struct();

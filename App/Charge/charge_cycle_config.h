@@ -22,6 +22,7 @@ extern "C" {
 #define DEFAULT_BATTERY_CAPACITY_AH           100.0f
 #define DEFAULT_IMIN_C                        0.1f
 #define DEFAULT_IMAX_C                        1.0f
+#define DEFAULT_IMAX_A                        100.0f
 #define DEFAULT_IPRE_C                        0.2f
 #define DEFAULT_ILOW_C                        0.5f
 
@@ -143,9 +144,12 @@ typedef struct __attribute__((packed)) {
     uint8_t  delay_enabled;   /* 0: OFF (default), 1: ON */
     uint16_t delay_hours;     /* 0..99 (default: 2) */
     uint16_t delay_minutes;   /* 0..59 (default: 30) */
+
+    /* v8: Absolute maximum charging current limit in Amperes */
+    float    imax_a;          /* Default: 100.0f (A) */
 } ChargeCycleConfig_t;
 
-_Static_assert(sizeof(ChargeCycleConfig_t) == 249, "ChargeCycleConfig_t must stay 249 bytes");
+_Static_assert(sizeof(ChargeCycleConfig_t) == 253, "ChargeCycleConfig_t must stay 253 bytes");
 
 #define CHARGE_MODE_FAST                      0U
 #define CHARGE_MODE_NORMAL                    1U

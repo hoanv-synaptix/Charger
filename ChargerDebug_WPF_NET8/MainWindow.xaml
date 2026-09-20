@@ -203,6 +203,8 @@
                                                 <StackPanel Margin="0,5"><TextBlock Text="V Max (V)" Style="{StaticResource LabelStyle}"/><TextBox Text="{Binding Config.VMaxV, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
                                                 <StackPanel Margin="0,5"><TextBlock Text="I Min (C)" Style="{StaticResource LabelStyle}"/><TextBox Text="{Binding Config.IMinC, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
                                                 <StackPanel Margin="0,5"><TextBlock Text="I Max (C)" Style="{StaticResource LabelStyle}"/><TextBox Text="{Binding Config.IMaxC, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
+                                                <StackPanel Margin="0,5"><TextBlock Text="I Max (A)" Style="{StaticResource LabelStyle}"/><TextBox Text="{Binding Config.IMaxA, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
+                                                <TextBlock Text=""/>
                                             </UniformGrid>
                                         </GroupBox>
                                         <GroupBox Header="Charge Window (Precharge / Recovery)">

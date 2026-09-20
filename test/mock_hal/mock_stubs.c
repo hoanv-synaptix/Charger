@@ -228,6 +228,7 @@ bool OTAService_SetPolicy(bool enabled, uint32_t interval_ms, const char *url)
     (void)enabled; (void)interval_ms; (void)url; return true;
 }
 bool OTAService_RequestCheckNow(void) { return true; }
+bool OTAService_RequestCheckNowResult(uint8_t *result_code) { if (result_code) *result_code = 0; return true; }
 bool OTAService_RequestApply(void) { return true; }
 void OTAService_GetStatus(OtaStatusView_t *status)
 {

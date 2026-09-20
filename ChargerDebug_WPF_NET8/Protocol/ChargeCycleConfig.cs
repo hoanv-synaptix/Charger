@@ -10,10 +10,11 @@ namespace ChargerDebugApp.Protocol
     {
         public const int EXPECTED_BINARY_SIZE = 243;
         public const int V7_BINARY_SIZE = 249;
+        public const int V8_BINARY_SIZE = 253;
 
         // 1. Version
         [JsonPropertyName("version")]
-        public ushort Version { get; set; } = 7;
+        public ushort Version { get; set; } = 8;
 
         // 2. General Limits (10 floats = 40 bytes)
         [JsonPropertyName("battery_capacity_ah")]
@@ -239,6 +240,10 @@ namespace ChargerDebugApp.Protocol
         [JsonPropertyName("delay_minutes")]
         public ushort DelayMinutes { get; set; } = 30;
 
+        // 12. v8 Maximum Charge Current in Amperes
+        [JsonPropertyName("imax_a")]
+        public float IMaxA { get; set; } = 100.0f;
+
         public static ChargeCycleConfig CreateDefault()
         {
             return new ChargeCycleConfig();
@@ -352,6 +357,9 @@ namespace ChargerDebugApp.Protocol
             writer.Write(DelayHours);
             writer.Write(DelayMinutes);
 
+            // v8 imax_a (4 bytes)
+            writer.Write(IMaxA);
+
             return ms.ToArray();
         }
 
@@ -455,6 +463,12 @@ namespace ChargerDebugApp.Protocol
                 cfg.DelayEnabled = reader.ReadByte() != 0;
                 cfg.DelayHours = reader.ReadUInt16();
                 cfg.DelayMinutes = reader.ReadUInt16();
+            }
+
+            // v8: if remaining bytes >= 4, read imax_a
+            if (ms.Length - ms.Position >= 4)
+            {
+                cfg.IMaxA = reader.ReadSingle();
             }
 
             return cfg;

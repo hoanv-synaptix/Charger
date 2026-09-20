@@ -1643,6 +1643,9 @@ static void run_standalone_mode(uint32_t now_tick) {
     /* Set targets from config Pack Parameters */
     g_ctrl.target_voltage_v = cfg.vmax_v;
     g_ctrl.target_current_total_a = cfg.imax_c * cfg.battery_capacity_ah;
+    if (cfg.imax_a > 0.0f && cfg.imax_a < g_ctrl.target_current_total_a) {
+        g_ctrl.target_current_total_a = cfg.imax_a;
+    }
 
     g_ctrl.inhibit = 0;
     g_ctrl.derating = 0;
@@ -1848,6 +1851,9 @@ static void run_bms_controlled_mode(uint32_t now_tick) {
 
         /* Start with maximum configured current */
         float max_allowed_a = cfg.imax_c * active_capacity;
+        if (cfg.imax_a > 0.0f && cfg.imax_a < max_allowed_a) {
+            max_allowed_a = cfg.imax_a;
+        }
         g_ctrl.target_current_total_a = max_allowed_a;
 
         if (stage_limit_a < g_ctrl.target_current_total_a) {

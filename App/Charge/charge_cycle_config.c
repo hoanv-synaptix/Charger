@@ -60,6 +60,7 @@ void ChargeCycleConfig_GetDefaults(ChargeCycleConfig_t *config)
     config->delay_enabled = DEFAULT_DELAY_ENABLED;
     config->delay_hours = DEFAULT_DELAY_HOURS;
     config->delay_minutes = DEFAULT_DELAY_MINUTES;
+    config->imax_a = DEFAULT_IMAX_A;
 
     /* strncpy into a memset-0 buffer leaves the field NUL-terminated as long
      * as the literal is shorter than the field, which both are. */
@@ -128,6 +129,7 @@ static bool validate_config_struct(const ChargeCycleConfig_t *config)
         !validate_non_negative(config->module_u_max_v) ||
         !validate_non_negative(config->module_i_min_a) ||
         !validate_non_negative(config->module_i_max_a) ||
+        !validate_non_negative(config->imax_a) ||
         config->admin_pin < 100000U || config->admin_pin > 999999U ||
         config->charge_mode > 1U || config->delay_enabled > 1U ||
         config->delay_hours > 99U || config->delay_minutes > 59U) {
@@ -254,6 +256,7 @@ void ChargeCycleConfig_Init(void)
     s_normal_config.charge_mode = CHARGE_MODE_NORMAL;
     s_normal_config.delay_enabled = 0U;
     s_normal_config.imax_c = 0.5f; /* Sensible default distinction for normal mode */
+    s_normal_config.imax_a = 50.0f;
 
     s_active_mode = CHARGE_MODE_NORMAL;
     g_charge_cycle_config = s_normal_config;
