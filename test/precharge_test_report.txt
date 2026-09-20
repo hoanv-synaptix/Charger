@@ -1,7 +1,8 @@
 ================================================================================
   BÁO CÁO TỔNG KẾT AUTOMATION TEST PRE-CHARGE (HARDWARE CLOSED-LOOP)
 ================================================================================
-  [FAIL]  | PC-01: Kích hoạt Pre-charge khi Pin kiệt & Mất kết nối BMS (35s)
+  [FAIL]  | PC-03: Ngắt tiền kích an toàn khi bấm BACK (35s)
+  [FAIL]  | PC-04: Dừng tiền kích bằng nút STOP trên màn hình (35s)
 --------------------------------------------------------------------------------
   KẾT QUẢ: SOME CASES FAILED
 ================================================================================

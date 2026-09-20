@@ -1170,9 +1170,11 @@ def run_precharge_automation(bms: BmsSimulator, mod: ModuleSimulator, sniffer: D
             time.sleep(0.3)
             sniffer.send_touch_key(0x1504, 0x00F2)
             time.sleep(0.3)
-            # Reset fault on Dashboard
-            sniffer.send_button_touch(1)
-            time.sleep(0.5)
+            # Reset fault via PC command if MCU is in FAULT (State 4)
+            m = read_mcu_info()
+            if m and m.get("controller_state", 0) == 4:
+                send_pc_cmd(0x0A)
+                time.sleep(0.3)
 
         for _ in range(10):
             m = read_mcu_info()
@@ -1246,21 +1248,28 @@ def run_precharge_automation(bms: BmsSimulator, mod: ModuleSimulator, sniffer: D
                     sniffer.send_touch_key(0x1504, 0x00F2)
                     time.sleep(0.3)
 
+            # Once on Page 07, set BMS offline (dead battery simulation)
+            bms.transmitting = False
+            time.sleep(0.2)
+
             # 4. Check if MCU already in PRECHARGE, else send Action Button
             m = read_mcu_info()
             if m and m.get("controller_state", 0) == 5:
                 print("  -> [PASS] MCU đã ở trạng thái PRECHARGE (State 5)!")
             else:
                 print("  -> Chạm nút Action (VP 0x151A = 0x0001) để kích hoạt Pre-charge...")
-                time.sleep(0.3)
-                sniffer.send_touch_key(0x151A, 0x0001)
-                t0 = time.time()
-                while time.time() - t0 < 1.5:
-                    m = read_mcu_info()
+                for start_attempt in range(4):
+                    time.sleep(0.2)
+                    sniffer.send_touch_key(0x151A, 0x0001)
+                    t0 = time.time()
+                    while time.time() - t0 < 1.2:
+                        m = read_mcu_info()
+                        if m and m.get("controller_state", 0) == 5:
+                            print("  -> [PASS] MCU đã kích hoạt PRECHARGE (State 5) thành công!")
+                            break
+                        time.sleep(0.05)
                     if m and m.get("controller_state", 0) == 5:
-                        print("  -> [PASS] MCU đã kích hoạt PRECHARGE (State 5) thành công!")
                         break
-                    time.sleep(0.05)
             if m:
                 print(f"     [DIAG] Step 4 State={m.get('controller_state')}, Faults=0x{m.get('controller_fault_flags', 0):04X}, Stop={m.get('controller_stop_reason', 0)}, ModOnline={m.get('modules_online', 0)}")
 

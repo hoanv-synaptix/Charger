@@ -61,8 +61,11 @@ behaviour and have not been checked against a real DC bus / scope"*.
 | `CHARGE_CTRL_MODULE_VOLTAGE_MAX_AGE_MS` | 24 | 2000 ms | Tuổi tối đa dữ liệu áp module dùng cho hoàn thành Standalone | HW-TBD |
 | `CHARGE_CTRL_STANDALONE_VMAX_CONFIRM_MS` | 25 | 1000 ms | Giữ áp ≥Vmax bao lâu mới coi Standalone hoàn thành (FR-CTRL-05) | Product decision (xác nhận qua SRS) |
 | `RELAY_OPEN_CURRENT_THRESHOLD_A` | 34 | 1.0 A | Ngưỡng "dòng ≈ 0" để cho phép mở relay (tránh hồ quang) | HW-TBD — xác nhận 2026-08-29, xem `docs/AUDIT_Findings.md` §8g |
-| `RELAY_OPEN_TIMEOUT_MS` | 35 | 3000 ms | Timeout chờ dòng về 0 trước khi ép mở relay | HW-TBD — xem `docs/AUDIT_Findings.md` §8g |
 | `CHARGE_CTRL_RAMP_STEP_MS` | 58 | 100 ms | Chu kỳ bước ramp áp/dòng | HW-TBD |
+| `CHARGE_CTRL_CURRENT_RAMP_A_PER_S` | 68 | 5.0 A/s | Tốc độ ramp-up dòng khởi động mềm | HW-confirmed (CL-01 HIL pass) |
+| `PRECHARGE_HOLD_MS` | 72 | 60000 ms | Thời gian giữ nạp hồi phục sau khi BMS thức tỉnh | HW-confirmed (PC-01/02 HIL pass) |
+| `PRECHARGE_VOLTAGE_TOLERANCE_V` | 71 | 1.0 V | Dung sai áp module so với Vlow khi xác nhận precharge | HW-confirmed (HIL pass) |
+| `DEFAULT_IMAX_A` | 25 | 100.0 A | Trần dòng nạp an toàn tuyệt đối tính theo Ampe (A) | Product decision (Config V8) |
 
 ## App/Protocol — `App/Protocol/pc_debug_protocol.h`
 

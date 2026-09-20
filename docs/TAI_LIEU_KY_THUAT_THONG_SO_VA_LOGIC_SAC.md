@@ -37,11 +37,11 @@ Hệ thống điều khiển trạm sạc gồm 3 thành phần chính:
 
 ## 2. BẢNG DANH MỤC TOÀN BỘ 100% THÔNG SỐ CẤU HÌNH
 
-Cấu trúc cấu hình `ChargeCycleConfig_t` có kích thước cố định **249 bytes** lưu trong Flash/EEPROM, tương thích chuẩn giao tiếp PC và DWIN:
+Cấu trúc cấu hình `ChargeCycleConfig_t` có kích thước cố định **253 bytes** (Version 8) lưu trong Flash/EEPROM, tương thích chuẩn giao tiếp PC và DWIN:
 
 ### 2.1 Nhóm Thông số Pack Pin (General Limits & Pack Parameters)
 
-Khung cấu hình này tương ứng trực tiếp với 2 nhóm **Pack Parameters** (6 ô nhập liệu) và **Charge Window** (2 ô nhập liệu) trên giao diện cấu hình PC:
+Khung cấu hình này tương ứng trực tiếp với 2 nhóm **Pack Parameters** (7 ô nhập liệu) và **Charge Window** (2 ô nhập liệu) trên giao diện cấu hình PC:
 
 | Tên biến code | Nhãn hiển thị UI | Đơn vị | Dải giá trị | Giá trị mặc định | Vị trí trên UI | Ý nghĩa & Quy luật điều khiển |
 | :--- | :--- | :---: | :---: | :---: | :---: | :--- |
@@ -50,7 +50,8 @@ Khung cấu hình này tương ứng trực tiếp với 2 nhóm **Pack Paramete
 | `vmin_v` | **V Min (V)** | V | $0.0 \sim 1000.0$ | `32.0` | Pack Parameters | Ngưỡng điện áp sàn cho phép sạc thường. Nếu $V_{\text{batt}} < V_{\min}$ ở chế độ thường $\rightarrow$ Báo lỗi `E001` (Dừng sạc). |
 | `vmax_v` | **V Max (V)** | V | $0.0 \sim 1000.0$ | `58.4` | Pack Parameters | Ngưỡng điện áp sạc cao nhất của khối pin. Là điện áp đặt trong giai đoạn CV. |
 | `imin_c` | **I Min (C)** | C-rate | $0.01 \sim 1.0$ | `0.1` | Pack Parameters | **DÒNG CẮT SẠC (Cut-off Current) khi KHÔNG CÓ BMS**. Khi áp đạt $V_{\max}$ và dòng thực tế $\le I_{\min}$ liên tục 10s $\rightarrow$ Ngắt sạc (Pin đầy). |
-| `imax_c` | **I Max (C)** | C-rate | $0.01 \sim 5.0$ | `1.0` | Pack Parameters | Giới hạn dòng sạc trần trong giai đoạn sạc nhanh CC ($I_{\max} = imax\_c \times \text{Capacity}$). |
+| `imax_c` | **I Max (C)** | C-rate | $0.01 \sim 5.0$ | `1.0` | Pack Parameters | Giới hạn dòng sạc trần theo C-rate trong giai đoạn sạc nhanh CC ($I_{\max(\text{C})} = imax\_c \times \text{Capacity}$). |
+| `imax_a` | **I Max (A)** | A | $1.0 \sim 500.0$ | `100.0` | Pack Parameters | **Giới hạn dòng sạc trần tuyệt đối theo Ampe (A)**. Hệ thống chọn giá trị trần nhỏ nhất: $\min(imax\_c \times \text{Capacity}, imax\_a)$. |
 | `vlow_v` | **V Low (V)** | V | $0.0 \sim 1000.0$ | `52.0` | Charge Window | Điện áp mục tiêu áp dụng cho phiên sạc kích hoạt sớm (`PRECHARGE`) hoặc sạc chậm ban đầu. |
 | `ilow_c` | **I Low (C)** | C-rate | $0.01 \sim 1.0$ | `0.5` | Charge Window | Dòng sạc áp dụng cho phiên sạc kích hoạt sớm (`PRECHARGE`) ($I_{\text{low}} = ilow\_c \times \text{Capacity}$). |
 | `vpre_v` | *V Precharge (V)* | V | $0.0 \sim 1000.0$ | `48.0` | *(Ẩn trên UI)* | Giữ trong cấu trúc nhị phân để tương thích ngược, giá trị được đồng bộ theo `vlow_v`. |
@@ -65,7 +66,7 @@ Khung cấu hình này tương ứng với 2 nhóm **System Mapping** (3 ô nh�
 | Tên biến code | Nhãn hiển thị UI | Đơn vị | Dải giá trị | Giá trị mặc định | Vị trí trên UI | Ý nghĩa & Quy luật điều khiển |
 | :--- | :--- | :---: | :---: | :---: | :---: | :--- |
 | `admin_pin` | **Admin PIN** | uint32 | `000000`..`999999` | `123456` | System Mapping | Mã PIN bảo mật 6 chữ số để mở khóa trang cấu hình chuyên sâu trên màn hình HMI DWIN. |
-| `can_battery_id` | **BMS CAN ID** | Hex | `0x00000000`..`0x1FFFFFFF` | `0x00000000` | System Mapping | Địa chỉ CAN ID nhận dạng bản tin BMS. **Được bảo toàn nguyên vẹn trên UI và Firmware**. |
+| `can_battery_id` | **BMS CAN ID** | Hex | `0x00000000`..`0x1FFFFFFF` | `0x00000000` | System Mapping | Địa chỉ CAN ID nhận dạng bản tin BMS. Nằm thẳng hàng với Charge Source. **Tự động disable (mờ đi) khi chọn Standalone (No BMS)**. |
 | `charge_source_mode` | **Charge Source** | Enum | 0..1 | `BMS Controlled` | System Mapping | Chế độ sạc nguồn: `0: BMS Controlled` (Có BMS), `1: Standalone` (Không BMS). |
 | `module_type` | **Module Type** | Enum | 1..4 | `TONHE` | Module Envelope | Loại giao thức module: `1: EVR`, `2: Maxwell`, `3: Lianming`, `4: Tonhe`. |
 | `source_module_count` | **Source Modules** | Cái | $1 \sim 8$ | `1` | Module Envelope | Số module sạc thực tế lắp trong tủ trạm. Dùng chia dòng cho từng module. |
@@ -186,13 +187,17 @@ flowchart TD
     end
 
     subgraph DÒNG ĐIỆN ĐIỀU KHIỂN
-        I_MAX[Imax Cấu hình x Dung lượng]
+        I_MAX_C[Imax theo C-rate: imax_c x Capacity]
+        I_MAX_A[Imax tuyệt đối theo Ampe: imax_a]
+        I_BMS[Dòng sạc yêu cầu từ BMS]
         I_STAGE[Dòng Phân tầng Cell/Nhiệt/SOC]
         I_HW[Tổng dòng định mức Module phần cứng]
         I_DERATE[Bảo vệ giảm dòng quá nhiệt Giắc sạc]
         I_TGT[DÒNG LỆNH PHÁT CHO MODULE]
 
-        I_MAX -->|MIN| I_TGT
+        I_MAX_C -->|MIN| I_TGT
+        I_MAX_A -->|MIN| I_TGT
+        I_BMS -->|MIN| I_TGT
         I_STAGE -->|MIN| I_TGT
         I_HW -->|MIN| I_TGT
         I_DERATE -->|MIN| I_TGT
@@ -206,7 +211,9 @@ $$\text{Dung lượng thực tế } C_{\text{calc}} = \min \Big( \text{Dung lư�
 ### 3.2 Quy luật xác định Dòng sạc Lệnh (Target Current)
 Dòng sạc cấp cho hệ thống luôn lấy theo **giá trị nhỏ nhất (MIN)** từ tất cả các ràng buộc bảo vệ:
 $$I_{\text{target}} = \min \begin{cases} 
-I_{\max} = imax\_c \times C_{\text{calc}} \\
+I_{\max(\text{C})} = imax\_c \times C_{\text{calc}} \\
+I_{\max(\text{A})} = imax\_a \\
+I_{\text{BMS}} = \text{Dòng sạc yêu cầu từ BMS} \\
 I_{\text{stage}} = \text{Dòng giới hạn phân tầng (Cell Volt, Temp, SOC)} \\
 I_{\text{hardware}} = \text{module\_i\_max\_a} \times \text{actual\_module\_count} \\
 I_{\text{derate}} = \text{Giảm dòng bảo vệ quá nhiệt giắc sạc (Jack Derating)}
@@ -215,6 +222,28 @@ I_{\text{derate}} = \text{Giảm dòng bảo vệ quá nhiệt giắc sạc (Jac
 ### 3.3 Quy luật xác định Điện áp sạc Lệnh (Target Voltage)
 $$V_{\text{target}} = \min \Big( vmax\_v, \; \text{module\_u\_max\_v} \Big)$$
 *Lưu ý an toàn:* Trong quá trình chưa đóng relay ngõ ra, điện áp module được khống chế bám sát điện áp thực của pack pin đo được từ BMS để triệt tiêu chênh áp, chống sốc dòng khi đóng tiếp điểm relay.
+
+### 3.4 Quy luật Khởi động Mềm Dòng Sạc (Soft-Start Ramp Rate)
+- Tốc độ tăng dòng lệnh được khống chế nghiêm ngặt ở mức tối đa:
+  $$\frac{dI}{dt} \le 5.0\text{ A/s} \quad (\text{bước } 100\text{ms})$$
+- Tránh sốc dòng cơ học và hồ quang điện, đảm bảo tuổi thọ relay và tụ điện.
+
+### 3.5 Logic Tiền Kích Nạp (Pre-charge Mode) & Cứu Pin Cạn Kiệt
+- **Ngữ cảnh**: Khi pack pin cạn kiệt sập nguồn, BMS offline hoàn toàn, màn hình Home hiển thị lỗi `E021` (`CHARGE_CTRL_FAULT_BMS_OFFLINE`).
+- **Mở giao diện Pre-charge**: Kỹ thuật viên nhấn Cài đặt -> Màn hình Login (Page 06) -> Nhập Admin PIN `123456` -> Mở Trang 07 (Pre-charge).
+- **Tự động Bypass lỗi**: Ngay khi mở Trang 07, firmware gọi `ChargeController_PreparePrecharge()` tự động mask bỏ lỗi mất CAN pin (`& ~CHARGE_CTRL_FAULT_BMS_OFFLINE`), đưa MCU về trạng thái `IDLE` (State 0) sẵn sàng.
+- **Kích hoạt kích nạp**: Nhấn nút Action trên Trang 07 $\rightarrow$ MCU chuyển sang trạng thái `PRECHARGE` (State 5):
+  - Module phát điện áp $V_{\text{low}}$ (52.0V) với dòng khống chế an toàn $I_{\text{pre}} \le 0.2\text{C}$ (20A).
+  - Các lỗi `E021` (mất CAN BMS) và `E001` (áp pin thấp) hoàn toàn bị vô hiệu hóa (suppress) trong suốt thời gian Pre-charge.
+- **Chu trình thức tỉnh & Giữ 60s**:
+  - Khi pin hồi áp, BMS thức tỉnh và gửi đủ 2 bản tin `0x02F4` và `0x02F6`, bộ đếm giữ 60 giây (`PRECHARGE_HOLD_MS = 60000`) bắt đầu đếm.
+  - Hết 60 giây, hệ thống tự động hoàn tất và ngắt sạc (`CHARGE_STOP_PRECHARGE_COMPLETE` = 14) để chuyển sang phiên sạc tiêu chuẩn.
+- **Ngắt an toàn khẩn cấp**: Người vận hành có thể bấm phím BACK (0x0002) hoặc nút Action STOP (0x0001) để ngắt sạc về IDLE bất kỳ lúc nào.
+
+### 3.6 Cơ Chế Xóa Lỗi Khẩn Cấp (Emergency Stop Safe Reset)
+- Khi dừng khẩn cấp (E-Stop), cờ `CHARGE_CTRL_FAULT_EMERGENCY_STOP` (Bit 11) được kích hoạt, máy sạc ngắt relay và rơi vào `FAULT` (State 4).
+- Sau khi sự cố khẩn cấp đã được khắc phục vật lý, người dùng/Admin có thể phát lệnh xóa lỗi thông qua lệnh PC Protocol `0x0A` (`PC_CMD_RESET_FAULT`) hoặc nút Reset trên màn hình DWIN.
+- Firmware gọi `ChargeController_ResetEmergencyStop()` kết hợp `ChargeController_ResetFaultIfSafe()`, cho phép khôi phục máy sạc về `IDLE` (State 0) an toàn mà không bắt buộc phải ngắt aptomat hoặc tắt nguồn khởi động lại MCU.
 
 ---
 
@@ -345,6 +374,6 @@ stateDiagram-v2
 
 ## 8. KẾT LUẬN & KIẾN NGHỊ BÀN GIAO
 
-1. **Tính hoàn thiện**: Toàn bộ **48 trường thông số** cấu hình trong tài liệu này phản ánh chính xác 100% cấu trúc nhị phân 249 bytes của Firmware MCU STM32 và giao diện ứng dụng C# PC (`ChargerAppPC`).
-2. **Tính thân thiện & Tinh gọn**: Giao diện người dùng PC đã loại bỏ các thông số thừa gây nhầm lẫn (`V Precharge`, `I Precharge`), trong khi vẫn giữ nguyên địa chỉ cấu hình `BMS CAN ID`.
-3. **Tính an toàn tuyệt đối**: Hệ thống bao phủ toàn diện từ bảo vệ pin (3 vùng điện áp, ngắt bão hòa $I_{\min}$, quá nhiệt tự phục hồi 3 lần) đến bảo vệ hạ tầng trạm sạc (sụt áp giắc sạc, quá nhiệt đầu cắm 4 kênh NTC, hẹn giờ sạc thấp điểm).
+1. **Tính hoàn thiện**: Toàn bộ **49 trường thông số** cấu hình trong tài liệu này phản ánh chính xác 100% cấu trúc nhị phân 253 bytes (Version 8) của Firmware MCU STM32 và giao diện ứng dụng C# PC (`ChargerDebugApp` .NET 8).
+2. **Tính thân thiện & Tinh gọn**: Giao diện người dùng PC đã đồng bộ hiển thị thẳng hàng BMS CAN ID và Charge Source, tự động disable BMS CAN ID khi sạc không BMS, bổ sung trường I Max (A) trực quan.
+3. **Tính an toàn tuyệt đối**: Hệ thống bao phủ toàn diện từ bảo vệ pin (3 vùng điện áp, trần dòng kép min(Imax_C, Imax_A), ngắt bão hòa $I_{\min}$, quá nhiệt tự phục hồi 3 lần, cứu pin cạn kiệt qua Pre-charge bypass E021) đến bảo vệ hạ tầng trạm sạc (sụt áp giắc sạc, quá nhiệt đầu cắm 4 kênh NTC, hẹn giờ sạc thấp điểm, cơ chế khôi phục sau dừng khẩn cấp E-Stop).

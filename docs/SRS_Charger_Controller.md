@@ -249,16 +249,16 @@ online; chỉ frame BMS hợp lệ mới refresh watchdog. Queue overflow/FIFO l
 | FR-CTRL-13 | Jack temp: derating % (soft), hysteresis + delay; ADC nhiệt thực tế tích hợp sau | S |
 | FR-CTRL-14 | Module mismatch kéo dài 10s khi chạy → FAULT | M |
 | FR-CTRL-15 | STOP có kiểm; STOP khi FAULT → xóa fault về IDLE | M |
-| FR-CTRL-16 | EMERGENCY_STOP → EmergencyStop driver ngay + FAULT | M |
+| FR-CTRL-16 | EMERGENCY_STOP → EmergencyStop driver ngay + FAULT. Sau khi sự cố đã giải tỏa, cho phép khôi phục về IDLE an toàn qua lệnh Reset Fault (PC CMD 0x0A / DWIN Reset button) gọi `ChargeController_ResetEmergencyStop()` mà không cần khởi động lại nguồn. | M |
 | FR-CTRL-17 | Chỉ gửi Start/Stop khi should_run thay đổi (chống spam bus) | S |
 | FR-CTRL-18 | BMS stale → giữ target cũ, cảnh báo 1 lần | S |
-| FR-CTRL-19 | Ramp-up setpoint (chỉ giới hạn chiều **tăng**; giảm/derating/clamp tức thì; EMERGENCY/FAULT không ramp; bước 100ms; cả 3 mode): **Dòng** 0 → target ở `CHARGE_CTRL_CURRENT_RAMP_A_PER_S` (5 A/s). **Áp** ramp từ 0 — 2 tốc độ: pre-relay-close `CHARGE_CTRL_VOLTAGE_PRECLOSE_RAMP_V_PER_S` (10 V/s, đưa module lên áp pack nhanh; relay arm khi module ≥ `CHARGE_CTRL_RELAY_ARM_VOLT_PCT` (95%) của ref → delay ≈ 0.95·pack_V / 10), post-close `CHARGE_CTRL_VOLTAGE_RAMP_V_PER_S` (2 V/s, đoạn Stage-1 → vmax). *Tốc độ là giá trị khởi điểm, chờ đo scope trên DC bus.* | S |
+| FR-CTRL-19 | Ramp-up setpoint (chỉ giới hạn chiều **tăng**; giảm/derating/clamp tức thì; EMERGENCY/FAULT không ramp; bước 100ms; cả 3 mode): **Dòng** 0 → target ở `CHARGE_CTRL_CURRENT_RAMP_A_PER_S` (5 A/s), giới hạn trần dòng nạp an toàn kép $\min(imax\_c \times \text{Capacity}, imax\_a)$. **Áp** ramp từ 0 — 2 tốc độ: pre-relay-close `CHARGE_CTRL_VOLTAGE_PRECLOSE_RAMP_V_PER_S` (10 V/s, đưa module lên áp pack nhanh; relay arm khi module ≥ `CHARGE_CTRL_RELAY_ARM_VOLT_PCT` (95%) của ref → delay ≈ 0.95·pack_V / 10), post-close `CHARGE_CTRL_VOLTAGE_RAMP_V_PER_S` (2 V/s, đoạn Stage-1 → vmax). *Tốc độ là giá trị khởi điểm, chờ đo scope trên DC bus.* | S |
 
 ### 3.5 Cấu hình (Config/Storage) — FR-CFG
 
 | ID | Yêu cầu | ƯP |
 |---|---|---|
-| FR-CFG-01 | `ChargeCycleConfig_t` 243 byte, version 6, packed/static-assert. v6 append `uint32_t admin_pin` (6 chữ số, 100000..999999, default 123456) sau prefix v5 239 byte; Flash migration v5→v6 giữ mọi field cũ, gán PIN default và ghi lại record v6 khi có thể. | M |
+| FR-CFG-01 | `ChargeCycleConfig_t` **253 byte** (Version 8 / header version 7), packed/static-assert. Kế thừa: v5 (239B) + v6 `admin_pin` (4B = 243B) + v7 Profile Fast/Normal & Delay Start (6B = 249B) + v8 trần dòng sạc tuyệt đối `imax_a` (float 4B = 253B, default 100.0A). Giao diện PC đồng bộ hiển thị thẳng hàng BMS CAN ID với Charge Source, tự động disable BMS CAN ID khi sạc Standalone (No BMS). Flash migration giữ nguyên v5/v6/v7, gán default cho trường mới khi nâng cấp. | M |
 | FR-CFG-02 | Validate: float không NaN/âm, ngưỡng tăng dần, imax≥imin, module 1–8, enum trong phạm vi | M |
 | FR-CFG-03 | Flash record {magic, version, length, CRC32, payload} align 8; append; trang đầy mới erase | M |
 | FR-CFG-04 | Boot: nạp record hợp lệ mới nhất; không có → default | M |
@@ -269,7 +269,7 @@ online; chỉ frame BMS hợp lệ mới refresh watchdog. Queue overflow/FIFO l
 | ID | Yêu cầu | ƯP |
 |---|---|---|
 | FR-HMI-01 | Giao thức DGUS-II (không CRC), header `A5 5A` (⚠ chuẩn DGUS là `5A A5` — dự án đổi theo yêu cầu 2026-08-30, xem `DWIN_HEADER_1/2`): `DWIN_SendWords()` ghi N word big-endian tới VP liên tiếp; `DWIN_SendString()` ghi field cố định pad 0x00; Page Home giữ callback `DWIN_OnActionButton()`, còn Return Key Login/Pre-Charge dispatch qua `DWIN_OnKeyEvent(vp,key)`. | S |
-| FR-HMI-08 | Pre-Charge flow do firmware điều hướng page: Setting `0x1130` → Login page 6 → Pre-Charge page 7. PIN mask tối đa 6 digit, sai PIN xóa buffer/ở Login và không log PIN; session hết hạn khi Back, Stop hoặc complete. Khi Start fail hoặc runtime fault, giữ Page 07 để hiển thị ERROR và mã lỗi hiện có; fault session chỉ kết thúc khi người dùng Reset/Back. | M |
+| FR-HMI-08 | Pre-Charge flow do firmware điều hướng page: Setting `0x1130` → Login page 6 → Pre-Charge page 7. PIN mask tối đa 6 digit, sai PIN xóa buffer/ở Login và không log PIN; session hết hạn khi Back, Stop hoặc complete. Khi vào Page 07, firmware tự động xóa/bypass cờ lỗi `CHARGE_CTRL_FAULT_BMS_OFFLINE` (E021) và ức chế lỗi áp pin thấp `E001` để kích nạp pin kiệt; khi BMS thức tỉnh gửi đủ bản tin, giữ hồi phục 60s rồi tự ngắt complete (`CHARGE_STOP_PRECHARGE_COMPLETE`). Khi Start fail hoặc runtime fault, giữ Page 07 để hiển thị ERROR và mã lỗi hiện có; fault session chỉ kết thúc khi người dùng Reset/Back. | M |
 | FR-HMI-09 | Contract Page 06/07: `VP_LOGIN_PIN_TEXT=0x1500` Text 8B; `VP_LOGIN_KEY=0x1504`; `VP_PRECHARGE_VOLTAGE_TEXT=0x1510` Text 8B; `VP_PRECHARGE_CURRENT_TEXT=0x1514` Text 8B; `VP_PRECHARGE_STATUS_ICON=0x1518`; `VP_PRECHARGE_BTN_ICON=0x1519`; `VP_PRECHARGE_ACTION_KEY=0x151A`. Digit key `0x0030..0x0039`, DEL/OK/Back `0x00F0/0x00F1/0x00F2`, Action/Back `0x0001/0x0002`. Page 07 uses `CHG_LIB_SystemSummary.voltage/total_current`; invalid/offline is `---`; mã lỗi dùng lại `VP_TOPBAR_FAULT_CODE=0x1044`, không thêm VP mới. | M |
 | FR-HMI-02 | RX ring-buffer ISR, drain `BSP_RS485_Read()`; re-arm sau lỗi UART; `DWIN_ParseRX()` state-machine byte-wise có resync | M |
 | FR-HMI-03 | Update dữ liệu HMI trong main loop 50ms: scatter 8 nhóm field (DC/battery/AC/temp/SOC+status/btn/uptime), diff-suppressed; chuỗi định danh + trang DASH gửi 1 lần sau khi panel boot | M |
