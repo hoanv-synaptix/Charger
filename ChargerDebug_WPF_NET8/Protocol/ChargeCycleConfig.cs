@@ -8,9 +8,10 @@ namespace ChargerDebugApp.Protocol
 {
     public class ChargeCycleConfig
     {
-        public const int EXPECTED_BINARY_SIZE = 243;
+        public const int EXPECTED_BINARY_SIZE = 253;
         public const int V7_BINARY_SIZE = 249;
-        public const int V8_BINARY_SIZE = 253;
+        public const int V6_BINARY_SIZE = 243;
+        public const int V5_BINARY_SIZE = 239;
 
         // 1. Version
         [JsonPropertyName("version")]
@@ -251,7 +252,7 @@ namespace ChargerDebugApp.Protocol
 
         public byte[] ToBytes()
         {
-            using var ms = new MemoryStream(V7_BINARY_SIZE);
+            using var ms = new MemoryStream(EXPECTED_BINARY_SIZE);
             using var writer = new BinaryWriter(ms, Encoding.ASCII);
 
             // Version (2)
