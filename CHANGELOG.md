@@ -4,6 +4,21 @@ Tất cả các thay đổi quan trọng theo từng phiên bản phát hành c�
 
 ---
 
+## [V2.0.6] - 2026-09-23
+
+### 🚀 Tính năng
+- **Hiển thị ngày/giờ thông minh trong log Alarm:**
+  - Sự kiện xảy ra **hôm nay**: hiển thị `08:30:11` (HH:MM:SS, giữ nguyên như cũ).
+  - Sự kiện xảy ra **ngày hôm trước**: hiển thị `08h23/09` (giờ + ngày/tháng, 8 ký tự, không thay đổi VP layout DWIN).
+  - Khi RTC chưa được đồng bộ: tiếp tục fallback về uptime `HH:MM:SS` (không thay đổi hành vi cũ).
+  - Logic tính ngày dựa trên delta uptime + UTC epoch → convert sang local time (UTC+7) để so sánh ngày.
+
+### 🧪 Kiểm thử
+- **Unit Test:** Bổ sung `test_alarm_time_format_smart` trong `test/host_alarm_sim/test_alarm_e2e.c` kiểm tra 4 case: RTC invalid, cùng ngày, ngày hôm trước 25h, edge case 23:59 hôm trước.
+- **Mock stubs:** Thêm `BSP_RTC_EpochToDateTime` và `BSP_RTC_DateTimeToEpoch` vào `test/mock_hal/mock_stubs.c`.
+
+---
+
 ## [V2.0.5] - 2026-09-23
 
 ### 🚀 Tính năng & Logic sạc

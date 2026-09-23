@@ -196,6 +196,51 @@ void BSP_RTC_FormatDateTime(char *buf, size_t buf_size) {
     if (buf && buf_size > 0) snprintf(buf, buf_size, "2026-03-07 07:00:00");
 }
 
+/* Convert Unix epoch to broken-down calendar (Gregorian, no leap seconds).
+ * Minimal implementation sufficient for host-test purposes. */
+uint32_t BSP_RTC_DateTimeToEpoch(const BSP_RTC_DateTime_t *dt)
+{
+    if (!dt) return 0U;
+    /* Days from epoch (1970-01-01) to start of the given year */
+    uint32_t y = dt->year;
+    uint32_t m = dt->month;
+    uint32_t d = dt->day;
+    /* Move Jan/Feb to previous year for leap-day calculation */
+    if (m <= 2U) { y--; m += 12U; }
+    uint32_t leap = (y / 4U) - (y / 100U) + (y / 400U);
+    uint32_t days = 365U * dt->year + leap
+                  + (306U * (m + 1U)) / 10U - 428U
+                  + d - 719163U; /* offset to 1970-01-01 */
+    return days * 86400U
+         + (uint32_t)dt->hour   * 3600U
+         + (uint32_t)dt->minute * 60U
+         + (uint32_t)dt->second;
+}
+
+void BSP_RTC_EpochToDateTime(uint32_t epoch, BSP_RTC_DateTime_t *dt)
+{
+    if (!dt) return;
+    /* Algorithm: Euclidean affine transforms (Richards, 2013) */
+    uint32_t z  = epoch / 86400U + 719468U;
+    uint32_t era = z / 146097U;
+    uint32_t doe = z - era * 146097U;
+    uint32_t yoe = (doe - doe / 1460U + doe / 36524U - doe / 146096U) / 365U;
+    uint32_t y   = yoe + era * 400U;
+    uint32_t doy = doe - (365U * yoe + yoe / 4U - yoe / 100U);
+    uint32_t mp  = (5U * doy + 2U) / 153U;
+    uint32_t d   = doy - (153U * mp + 2U) / 5U + 1U;
+    uint32_t m   = (mp < 10U) ? (mp + 3U) : (mp - 9U);
+    if (m <= 2U) y++;
+    uint32_t rem = epoch % 86400U;
+    dt->year    = (uint16_t)y;
+    dt->month   = (uint8_t)m;
+    dt->day     = (uint8_t)d;
+    dt->hour    = (uint8_t)(rem / 3600U);
+    dt->minute  = (uint8_t)((rem % 3600U) / 60U);
+    dt->second  = (uint8_t)(rem % 60U);
+    dt->weekday = 0U; /* not used in host tests */
+}
+
 /* Mock AlarmStorage stubs for host test */
 uint8_t AlarmStorage_Init(void *ram_log, uint8_t max_entries, uint32_t *out_sequence)
 {

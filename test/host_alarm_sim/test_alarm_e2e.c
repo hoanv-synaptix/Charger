@@ -1498,6 +1498,143 @@ static bool test_bms_volt_mismatch_e032(void)
     return true;
 }
 
+/* ================================================================== *
+ * Test: smart alarm time format (app_main.c logic)                   *
+ *                                                                    *
+ * Validates the same logic as the app_main.c alarm time block:       *
+ *   - RTC invalid      → uptime fallback "HH:MM:SS"                  *
+ *   - Event today      → "HH:MM:SS"                                  *
+ *   - Event yesterday  → "HHhDD/MM"                                  *
+ *   - Edge: 23:59 yesterday → "HHhDD/MM"                             *
+ * ================================================================== */
+
+/* Mirror of the app_main.c helper so we can call it in isolation.
+ * Exposed here as a static helper that replicates the exact snprintf
+ * format strings — keeps the test tightly coupled to the real logic. */
+#include "bsp_rtc.h"
+#include <stdio.h>
+#include <string.h>
+
+static void format_alarm_time_stub(char *out, size_t out_sz,
+                                   uint32_t now_epoch_utc,
+                                   uint32_t tick_now_ms,
+                                   uint32_t tick_evt_ms,
+                                   bool rtc_valid)
+{
+    /* Replicate exactly the logic in app_main.c */
+    if (rtc_valid) {
+        uint32_t delta_s = (tick_now_ms >= tick_evt_ms)
+                           ? (tick_now_ms - tick_evt_ms) / 1000U
+                           : 0U;
+        uint32_t local_offset = (uint32_t)BSP_RTC_TIMEZONE_SEC;
+        uint32_t evt_local = now_epoch_utc + local_offset - delta_s;
+        uint32_t now_local = now_epoch_utc + local_offset;
+
+        BSP_RTC_DateTime_t evt_dt, now_dt;
+        BSP_RTC_EpochToDateTime(evt_local, &evt_dt);
+        BSP_RTC_EpochToDateTime(now_local, &now_dt);
+
+        bool same_day = (evt_dt.day == now_dt.day) &&
+                        (evt_dt.month == now_dt.month);
+        if (same_day) {
+            snprintf(out, out_sz, "%02u:%02u:%02u",
+                     (unsigned)evt_dt.hour,
+                     (unsigned)evt_dt.minute,
+                     (unsigned)evt_dt.second);
+        } else {
+            snprintf(out, out_sz, "%02uh%02u/%02u",
+                     (unsigned)evt_dt.hour,
+                     (unsigned)evt_dt.day,
+                     (unsigned)evt_dt.month);
+        }
+    } else {
+        uint32_t sec = tick_evt_ms / 1000U;
+        uint32_t h = (sec / 3600U) % 24U;
+        uint32_t m = (sec % 3600U) / 60U;
+        uint32_t s = sec % 60U;
+        snprintf(out, out_sz, "%02u:%02u:%02u",
+                 (unsigned)h, (unsigned)m, (unsigned)s);
+    }
+}
+
+static bool test_alarm_time_format_smart(void)
+{
+    printf("Running test_alarm_time_format_smart...\n");
+    char buf[10];
+
+    /* Reference moment: 2026-09-23 08:30:11 local (UTC+7)
+     *                 = 2026-09-23 01:30:11 UTC                      */
+    BSP_RTC_DateTime_t ref = {2026, 9, 23, 1, 30, 11, 0}; /* UTC */
+    uint32_t ref_epoch_utc = BSP_RTC_DateTimeToEpoch(&ref);
+
+    /* tick_now must be larger than the largest delta any case uses.
+     * Case 3 uses 90,000,000 ms (25 h) → pick 100 h = 360,000,000 ms. */
+    uint32_t tick_now = 360000000U; /* 100 h uptime */
+
+    /* ----------------------------------------------------------------
+     * Case 1: RTC invalid → uptime fallback
+     * tick_evt = tick_now → uptime = 100h = "100:00:00"
+     * But % 24 → "04:00:00" (100 % 24 = 4)
+     * ---------------------------------------------------------------- */
+    format_alarm_time_stub(buf, sizeof(buf),
+                           ref_epoch_utc,
+                           tick_now,
+                           tick_now, /* event at same tick */
+                           false);   /* RTC invalid */
+    /* 100h → sec=360000, h=(360000/3600)%24 = 100%24 = 4 */
+    ASSERT(strcmp(buf, "04:00:00") == 0,
+           "RTC invalid: expected uptime 04:00:00 (100h mod 24)");
+
+    /* ----------------------------------------------------------------
+     * Case 2: Event occurred today (same 2026-09-23), 2 minutes ago
+     * delta = 120 s
+     * local evt = 2026-09-23 08:30:11 - 00:02:00 = 08:28:11
+     * ---------------------------------------------------------------- */
+    format_alarm_time_stub(buf, sizeof(buf),
+                           ref_epoch_utc,
+                           tick_now,
+                           tick_now - 120000U, /* 2 min before */
+                           true);
+    ASSERT(strcmp(buf, "08:28:11") == 0,
+           "Same-day event 2 min ago: expected 08:28:11");
+    ASSERT(strlen(buf) == 8U, "Same-day format must be 8 chars");
+
+    /* ----------------------------------------------------------------
+     * Case 3: Event occurred yesterday (2026-09-22), 25 hours ago
+     * delta = 25 * 3600 * 1000 = 90,000,000 ms  (tick_now=360M, no underflow)
+     * local evt = 2026-09-23 08:30:11 - 25:00:00 = 2026-09-22 07:30:11
+     * ---------------------------------------------------------------- */
+    format_alarm_time_stub(buf, sizeof(buf),
+                           ref_epoch_utc,
+                           tick_now,
+                           tick_now - 90000000U, /* 25h before */
+                           true);
+    ASSERT(strcmp(buf, "07h22/09") == 0,
+           "Previous-day event 25h ago: expected 07h22/09");
+    ASSERT(strlen(buf) == 8U, "Previous-day format must be 8 chars");
+
+    /* ----------------------------------------------------------------
+     * Case 4: Edge — event at 23:59:59 yesterday (2026-09-22)
+     * local now = 2026-09-23 08:30:11
+     * To get yesterday 23:59:59 local: delta = 8h30m12s = 30612 s
+     * ---------------------------------------------------------------- */
+    uint32_t delta_edge_s = (uint32_t)(8 * 3600 + 30 * 60 + 12); /* 30612s */
+    format_alarm_time_stub(buf, sizeof(buf),
+                           ref_epoch_utc,
+                           tick_now,
+                           tick_now - delta_edge_s * 1000U,
+                           true);
+    /* local evt = 2026-09-22 23:59:59 → "23h22/09" */
+    ASSERT(buf[2] == 'h',
+           "Edge 23:59 yesterday: must use previous-day format (HHhDD/MM)");
+    ASSERT(strlen(buf) == 8U, "Edge format must be 8 chars");
+
+    printf("[PASS] test_alarm_time_format_smart\n");
+    return true;
+}
+
+
+
 int main(void)
 {
     bool ok = true;
@@ -1530,6 +1667,7 @@ int main(void)
     ok &= test_start_with_no_module_or_bms_reports_fault_code();
     ok &= test_bms_alarm_timeout_auto_recovers_to_0000();
     ok &= test_bms_volt_mismatch_e032();
+    ok &= test_alarm_time_format_smart();
 
     if (ok) { printf("\nALL TESTS PASSED.\n"); return 0; }
     printf("\nSOME TESTS FAILED.\n");

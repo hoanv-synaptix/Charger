@@ -1168,8 +1168,44 @@ void App_Loop(void)
                 if (log_entries[i].event == 1U) { /* Raised */
                     char time_buf[10];
                     if (BSP_RTC_IsTimeValid()) {
-                        BSP_RTC_FormatTime(time_buf, sizeof(time_buf));
+                        /* Compute approximate epoch of the event using uptime delta.
+                         * BSP_RTC_GetEpoch() returns UTC; add timezone offset to get
+                         * local time before comparing calendar day. */
+                        uint32_t now_epoch  = BSP_RTC_GetEpoch();
+                        uint32_t tick_now   = BSP_GetTick();
+                        uint32_t tick_evt   = log_entries[i].uptime_ms;
+                        uint32_t delta_s    = (tick_now >= tick_evt)
+                                              ? (tick_now - tick_evt) / 1000U
+                                              : 0U;
+                        uint32_t local_offset = (uint32_t)BSP_RTC_TIMEZONE_SEC;
+                        uint32_t evt_local  = now_epoch + local_offset
+                                              - delta_s;
+                        uint32_t now_local  = now_epoch + local_offset;
+
+                        BSP_RTC_DateTime_t evt_dt;
+                        BSP_RTC_DateTime_t now_dt;
+                        BSP_RTC_EpochToDateTime(evt_local, &evt_dt);
+                        BSP_RTC_EpochToDateTime(now_local, &now_dt);
+
+                        bool same_day = (evt_dt.day   == now_dt.day) &&
+                                        (evt_dt.month == now_dt.month);
+                        if (same_day) {
+                            /* e.g. "08:30:11" */
+                            (void)snprintf(time_buf, sizeof(time_buf),
+                                           "%02u:%02u:%02u",
+                                           (unsigned)evt_dt.hour,
+                                           (unsigned)evt_dt.minute,
+                                           (unsigned)evt_dt.second);
+                        } else {
+                            /* e.g. "08h23/09" — exactly 8 chars, fits 4 VP */
+                            (void)snprintf(time_buf, sizeof(time_buf),
+                                           "%02uh%02u/%02u",
+                                           (unsigned)evt_dt.hour,
+                                           (unsigned)evt_dt.day,
+                                           (unsigned)evt_dt.month);
+                        }
                     } else {
+                        /* RTC not synchronised — fall back to uptime counter */
                         uint32_t sec = log_entries[i].uptime_ms / 1000U;
                         uint32_t h = (sec / 3600U) % 24U;
                         uint32_t m = (sec % 3600U) / 60U;
