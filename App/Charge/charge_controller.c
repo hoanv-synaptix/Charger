@@ -446,22 +446,18 @@ static float compute_voltage_ref(const ChargeCycleConfig_t *cfg) {
     return voltage_ref;
 }
 
-/* Use the smaller capacity so a stale/over-optimistic local configuration
- * cannot command more current than the BMS-rated pack can support. A zero
- * BMS rate_cap means that the BMS has not supplied a usable capacity yet. */
+/* Use BMS-rated capacity directly when charging with BMS so the charge current
+ * scales accurately to the connected pack without requiring manual reconfiguration.
+ * Fall back to the configured capacity when BMS is absent, or when BMS rate_cap
+ * is not yet available (0) or invalid (0xFFFF). */
 static float compute_charge_capacity_ah(const ChargeCycleConfig_t *cfg,
                                         const BMS_View_t *bms)
 {
-    float capacity_ah = cfg->battery_capacity_ah;
-
-    if (bms != NULL && bms->rate_cap > 0U) {
-        float bms_capacity_ah = (float)bms->rate_cap * 0.1f;
-        if (bms_capacity_ah < capacity_ah) {
-            capacity_ah = bms_capacity_ah;
-        }
+    if (bms != NULL && bms->rate_cap > 0U && bms->rate_cap != 0xFFFFU) {
+        return (float)bms->rate_cap * 0.1f;
     }
 
-    return capacity_ah;
+    return cfg->battery_capacity_ah;
 }
 
 /**

@@ -942,33 +942,71 @@ static bool test_current_ramp_up(void)
 }
 
 /* Imin is the floor for an allowed charge target, while the effective
- * capacity is the smaller of the configured capacity and BMS rate_cap. */
+ * capacity directly uses BMS rate_cap when charging with BMS, falling back
+ * to configured capacity only when BMS rate_cap is absent (0) or 0xFFFF. */
 static bool test_min_current_and_bms_capacity(void)
 {
     printf("Running test_min_current_and_bms_capacity...\n");
 
     ChargeCycleConfig_t cfg;
     ASSERT(setup_scenario(CHARGE_MODULE_TYPE_TONHE, &cfg), "setup failed");
+    cfg.battery_capacity_ah = 100.0f;
     cfg.imax_c = 0.8f;
     cfg.imin_c = 0.2f;
     cfg.cell_curr_1_c = 1.0f;
     ASSERT(ChargeCycleConfig_Set(&cfg), "config set failed");
+
+    /* Case 1: BMS rate_cap (60Ah) < configured (100Ah) -> uses BMS 60Ah */
     set_healthy_bms(400.0f, 50);
-    g_sim_bms.rate_cap_x0_1ah = 600; /* 60Ah < configured 100Ah */
-    ASSERT(warmup_and_start(1500U, 4000U), "module never reached RUNNING");
+    g_sim_bms.rate_cap_x0_1ah = 600; /* 60Ah */
+    ASSERT(warmup_and_start(1500U, 4000U), "module never reached RUNNING (case 1)");
 
     ChargeCtrlView_t cv;
     ChargeController_GetView(&cv);
     ASSERT(fabsf(cv.target_current_total_a - 48.0f) < 1.0f,
-           "Imax must use min(config capacity, BMS rate_cap): 0.8C * 60Ah");
+           "Imax must use BMS rate_cap when smaller than config: 0.8C * 60Ah = 48A");
 
-    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_TONHE, &cfg), "second setup failed");
+    /* Case 2: BMS rate_cap (150Ah) > configured (100Ah) -> uses BMS 150Ah */
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_TONHE, &cfg), "setup case 2 failed");
+    cfg.battery_capacity_ah = 100.0f;
+    cfg.imax_c = 0.8f;
+    cfg.imax_a = 200.0f;
+    cfg.module_i_max_a = 200.0f;
+    cfg.imin_c = 0.2f;
+    cfg.cell_curr_1_c = 1.0f;
+    ASSERT(ChargeCycleConfig_Set(&cfg), "config set case 2 failed");
+    set_healthy_bms(400.0f, 50);
+    g_sim_bms.rate_cap_x0_1ah = 1500; /* 150Ah */
+    ASSERT(warmup_and_start(1500U, 4000U), "module never reached RUNNING (case 2)");
+
+    ChargeController_GetView(&cv);
+    ASSERT(fabsf(cv.target_current_total_a - 120.0f) < 1.0f,
+           "Imax must use BMS rate_cap when larger than config: 0.8C * 150Ah = 120A");
+
+    /* Case 3: BMS rate_cap is 0 (or 0xFFFF) -> falls back to configured 100Ah */
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_TONHE, &cfg), "setup case 3 failed");
+    cfg.battery_capacity_ah = 100.0f;
+    cfg.imax_c = 0.8f;
+    cfg.imin_c = 0.2f;
+    cfg.cell_curr_1_c = 1.0f;
+    ASSERT(ChargeCycleConfig_Set(&cfg), "config set case 3 failed");
+    set_healthy_bms(400.0f, 50);
+    g_sim_bms.rate_cap_x0_1ah = 0; /* invalid / unavailable */
+    ASSERT(warmup_and_start(1500U, 4000U), "module never reached RUNNING (case 3)");
+
+    ChargeController_GetView(&cv);
+    ASSERT(fabsf(cv.target_current_total_a - 80.0f) < 1.0f,
+           "Imax must fall back to config capacity when BMS rate_cap == 0: 0.8C * 100Ah = 80A");
+
+    /* Case 4: Imin floor logic */
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_TONHE, &cfg), "fourth setup failed");
     cfg.imax_c = 0.8f;
     cfg.imin_c = 0.2f;
     cfg.cell_curr_1_c = 0.1f; /* stage would otherwise request 0.1C */
-    ASSERT(ChargeCycleConfig_Set(&cfg), "second config set failed");
+    ASSERT(ChargeCycleConfig_Set(&cfg), "fourth config set failed");
     set_healthy_bms(400.0f, 50);
-    ASSERT(warmup_and_start(1500U, 4000U), "second module never reached RUNNING");
+    g_sim_bms.rate_cap_x0_1ah = 1000; /* 100Ah */
+    ASSERT(warmup_and_start(1500U, 4000U), "fourth module never reached RUNNING");
 
     ChargeController_GetView(&cv);
     ASSERT(fabsf(cv.target_current_total_a - 20.0f) < 1.0f,

@@ -239,7 +239,7 @@ online; chỉ frame BMS hợp lệ mới refresh watchdog. Queue overflow/FIFO l
 | FR-CTRL-03 | Ghi nhận owner (PC/DWIN) mỗi chu kỳ | S |
 | FR-CTRL-04 | **Manual**: target V/I từ PC, clamp `module_u_max_v`/`module_i_max_a` | M |
 | FR-CTRL-05 | **Standalone No-BMS**: V=`vmax_v`, I=`imax_c × capacity`; hoàn tất khi 1 module online đo được ≥ target trong 1000ms (telemetry < 2s tuổi) | M |
-| FR-CTRL-06 | **BMS-Controlled**: V=`vmax_v` (clamp); I = min(`imax_c×capacity`, giới hạn stage) / số module; dùng `rate_cap` BMS nếu có | M |
+| FR-CTRL-06 | **BMS-Controlled**: V=`vmax_v` (clamp); I = min(`imax_c×capacity`, giới hạn stage) / số module; ưu tiên dùng trực tiếp `rate_cap` từ BMS khi có BMS, fallback về `battery_capacity_ah` cấu hình nếu BMS offline hoặc chưa có dữ liệu | M |
 | FR-CTRL-07 | Stage cell-voltage: 6 band theo `max_cell_volt`; band chỉ tăng (high-watermark latch); dưới min → inhibit | M |
 | FR-CTRL-08 | Stage temperature: 6 band, hysteresis `temp_delta_c`; ngoài vùng → inhibit | M |
 | FR-CTRL-09 | Stage SOC: 6 band, latch; đạt max → kết thúc chu kỳ (SOC_REACHED) | M |
