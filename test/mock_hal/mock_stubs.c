@@ -268,12 +268,25 @@ bool BSP_SPIFlash_EraseSector4K(uint32_t a) { (void)a; return false; }
 /* OTA command boundary stubs for the PC protocol host suite. The real OTA
  * service is exercised by the target firmware build; this test only verifies
  * PC framing and command dispatch. */
+bool g_ota_policy_enabled = false;
+uint32_t g_ota_policy_interval_ms = 0U;
+char g_ota_policy_url[128] = {0};
+int g_ota_check_now_called = 0;
+
 bool OTAService_SetPolicy(bool enabled, uint32_t interval_ms, const char *url)
 {
-    (void)enabled; (void)interval_ms; (void)url; return true;
+    g_ota_policy_enabled = enabled;
+    g_ota_policy_interval_ms = interval_ms;
+    if (url != NULL) {
+        strncpy(g_ota_policy_url, url, sizeof(g_ota_policy_url) - 1U);
+        g_ota_policy_url[sizeof(g_ota_policy_url) - 1U] = '\0';
+    } else {
+        g_ota_policy_url[0] = '\0';
+    }
+    return true;
 }
-bool OTAService_RequestCheckNow(void) { return true; }
-bool OTAService_RequestCheckNowResult(uint8_t *result_code) { if (result_code) *result_code = 0; return true; }
+bool OTAService_RequestCheckNow(void) { g_ota_check_now_called++; return true; }
+uint32_t OTAService_RequestCheckNowResult(void) { g_ota_check_now_called++; return 0U; /* OTA_CHECK_OK */ }
 bool OTAService_RequestApply(void) { return true; }
 void OTAService_GetStatus(OtaStatusView_t *status)
 {

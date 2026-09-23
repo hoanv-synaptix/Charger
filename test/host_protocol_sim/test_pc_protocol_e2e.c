@@ -46,6 +46,10 @@ void BSP_ExitCritical(void) {}
 
 /* mock_stubs.c provides these; declared here to assert on them directly. */
 extern bool g_storage_save_called;
+extern bool g_ota_policy_enabled;
+extern uint32_t g_ota_policy_interval_ms;
+extern char g_ota_policy_url[128];
+extern int g_ota_check_now_called;
 
 #define ASSERT(cond, msg) \
     do { \
@@ -829,6 +833,54 @@ static bool test_debug_rtc_get_set_roundtrip(void)
     return true;
 }
 
+static bool test_pc_protocol_ota_commands_and_policy(void)
+{
+    printf("Running test_pc_protocol_ota_commands_and_policy...\n");
+    uint8_t cmd = 0;
+    uint8_t payload[256];
+    uint8_t len = 0;
+
+    /* 1. Test PC_CMD_SET_OTA_POLICY (0x0B) with 1 hour interval (3600000 ms) */
+    PC_Protocol_ResetTx();
+    uint8_t ota_pl[1 + 4 + 64];
+    ota_pl[0] = 1; /* Enabled */
+    uint32_t interval_1h = 3600000U;
+    memcpy(&ota_pl[1], &interval_1h, 4);
+    const char *url = "https://example.com/manifest.json";
+    size_t url_len = strlen(url);
+    memcpy(&ota_pl[5], url, url_len);
+
+    send_pc_frame(PC_CMD_SET_OTA_POLICY, ota_pl, (uint8_t)(5 + url_len));
+    ASSERT(only_tx_frame(&cmd, payload, &len), "expected exactly 1 TX frame for SET_OTA_POLICY");
+    ASSERT(cmd == PC_RSP_ACK, "expected ACK on valid SET_OTA_POLICY");
+    ASSERT(g_ota_policy_enabled == true, "policy enabled should be true");
+    ASSERT(g_ota_policy_interval_ms == 3600000U, "interval should be 3600000 ms (1 hour)");
+    ASSERT(strcmp(g_ota_policy_url, url) == 0, "url should match");
+
+    /* 2. Test PC_CMD_GET_OTA_STATUS (0x0C) */
+    PC_Protocol_ResetTx();
+    send_pc_frame(PC_CMD_GET_OTA_STATUS, NULL, 0);
+    ASSERT(only_tx_frame(&cmd, payload, &len), "expected 1 TX frame for GET_OTA_STATUS");
+    ASSERT(cmd == PC_RSP_OTA_STATUS, "expected PC_RSP_OTA_STATUS");
+
+    /* 3. Test PC_CMD_OTA_CHECK_NOW (0x0D) */
+    PC_Protocol_ResetTx();
+    int prior_checks = g_ota_check_now_called;
+    send_pc_frame(PC_CMD_OTA_CHECK_NOW, NULL, 0);
+    ASSERT(only_tx_frame(&cmd, payload, &len), "expected 1 TX frame for OTA_CHECK_NOW");
+    ASSERT(cmd == PC_RSP_ACK, "expected ACK on OTA_CHECK_NOW");
+    ASSERT(g_ota_check_now_called == prior_checks + 1, "check now handler called");
+
+    /* 4. Test invalid length handling (< 5 when enabled) */
+    PC_Protocol_ResetTx();
+    send_pc_frame(PC_CMD_SET_OTA_POLICY, ota_pl, 3);
+    ASSERT(only_tx_frame(&cmd, payload, &len), "expected NACK for truncated SET_OTA_POLICY");
+    ASSERT(cmd == PC_RSP_NACK, "expected NACK");
+
+    printf("[PASS] test_pc_protocol_ota_commands_and_policy\n");
+    return true;
+}
+
 /* ================================================================== */
 
 int main(void)
@@ -862,6 +914,7 @@ int main(void)
     pass &= test_build_module_data_refuses_when_too_small();
     pass &= test_build_all_modules_data_does_not_overflow_buffer();
     pass &= test_debug_rtc_get_set_roundtrip();
+    pass &= test_pc_protocol_ota_commands_and_policy();
 
     if (pass) {
         printf("ALL TESTS PASSED.\n");

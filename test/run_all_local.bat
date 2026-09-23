@@ -158,6 +158,16 @@ if %errorlevel% neq 0 (
     echo [FAIL] Alarm UI Blinking & Buzzer Test Failed!
     exit /b %errorlevel%
 )
+gcc -Wall test/host_ota_sim/test_ota_periodic_timer.c -o test_ota_periodic_timer.exe
+if %errorlevel% neq 0 (
+    echo [FAIL] Compilation of test_ota_periodic_timer.c Failed!
+    exit /b %errorlevel%
+)
+.\test_ota_periodic_timer.exe
+if %errorlevel% neq 0 (
+    echo [FAIL] MCU Auto-OTA Periodic Timer Test Failed!
+    exit /b %errorlevel%
+)
 
 echo [8/9] Building Firmware (Release preset)...
 call build.bat
