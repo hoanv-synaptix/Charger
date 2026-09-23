@@ -38,3 +38,5 @@ debug_app/*.log
 # Node modules
 node_modules/
 *.bak
+Releases/
+release_upload_url.txt

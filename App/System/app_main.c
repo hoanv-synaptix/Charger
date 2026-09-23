@@ -51,6 +51,10 @@
 #define APP_LED_INTERVAL_MS          100U    /* LED update period */
 #define APP_BTN_DEBOUNCE_MS          50U     /* Button debounce */
 
+#define ERROR_BLINK_PERIOD_MS        1000U   /* 1 Hz chu ky canh bao loi */
+#define ERROR_BLINK_HALF_PERIOD_MS   500U    /* 500ms ON / 500ms OFF */
+#define ERROR_BEEP_DURATION_X8MS     20U     /* 20 * 8ms = 160ms buzzer beep */
+
 #define DWIN_BOOT_DELAY_MS           3000U   /* Wait for DWIN panel to finish boot */
 #define DWIN_HEARTBEAT_INTERVAL_MS   5000U   /* Periodic force-full-refresh interval */
 #define DWIN_UPDATE_INTERVAL_MS      20U     /* Field scatter cadence (20ms per group -> ~220ms full cycle) */
@@ -70,6 +74,7 @@ static uint32_t last_dwin_full_tick = 0;
 static uint32_t last_dwin_reset_tick = 0;
 static uint32_t last_main_log       = 0;
 static uint32_t last_can_diag_log   = 0;
+static uint32_t s_last_error_beep_tick = 0U;
 /* Button debounce -- single toggle button (BUTTON_1/PA15), see App_Loop()
  * "(2) Button handling" for the state-decides-direction logic. BUTTON_2
  * (PD2) is no longer read here -- confirmed with user 2026-08-29, hardware
@@ -807,8 +812,16 @@ void App_Loop(void)
         CHG_LIB_SystemSummary_t sum;
         CHG_LIB_GetSystemSummary(&sum);
 
-        /* LED_RUN: co module online & dang sac */
-        if (sum.modules_online > 0 && PC_Protocol_IsCharging()) {
+        uint16_t cur_status = dwin_current_status();
+        if (cur_status == DWIN_STATUS_ERROR) {
+            /* Error: nhap nhay LED_RUN (den Start) 1 Hz (500ms ON / 500ms OFF) */
+            if ((now % ERROR_BLINK_PERIOD_MS) < ERROR_BLINK_HALF_PERIOD_MS) {
+                led_run_on();
+            } else {
+                led_run_off();
+            }
+        } else if (sum.modules_online > 0 && PC_Protocol_IsCharging()) {
+            /* LED_RUN: co module online & dang sac */
             led_run_on();
         } else {
             led_run_off();
@@ -923,6 +936,9 @@ void App_Loop(void)
         DWIN_SystemData_t dd;
         memset(&dd, 0, sizeof(dd));
 
+        uint16_t raw_status = dwin_status_from_state(&cc_view, &sum);
+        bool blink_on = ((now % ERROR_BLINK_PERIOD_MS) < ERROR_BLINK_HALF_PERIOD_MS);
+
         /* OUTPUT DC: show measured module values only when at least one
          * module is online. Never use zero-init as a validity indication. */
         {
@@ -951,7 +967,7 @@ void App_Loop(void)
                sizeof(dd.precharge_current_text));
         if (dwin_precharge_error_hold || cc_view.state == CHARGE_CTRL_STATE_FAULT ||
             (dwin_precharge_session && av.highest_action >= ALARM_ACT_STOP)) {
-            dd.precharge_status_mode = DWIN_PRECHARGE_STATUS_ERROR;
+            dd.precharge_status_mode = blink_on ? DWIN_PRECHARGE_STATUS_ERROR : 0xFFFFU;
             dd.precharge_btn_mode = DWIN_PRECHARGE_BTN_RESET;
         } else if (cc_view.state == CHARGE_CTRL_STATE_PRECHARGE) {
             dd.precharge_status_mode = DWIN_PRECHARGE_STATUS_ACTIVE;
@@ -1052,8 +1068,12 @@ void App_Loop(void)
                 dwin_set_unavailable(dd.temp_jack_text, sizeof(dd.temp_jack_text));
         }
 
-        dd.status_icon = dwin_status_from_state(&cc_view, &sum);
-        dd.btn_mode    = dwin_btn_mode_from_status(dd.status_icon);
+        if (raw_status == DWIN_STATUS_ERROR) {
+            dd.status_icon = blink_on ? DWIN_STATUS_ERROR : 0xFFFFU;
+        } else {
+            dd.status_icon = raw_status;
+        }
+        dd.btn_mode    = dwin_btn_mode_from_status(raw_status);
         dd.uptime_s    = now / 1000U;
 
         /* Charge duration: tracks elapsed time from charge start to stop.
@@ -1064,8 +1084,8 @@ void App_Loop(void)
         static uint32_t s_charge_stop_tick = 0U;
         static bool     s_was_charging = false;
         static bool     s_hold_last_duration = false;
-        bool is_charging = (dd.status_icon == DWIN_STATUS_CHARGING ||
-                            dd.status_icon == DWIN_STATUS_STARTING);
+        bool is_charging = (raw_status == DWIN_STATUS_CHARGING ||
+                            raw_status == DWIN_STATUS_STARTING);
         if (cc_view.state == CHARGE_CTRL_STATE_DELAY) {
             dd.charge_duration_s = cc_view.delay_remaining_s;
             dd.footer_time_str[0] = '\0';
@@ -1133,7 +1153,10 @@ void App_Loop(void)
                                     s_total_energy_kwh);
 
         /* Topbar fault code: "0000" if normal, worst code (e.g. "E006") if fault active */
-        if (av.active_count == 0U && av.latched_mask == 0U) {
+        if (raw_status == DWIN_STATUS_ERROR && !blink_on) {
+            strncpy(dd.topbar_fault_code, "    ", sizeof(dd.topbar_fault_code) - 1U);
+            dd.topbar_fault_code[sizeof(dd.topbar_fault_code) - 1U] = '\0';
+        } else if (av.active_count == 0U && av.latched_mask == 0U) {
             if (dwin_precharge_error_hold && dwin_precharge_error_code != ALARM_NONE) {
                 const char *c_str = DWIN_Alarm_GetCodeString(dwin_precharge_error_code);
                 strncpy(dd.topbar_fault_code, c_str, sizeof(dd.topbar_fault_code) - 1U);
@@ -1225,6 +1248,21 @@ void App_Loop(void)
         }
         (void)log_count; /* Snapshot size is used to bound available entries. */
         s_last_log_sequence = log_sequence;
+
+        static bool s_was_error = false;
+        if (raw_status == DWIN_STATUS_ERROR) {
+            s_was_error = true;
+            if ((uint32_t)(now - s_last_error_beep_tick) >= ERROR_BLINK_PERIOD_MS) {
+                s_last_error_beep_tick = now;
+                DWIN_Beep(ERROR_BEEP_DURATION_X8MS);
+            }
+        } else {
+            if (s_was_error) {
+                s_was_error = false;
+                DWIN_Beep(0U); /* Tat coi ngay lap tuc khi het loi */
+            }
+            s_last_error_beep_tick = 0U;
+        }
 
         DWIN_UpdateData(&dd);
     }

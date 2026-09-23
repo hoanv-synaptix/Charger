@@ -216,6 +216,29 @@ static bool test_software_reset_and_sync_invalidation(void)
     return true;
 }
 
+static bool test_dwin_beep(void)
+{
+    printf("Running test_dwin_beep...\n");
+    reset_capture();
+
+    DWIN_Beep(20); /* 20 * 8ms = 160ms */
+    ASSERT(g_tx_count == 1, "DWIN_Beep emits exactly one frame");
+    ASSERT(g_tx_len[0] == 8, "frame length is 8 bytes");
+    ASSERT(g_tx[0][0] == DWIN_HEADER_1 && g_tx[0][1] == DWIN_HEADER_2, "header");
+    ASSERT(g_tx[0][2] == 0x05, "LEN = 5");
+    ASSERT(g_tx[0][3] == DWIN_CMD_WRITE, "write");
+    ASSERT((((uint16_t)g_tx[0][4] << 8) | g_tx[0][5]) == VP_SYS_BUZZER, "VP_SYS_BUZZER (0x00A0)");
+    ASSERT((((uint16_t)g_tx[0][6] << 8) | g_tx[0][7]) == 20, "beep duration value 20");
+
+    reset_capture();
+    DWIN_Beep(0); /* Silence immediately */
+    ASSERT(g_tx_count == 1, "DWIN_Beep(0) emits exactly one frame");
+    ASSERT((((uint16_t)g_tx[0][6] << 8) | g_tx[0][7]) == 0, "beep duration value 0");
+
+    printf("[PASS] test_dwin_beep\n");
+    return true;
+}
+
 static bool test_parse_rx_dispatches(void)
 {
     printf("Running test_parse_rx_dispatches...\n");
@@ -891,6 +914,7 @@ int main(void)
     pass &= test_send_string_pads_field();
     pass &= test_set_page_diff_suppressed();
     pass &= test_software_reset_and_sync_invalidation();
+    pass &= test_dwin_beep();
     pass &= test_parse_rx_dispatches();
     pass &= test_parse_rx_byte_by_byte();
     pass &= test_parse_rx_ignores_zero_and_other_vp();

@@ -135,6 +135,12 @@ void DWIN_SendSoftwareReset(void)
     DWIN_SendWords(VP_SYS_RESET, reset_words, 2U);
 }
 
+void DWIN_Beep(uint8_t duration_x8ms)
+{
+    uint16_t val = (uint16_t)duration_x8ms;
+    DWIN_SendWords(VP_SYS_BUZZER, &val, 1U);
+}
+
 void DWIN_SendSettingStrings(const char *hw_ver, const char *fw_ver,
                              const char *device_id)
 {

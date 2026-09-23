@@ -103,6 +103,11 @@ void DWIN_InvalidateSyncState(void);
 void DWIN_SendSettingStrings(const char *hw_ver, const char *fw_ver,
                              const char *device_id);
 
+/**
+ * @brief Trigger the panel's onboard buzzer for a duration of duration_x8ms * 8 ms.
+ */
+void DWIN_Beep(uint8_t duration_x8ms);
+
 /** Total scatter steps in one full round-robin dashboard update cycle. */
 #define DWIN_SCATTER_STEP_COUNT  11U
 

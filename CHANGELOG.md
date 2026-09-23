@@ -4,6 +4,32 @@ Tất cả các thay đổi quan trọng theo từng phiên bản phát hành c�
 
 ---
 
+## [V2.0.7] - 2026-09-23
+
+### 🚀 Cảnh báo đa giác quan đồng bộ (Multi-sensory Synchronized Alarm)
+- **Đèn START (LED_RUN - PC6):**
+  - Khi hệ thống rơi vào trạng thái lỗi (`DWIN_STATUS_ERROR`), đèn vật lý START trên nút nhấn nhấp nháy chu kỳ 1 Hz (500ms SÁNG / 500ms TẮT) để cảnh báo trực quan cho người vận hành từ xa.
+  - Khi sạc bình thường (`PC_Protocol_IsCharging` & module online): giữ sáng liên tục như cũ.
+  - Khi ở trạng thái Ready / Idle: tắt.
+- **Biểu tượng trạng thái ERROR trên màn DWIN (`VP_SYS_STATUS_ICON 0x1041` & `VP_PRECHARGE_STATUS_ICON 0x1518`):**
+  - Nhấp nháy đồng bộ 1 Hz cùng đèn START: 500ms hiển thị icon ERROR (4) / 500ms ẩn (ghi `0xFFFF` - DGUS render trong suốt).
+- **Mã lỗi Topbar (`VP_TOPBAR_FAULT_CODE 0x1044`):**
+  - Nhấp nháy đồng bộ 1 Hz: 500ms hiển thị mã lỗi ưu tiên cao nhất (ví dụ `E006`) / 500ms tắt (ghi `"    "` - 4 khoảng trắng).
+- **Nút bấm hành động (Action Button):**
+  - Nút `RESET` trên màn hình DWIN luôn được giữ cố định (solid), tuyệt đối không nhấp nháy, giúp người dùng luôn xác định rõ vị trí chạm để thao tác an toàn.
+- **Còi cảnh báo DWIN Buzzer (`VP_SYS_BUZZER 0x00A0`):**
+  - Kêu bíp ngắn (~160ms = 20 * 8ms) ở đầu mỗi chu kỳ 1 giây (`ERROR_BLINK_PERIOD_MS = 1000ms`), tạo nhịp báo động dồn dập nhưng không gây chói tai liên tục.
+  - Tắt còi ngay lập tức (`DWIN_Beep(0)`) khi người dùng nhấn nút xóa lỗi (Reset) hoặc hệ thống tự phục hồi về trạng thái an toàn.
+- **Đảm bảo thông suốt đường truyền RS485 DWIN:**
+  - Cơ chế scatter diff-suppression được bảo toàn trọn vẹn: MCU chỉ gửi frame khi có sự thay đổi giá trị (1 frame/500ms cho icon/text và 1 frame/1000ms cho còi), tải bus RS485 tăng thêm không đáng kể (~0.1%), không gây nghẽn bus.
+
+### 🧪 Kiểm thử
+- **Unit Test DWIN Protocol:** Thêm `test_dwin_beep()` trong `test/host_protocol_sim/test_dwin_protocol_e2e.c`.
+- **Unit Test UI & Alarm Blink:** Tạo `test/host_alarm_sim/test_alarm_ui_blink.c` kiểm tra toàn diện LED_RUN 1Hz, Status icon 1Hz, Fault code 1Hz, nút RESET không nháy, Buzzer 160ms và câm ngay khi clear error.
+- **Tích hợp Local CI:** Đưa kiểm thử vào `test/run_all_local.bat`.
+
+---
+
 ## [V2.0.6] - 2026-09-23
 
 ### 🚀 Tính năng

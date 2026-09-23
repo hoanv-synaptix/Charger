@@ -148,6 +148,16 @@ if %errorlevel% neq 0 (
     echo [FAIL] Alarm Subsystem E2E Simulation Failed!
     exit /b %errorlevel%
 )
+gcc -Wall -I"Modules/hmi" test/host_alarm_sim/test_alarm_ui_blink.c -o test_alarm_ui_blink.exe
+if %errorlevel% neq 0 (
+    echo [FAIL] Compilation of test_alarm_ui_blink.c Failed!
+    exit /b %errorlevel%
+)
+.\test_alarm_ui_blink.exe
+if %errorlevel% neq 0 (
+    echo [FAIL] Alarm UI Blinking & Buzzer Test Failed!
+    exit /b %errorlevel%
+)
 
 echo [8/9] Building Firmware (Release preset)...
 call build.bat
