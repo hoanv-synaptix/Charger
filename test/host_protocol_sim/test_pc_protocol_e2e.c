@@ -881,6 +881,69 @@ static bool test_pc_protocol_ota_commands_and_policy(void)
     return true;
 }
 
+static bool test_pc_protocol_erase_flash(void)
+{
+    printf("Running test_pc_protocol_erase_flash...\n");
+    uint8_t cmd = 0;
+    uint8_t payload[256];
+    uint8_t len = 0;
+
+    ChargeCycleConfig_Init();
+
+    /* 1. Invalid length (4 bytes instead of 5) */
+    PC_Protocol_ResetTx();
+    uint8_t bad_len_pl[4] = { 0x40, 0xE2, 0x01, 0x00 }; /* PIN 123456 */
+    send_pc_frame(PC_CMD_ERASE_FLASH, bad_len_pl, 4);
+    ASSERT(only_tx_frame(&cmd, payload, &len), "expected 1 TX frame for bad length");
+    ASSERT(cmd == PC_RSP_NACK, "expected NACK for bad length");
+    ASSERT(payload[0] == PC_CMD_ERASE_FLASH, "expected payload[0] to be PC_CMD_ERASE_FLASH");
+    ASSERT(payload[1] == PC_ERR_BAD_LENGTH, "expected payload[1] to be PC_ERR_BAD_LENGTH");
+
+    /* 2. Invalid mask: mask = 0 */
+    PC_Protocol_ResetTx();
+    uint8_t zero_mask_pl[5] = { 0x40, 0xE2, 0x01, 0x00, 0x00 };
+    send_pc_frame(PC_CMD_ERASE_FLASH, zero_mask_pl, 5);
+    ASSERT(only_tx_frame(&cmd, payload, &len), "expected 1 TX frame for zero mask");
+    ASSERT(cmd == PC_RSP_NACK, "expected NACK for zero mask");
+    ASSERT(payload[0] == PC_CMD_ERASE_FLASH, "expected payload[0] to be PC_CMD_ERASE_FLASH");
+    ASSERT(payload[1] == PC_ERR_BAD_PARAM, "expected PC_ERR_BAD_PARAM for zero mask");
+
+    /* 3. Invalid mask: mask has out-of-range bits (0x10) */
+    PC_Protocol_ResetTx();
+    uint8_t bad_mask_pl[5] = { 0x40, 0xE2, 0x01, 0x00, 0x10 };
+    send_pc_frame(PC_CMD_ERASE_FLASH, bad_mask_pl, 5);
+    ASSERT(only_tx_frame(&cmd, payload, &len), "expected 1 TX frame for bad mask bits");
+    ASSERT(cmd == PC_RSP_NACK, "expected NACK for bad mask bits");
+    ASSERT(payload[0] == PC_CMD_ERASE_FLASH, "expected payload[0] to be PC_CMD_ERASE_FLASH");
+    ASSERT(payload[1] == PC_ERR_BAD_PARAM, "expected PC_ERR_BAD_PARAM for bad mask bits");
+
+    /* 4. Wrong PIN (999999 = 0x000F423F instead of 123456 = 0x0001E240) */
+    PC_Protocol_ResetTx();
+    uint8_t wrong_pin_pl[5] = { 0x3F, 0x42, 0x0F, 0x00, ERASE_MASK_ALL };
+    send_pc_frame(PC_CMD_ERASE_FLASH, wrong_pin_pl, 5);
+    ASSERT(only_tx_frame(&cmd, payload, &len), "expected 1 TX frame for wrong pin");
+    ASSERT(cmd == PC_RSP_NACK, "expected NACK for wrong pin");
+    ASSERT(payload[0] == PC_CMD_ERASE_FLASH, "expected payload[0] to be PC_CMD_ERASE_FLASH");
+    ASSERT(payload[1] == PC_ERR_BAD_PARAM, "expected PC_ERR_BAD_PARAM for wrong pin");
+
+    /* 5. Valid PIN and valid mask (selective erase: ALARM_LOG + ENERGY) */
+    PC_Protocol_ResetTx();
+    uint8_t valid_pl[5] = { 0x40, 0xE2, 0x01, 0x00, ERASE_MASK_ALARM_LOG | ERASE_MASK_ENERGY };
+    send_pc_frame(PC_CMD_ERASE_FLASH, valid_pl, 5);
+    ASSERT(only_tx_frame(&cmd, payload, &len), "expected 1 TX frame for valid erase");
+    ASSERT(cmd == PC_RSP_ACK, "expected ACK for valid erase");
+
+    /* 6. Valid full factory reset (ERASE_MASK_ALL) */
+    PC_Protocol_ResetTx();
+    uint8_t full_pl[5] = { 0x40, 0xE2, 0x01, 0x00, ERASE_MASK_ALL };
+    send_pc_frame(PC_CMD_ERASE_FLASH, full_pl, 5);
+    ASSERT(only_tx_frame(&cmd, payload, &len), "expected 1 TX frame for full erase");
+    ASSERT(cmd == PC_RSP_ACK, "expected ACK for full erase");
+
+    printf("[PASS] test_pc_protocol_erase_flash\n");
+    return true;
+}
+
 /* ================================================================== */
 
 int main(void)
@@ -915,6 +978,7 @@ int main(void)
     pass &= test_build_all_modules_data_does_not_overflow_buffer();
     pass &= test_debug_rtc_get_set_roundtrip();
     pass &= test_pc_protocol_ota_commands_and_policy();
+    pass &= test_pc_protocol_erase_flash();
 
     if (pass) {
         printf("ALL TESTS PASSED.\n");

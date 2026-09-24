@@ -39,6 +39,13 @@
 #define PC_CMD_OTA_UPLOAD_CHUNK 0x22  /* payload: u32 offset, u8 data[...] */
 #define PC_CMD_OTA_UPLOAD_FINISH 0x23 /* payload: none -> verify & arm bootloader */
 #define PC_CMD_GET_4G_STATUS    0x24 /* payload: none -> returns 4G modem & network status */
+#define PC_CMD_ERASE_FLASH      0x25 /* payload: u32 admin_pin, u8 erase_mask */
+
+/* Bitmask definitions for PC_CMD_ERASE_FLASH */
+#define ERASE_MASK_CONFIG       0x01U /* Reset ChargeCycleConfig to factory defaults */
+#define ERASE_MASK_ALARM_LOG    0x02U /* Erase persistent alarm history */
+#define ERASE_MASK_ENERGY       0x04U /* Reset persistent accumulated energy (kWh/Ah) */
+#define ERASE_MASK_ALL          (ERASE_MASK_CONFIG | ERASE_MASK_ALARM_LOG | ERASE_MASK_ENERGY)
 
 /* Responses STM32 -> PC */
 #define PC_RSP_STATUS           0x81

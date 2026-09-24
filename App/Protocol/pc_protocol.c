@@ -8,7 +8,10 @@
 #include "bms_core.h"
 #include "charge_cycle_config.h"
 #include "charge_cycle_storage.h"
+#include "charge_energy_storage.h"
 #include "charge_controller.h"
+#include "alarm.h"
+#include "alarm_storage.h"
 #include "ota_service.h"
 #include "sd_storage.h"
 #include "usbd_cdc_if.h"
@@ -687,6 +690,53 @@ static void process_frame(uint8_t cmd, const uint8_t *payload, uint8_t len)
         memcpy(&rsp[26], status.model, 24U);
         send_frame(PC_RSP_4G_STATUS, rsp, sizeof(rsp));
         return;
+    }
+
+    case PC_CMD_ERASE_FLASH: {
+        if (len != 5U) { send_nack(cmd, PC_ERR_BAD_LENGTH); return; }
+        if (ChargeController_IsRunning() || PC_Protocol_IsCharging()) {
+            send_nack(cmd, PC_ERR_OTA_NOT_SAFE);
+            return;
+        }
+        uint32_t pin = unpack_u32_le(&payload[0]);
+        uint8_t mask = payload[4];
+        if (mask == 0U || (mask & ~ERASE_MASK_ALL) != 0U) {
+            send_nack(cmd, PC_ERR_BAD_PARAM);
+            return;
+        }
+        ChargeCycleConfig_t cur_cfg;
+        ChargeCycleConfig_Get(&cur_cfg);
+        if (cur_cfg.admin_pin != pin) {
+            send_nack(cmd, PC_ERR_BAD_PARAM);
+            return;
+        }
+        if ((mask & ERASE_MASK_CONFIG) != 0U) {
+            ChargeCycleConfig_Init();
+            ChargeCycleConfig_t def_fast, def_norm;
+            ChargeCycleConfig_GetProfile(CHARGE_MODE_FAST, &def_fast);
+            ChargeCycleConfig_GetProfile(CHARGE_MODE_NORMAL, &def_norm);
+            if (!ChargeCycleStorage_SaveProfile(CHARGE_MODE_FAST, &def_fast) ||
+                !ChargeCycleStorage_SaveProfile(CHARGE_MODE_NORMAL, &def_norm)) {
+                send_nack(cmd, PC_ERR_OTA_FLASH_BUSY);
+                return;
+            }
+            ChargeCycleConfig_Set(&def_norm);
+        }
+        if ((mask & ERASE_MASK_ALARM_LOG) != 0U) {
+            if (!AlarmStorage_ClearAll()) {
+                send_nack(cmd, PC_ERR_OTA_FLASH_BUSY);
+                return;
+            }
+            Alarm_Init();
+        }
+        if ((mask & ERASE_MASK_ENERGY) != 0U) {
+            if (!ChargeEnergyStorage_Reset()) {
+                send_nack(cmd, PC_ERR_OTA_FLASH_BUSY);
+                return;
+            }
+        }
+        ok = true;
+        break;
     }
 
     case PC_CMD_SET_DRIVER:

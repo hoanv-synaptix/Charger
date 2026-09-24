@@ -4,6 +4,19 @@ Tất cả các thay đổi quan trọng theo từng phiên bản phát hành c�
 
 ---
 
+## [V2.0.8] - 2026-09-24
+
+### 🚀 Nâng cấp & Khắc phục Module Lianming & Hệ thống
+- **Thời gian xác lập dòng ra DC (E024):** Tăng deadline timeout từ 5s lên 12s (`ALARM_DC_OUT_CONFIRM_MS 12000U`), cho phép module Lianming có đủ thời gian sinh dòng mượt mà mà không kích hoạt cảnh báo E024 giả. Ngay khi có dòng (> 2.0A), hệ thống tiếp tục chu trình sạc tức thì.
+- **Tương thích giao thức CAN Lianming V2.0:**
+  - Hỗ trợ cả 2 Base Return ID cho nhiệt độ (`0x18008080` theo bảng tổng hợp và `0x19008080` theo Message Example 8 trong PDF hãng), đảm bảo nhận và giải mã nhiệt độ môi trường/tản nhiệt 100% với mọi phiên bản firmware module.
+  - Map dữ liệu nhiệt độ sang `temp_dcdc` giúp màn hình DWIN và PC App hiển thị nhiệt độ module chính xác.
+  - Gửi lệnh đọc nhiệt độ với `DLC = 0` chuẩn theo đặc tả hãng.
+  - Tối ưu gateway `lm_feed_frame` chấp nhận các khung ACK 2 bytes (`dlc >= 2`), kiểm tra chặt chẽ DLC theo từng loại lệnh trong parser.
+- **Quản lý bộ nhớ Flash từ xa:** Bổ sung giao thức `PC_CMD_ERASE_FLASH` (0x28) hỗ trợ xóa phân vùng cấu hình, lịch sử lỗi và log từ xa qua PC App có bảo mật xác thực Admin PIN.
+
+---
+
 ## [V2.0.7] - 2026-09-23
 
 ### 🚀 Cảnh báo đa giác quan đồng bộ (Multi-sensory Synchronized Alarm)

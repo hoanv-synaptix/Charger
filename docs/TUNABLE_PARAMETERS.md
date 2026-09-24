@@ -40,7 +40,7 @@ behaviour and have not been checked against a real DC bus / scope"*.
 | `ALARM_LOAD_LOST_I_FRAC` | 39 | 0.15 | Dòng đo sập dưới tỉ lệ này so với dòng lệnh → nghi mất tải DC | HW-TBD |
 | `ALARM_V_AT_TARGET_FRAC` | 40 | 0.98 | Áp lệnh phải đạt tỉ lệ này so với target mới coi là "đã ổn định" | HW-TBD |
 | `ALARM_LOAD_LOST_MS` | 41 | 800 ms | Debounce xác nhận mất tải DC | HW-TBD |
-| `ALARM_DC_OUT_CONFIRM_MS` | 45 | 5000 ms | Sau lệnh đóng relay, dòng thật phải xuất hiện trong khoảng này | HW-TBD |
+| `ALARM_DC_OUT_CONFIRM_MS` | 46 | 12000 ms | Sau lệnh đóng relay, dòng thật phải xuất hiện trong khoảng này | HW-TBD |
 | `ALARM_V_PACK_FLOOR_FRAC` | 50 | 0.5 | BMS online nhưng áp pack dưới tỉ lệ này so với Vmax cấu hình → nghi chưa đấu pin | HW-TBD |
 | `ALARM_AC_PHASE_EPS_V` | 54 | 20.0 V | Ngưỡng phân biệt "module không báo AC" (bỏ qua) và "AC thật = 0V" | HW-TBD |
 | `ALARM_AC_PHASE_FLOOR_V` | 55 | 150.0 V | Dưới mức này coi là mất pha AC | HW-TBD |

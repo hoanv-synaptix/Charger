@@ -82,7 +82,7 @@
 #define LM_START_CONFIRM_TIMEOUT_MS 500U
 #define LM_MAX_RETRY            3U
 #define LM_STOP_MAX_RETRY       5U      /* BUGFIX B-07: stop-confirm retry cap before FAULT */
-#define LM_DIAG_INTERVAL       4U      /* Poll AC/temp every N cycles */
+#define LM_DIAG_INTERVAL       2U      /* Poll AC/temp every N cycles */
 
 /* ============== CAN Frame ID Builder ============== */
 
@@ -398,7 +398,9 @@ static void lm_send_temp_read(LM_Module_t *mod)
 {
     uint8_t data[8] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
     uint32_t ext_id = LM_TEMP_CMD_BASE | (mod->view.addr & LM_ADDR_MASK);
-    if (CHG_LIB_CanBackend_Transmit(ext_id, data, 8)) {
+    /* Lianming Protocol V2.0 specifies Data Length: 0 for Read Temperature (0x19008080).
+     * Transmit with DLC=0 per vendor specification. */
+    if (CHG_LIB_CanBackend_Transmit(ext_id, data, 0)) {
         mod->view.stats.tx_count++;
         mod->view.last_tx_tick = CHG_LIB_NowTick(); /* BUGFIX B-17 */
     }
@@ -818,18 +820,20 @@ static void lm_process(uint32_t now)
 
 static void lm_process_rx(uint32_t ext_id, const uint8_t *data, uint8_t dlc, uint32_t now)
 {
-    if (dlc < 8U) return;
+    if (data == NULL) return;
 
     /* Compare command base while ignoring the lower 7-bit module address. */
     uint32_t id_base = ext_id & ~LM_ADDR_MASK;
 
     if (id_base == LM_RESP_BASE) {
+        if (dlc < 2U) return;
         /* Standard status response (CMD=1) */
         uint8_t addr = lm_parse_response_addr(ext_id);
         uint8_t idx = find_by_addr(addr);
         if (idx == 0xFFU) return;
 
         if (data[0] == LM_CMD_READ_INFO) {
+            if (dlc < 8U) return;
             apply_status(idx, data, now);
         } else if (data[0] == LM_CMD_SET_OUTPUT || data[0] == LM_CMD_START_STOP) {
             LM_Module_t *mod = &g_modules[idx];
@@ -843,6 +847,7 @@ static void lm_process_rx(uint32_t ext_id, const uint8_t *data, uint8_t dlc, uin
             /* Unknown command echo: ignore. */
         }
     } else if (id_base == LM_AC_RESP_BASE) {
+        if (dlc < 8U) return;
         /* AC input voltage response (Vab, Vbc, Vca)
          * Response format: CMD=0x31, Byte2-3=Vab/32, Byte4-5=Vbc/32, Byte6-7=Vca/32 */
         uint8_t addr = lm_parse_response_addr(ext_id);
@@ -861,15 +866,20 @@ static void lm_process_rx(uint32_t ext_id, const uint8_t *data, uint8_t dlc, uin
             mod->view.last_rx_tick = now;
             mod->view.stats.rx_count++;
         }
-    } else if (id_base == LM_TEMP_RESP_BASE) {
-        /* Ambient temperature response: Byte4-5 = temp * 10 (0.1 deg C/bit). */
+    } else if (id_base == LM_TEMP_RESP_BASE || id_base == LM_TEMP_CMD_BASE) {
+        if (dlc < 6U) return;
+        /* Ambient temperature response: Byte4-5 = temp * 10 (0.1 deg C/bit).
+         * Note: Lianming PDF Page 2 table specifies Return ID 0x180080xx (LM_TEMP_RESP_BASE),
+         * but Page 4 Example 8 explicitly shows Return ID 0x190080xx (LM_TEMP_CMD_BASE).
+         * Accepting both guarantees compatibility across different firmware versions. */
         uint8_t addr = lm_parse_response_addr(ext_id);
         uint8_t idx = find_by_addr(addr);
         if (idx == 0xFFU) return;
 
         LM_Module_t *mod = &g_modules[idx];
-        uint16_t temp_raw = CHG_LIB_ProtocolBEToU16(&data[4]);
+        int16_t temp_raw = (int16_t)CHG_LIB_ProtocolBEToU16(&data[4]);
         mod->view.temp_ambient = (float)temp_raw / 10.0f;
+        mod->view.temp_dcdc = mod->view.temp_ambient; /* Lianming provides ambient/heatsink temp, map to DCDC for DWIN/PC App */
         mod->view.last_rx_tick = now;
         mod->view.stats.rx_count++;
     }
@@ -877,7 +887,7 @@ static void lm_process_rx(uint32_t ext_id, const uint8_t *data, uint8_t dlc, uin
 
 static void lm_feed_frame(uint32_t ext_id, const uint8_t *data, uint8_t dlc)
 {
-    if (dlc < 8U || data == 0) return;
+    if (dlc < 2U || data == 0) return;
     uint32_t now = CHG_LIB_NowTick();
     lm_process_rx(ext_id, data, dlc, now);
 }

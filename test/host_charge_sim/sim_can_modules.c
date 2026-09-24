@@ -233,9 +233,9 @@ static void sim_maxwell_tick(uint32_t now_tick)
 
 static bool sim_lianming_transmit(uint32_t ext_id, const uint8_t *data, uint8_t dlc)
 {
-    if (dlc < 8) return false;
     uint32_t id_base = ext_id & ~LM_ADDR_MASK;
     if (id_base != LM_CMD_BASE) return true; /* AC/temp diagnostic reads: not simulated */
+    if (dlc < 8) return false;
     uint8_t addr = (uint8_t)(ext_id & LM_ADDR_MASK);
     if (addr != g_sim_module.addr) return true;
 

@@ -235,6 +235,38 @@ static bool test_driver_happy_path(uint8_t module_type, const char *name)
     ASSERT(bv.online, "BMS should be online");
     ASSERT(bv.state == BMS_STATE_ONLINE, "BMS state should be ONLINE");
 
+    if (module_type == CHARGE_MODULE_TYPE_LIANMING) {
+        /* Verify temperature reception and mapping to temp_dcdc (DWIN / PC app display) */
+        /* Format 1: Table Command Parsing 2 (0x18008081) */
+        uint8_t temp_frame[8] = { 0x00, 0x00, 0x00, 0x00, 0x01, 0x5E, 0x00, 0x00 }; /* 0x015E = 350 -> 35.0 C */
+        CHG_LIB_FeedCanFrame(0x18008081U, temp_frame, 8);
+        ASSERT(CHG_LIB_GetModuleView(0, &mv), "view available");
+        ASSERT(fabsf(mv.temp_ambient - 35.0f) < 0.05f, "ambient temperature should be 35.0C");
+        ASSERT(fabsf(mv.temp_dcdc - 35.0f) < 0.05f, "temp_dcdc must be mapped from ambient for Lianming");
+
+        /* Format 2: PDF Page 4 Example 8 (0x19008081) */
+        uint8_t temp_frame_ex8[8] = { 0x00, 0x1F, 0x0B, 0xB5, 0x01, 0xA9, 0x03, 0xA1 }; /* 0x01A9 = 425 -> 42.5 C */
+        CHG_LIB_FeedCanFrame(0x19008081U, temp_frame_ex8, 8);
+        ASSERT(CHG_LIB_GetModuleView(0, &mv), "view available");
+        ASSERT(fabsf(mv.temp_ambient - 42.5f) < 0.05f, "ambient temperature should be 42.5C");
+        ASSERT(fabsf(mv.temp_dcdc - 42.5f) < 0.05f, "temp_dcdc must match for 0x19008081");
+
+        /* AC 3-phase input voltage: PDF Page 4 Example 7 (0x1807A081) */
+        uint8_t ac_frame[8] = { 0x31, 0x01, 0x2F, 0x1E, 0x2F, 0x2C, 0x2F, 0x26 };
+        CHG_LIB_FeedCanFrame(0x1807A081U, ac_frame, 8);
+        ASSERT(CHG_LIB_GetModuleView(0, &mv), "view available");
+        ASSERT(fabsf(mv.ac_phase_a_voltage - 376.9f) < 0.1f, "Vab should be 376.9V");
+        ASSERT(fabsf(mv.ac_phase_b_voltage - 377.4f) < 0.1f, "Vbc should be 377.4V");
+        ASSERT(fabsf(mv.ac_phase_c_voltage - 377.2f) < 0.1f, "Vca should be 377.2V");
+
+        /* Short response frame (DLC=2 for Start/Stop or Set Output ACK) */
+        uint32_t rx_before = mv.stats.rx_count;
+        uint8_t ack_frame[2] = { 0x02, 0xFF };
+        CHG_LIB_FeedCanFrame(0x1807C081U, ack_frame, 2);
+        ASSERT(CHG_LIB_GetModuleView(0, &mv), "view available");
+        ASSERT(mv.stats.rx_count == rx_before + 1, "DLC=2 ACK frame must be accepted");
+    }
+
     printf("[PASS] test_%s_happy_path\n", name);
     return true;
 }

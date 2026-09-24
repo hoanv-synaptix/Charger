@@ -843,7 +843,7 @@ static bool test_dc_out_not_established(void)
     g_sim_module.voltage = 400.0f;
     g_sim_module.current = 0.0f;
     g_sim_bms.pack_current_a = 0.0f;
-    drive_ms(7000U);
+    drive_ms(13000U);
 
     ASSERT(alarm_logged_raise(ALARM_DC_OUT_NOT_ESTABLISHED), "DC_OUT_NOT_ESTABLISHED never raised");
     ChargeCtrlView_t cv; ChargeController_GetView(&cv);
@@ -863,7 +863,7 @@ static bool test_dc_out_summary_two_module_threshold(void)
     ASSERT(start_running(), "2-module controller never RUNNING");
     set_maxwell_load(1.0f, 1.0f);
     drive_ms(1200U); /* refresh the post-start voltage read used to arm relay */
-    drive_ms(5200U);
+    drive_ms(12200U);
 
     CHG_LIB_SystemSummary_t summary;
     CHG_LIB_GetSystemSummary(&summary);
@@ -878,13 +878,19 @@ static bool test_dc_out_summary_two_module_threshold(void)
     ASSERT(start_running(), "2-module controller never RUNNING below threshold");
     set_maxwell_load(0.9f, 1.0f);
     drive_ms(1200U); /* refresh the post-start voltage read used to arm relay */
-    drive_ms(5200U);
+    drive_ms(10000U); /* verify current is established below threshold while in confirm window */
 
+    memset(&summary, 0, sizeof(summary));
     CHG_LIB_GetSystemSummary(&summary);
     ASSERT(fabsf(summary.total_current - 1.9f) < 0.01f,
            "two online modules below threshold must produce a 1.9A summary");
+    ASSERT(!alarm_active(ALARM_DC_OUT_NOT_ESTABLISHED),
+           "E024 must not raise before 12s confirm window expires");
+
+    /* Now let the 12s confirm window expire (10000ms + 2200ms = 12200ms > 12000ms) */
+    drive_ms(2200U);
     ASSERT(alarm_active(ALARM_DC_OUT_NOT_ESTABLISHED),
-           "current below 2A must raise E024");
+           "current below 2A must raise E024 after timeout");
 
     ChargeCtrlView_t cv;
     ChargeController_GetView(&cv);

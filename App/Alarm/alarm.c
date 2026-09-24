@@ -43,7 +43,7 @@
 
 /* After the battery relay is commanded closed, real current must establish
  * within this window; if not, the external "relay sac" never closed. */
-#define ALARM_DC_OUT_CONFIRM_MS      5000U
+#define ALARM_DC_OUT_CONFIRM_MS      12000U
 
 /* BMS online but pack terminal voltage below this fraction of the configured
  * pack Vmax -> no battery actually connected (pack contactor / BMS relay-pin

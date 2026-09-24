@@ -259,6 +259,11 @@ bool AlarmStorage_Append(uint32_t now_tick, uint16_t code, uint8_t action, bool 
     return true;
 }
 
+bool AlarmStorage_ClearAll(void)
+{
+    return true;
+}
+
 /* Mock BSP_SPIFlash stubs for host test */
 bool BSP_SPIFlash_IsAvailable(void) { return false; }
 bool BSP_SPIFlash_Read(uint32_t a, uint8_t *b, uint32_t l) { (void)a; (void)b; (void)l; return false; }
