@@ -2854,6 +2854,41 @@ static bool test_jack_v_fault_clear_safe_with_residual_voltage(void)
     return true;
 }
 
+static bool test_module_base_address_configured(void)
+{
+    printf("Running test_module_base_address_configured...\n");
+    ChargeCycleConfig_t cfg;
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_MAXWELL, &cfg), "setup failed");
+
+    /* 1. Maxwell with base address 0, count 2 -> registers module 0 and module 1 */
+    cfg.module_type = CHARGE_MODULE_TYPE_MAXWELL;
+    cfg.source_module_count = 2U;
+    cfg.module_address = 0U;
+    ASSERT(ChargeCycleConfig_Set(&cfg), "ChargeCycleConfig_Set should succeed");
+    ASSERT(CHG_LIB_GetModuleCount() == 2, "should register 2 modules");
+
+    CHG_LIB_ModuleView_t v0, v1;
+    ASSERT(CHG_LIB_GetModuleView(0, &v0), "module 0 view available");
+    ASSERT(CHG_LIB_GetModuleView(1, &v1), "module 1 view available");
+    ASSERT(v0.addr == 0U, "first module address should be 0");
+    ASSERT(v1.addr == 1U, "second module address should be 1");
+
+    /* 2. Lianming with base address 3, count 2 -> registers module 3 and module 4 */
+    cfg.module_type = CHARGE_MODULE_TYPE_LIANMING;
+    cfg.source_module_count = 2U;
+    cfg.module_address = 3U;
+    ASSERT(ChargeCycleConfig_Set(&cfg), "ChargeCycleConfig_Set should succeed");
+    ASSERT(CHG_LIB_GetModuleCount() == 2, "should register 2 modules");
+
+    ASSERT(CHG_LIB_GetModuleView(0, &v0), "module 0 view available");
+    ASSERT(CHG_LIB_GetModuleView(1, &v1), "module 1 view available");
+    ASSERT(v0.addr == 3U, "first module address should be 3");
+    ASSERT(v1.addr == 4U, "second module address should be 4");
+
+    printf("[PASS] test_module_base_address_configured\n");
+    return true;
+}
+
 int main(void)
 {
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -2925,6 +2960,7 @@ int main(void)
     pass &= test_jack_v_protection_trips_under_real_load();
     pass &= test_jack_v_protection_ignored_during_bms_thermal_inhibit();
     pass &= test_jack_v_fault_clear_safe_with_residual_voltage();
+    pass &= test_module_base_address_configured();
 
     if (pass) {
         printf("ALL TESTS PASSED.\n");

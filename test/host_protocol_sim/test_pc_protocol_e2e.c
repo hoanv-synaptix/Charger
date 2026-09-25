@@ -539,6 +539,7 @@ static bool test_debug_set_charge_cfg_valid_config_persists(void)
     ChargeCycleConfig_GetDefaults(&good_cfg);
     good_cfg.module_type = CHARGE_MODULE_TYPE_LIANMING;
     good_cfg.source_module_count = 3U;
+    good_cfg.module_address = 5U;
 
     send_pc_frame(DEBUG_CMD_SET_CHARGE_CFG, (const uint8_t *)&good_cfg, sizeof(good_cfg));
     uint8_t cmd, resp[255], len;
@@ -550,6 +551,7 @@ static bool test_debug_set_charge_cfg_valid_config_persists(void)
     ChargeCycleConfig_Get(&stored);
     ASSERT(stored.module_type == CHARGE_MODULE_TYPE_LIANMING, "RAM config should now reflect the new value");
     ASSERT(stored.source_module_count == 3U, "RAM config should reflect source_module_count too");
+    ASSERT(stored.module_address == 5U, "RAM config should reflect module_address");
 
     printf("[PASS] test_debug_set_charge_cfg_valid_config_persists\n");
     return true;
@@ -623,6 +625,40 @@ static bool test_debug_set_charge_cfg_v7_compat_persists(void)
     ASSERT(stored.version == CHARGE_CYCLE_CONFIG_VERSION, "version must be bumped to current version");
 
     printf("[PASS] test_debug_set_charge_cfg_v7_compat_persists\n");
+    return true;
+}
+
+static bool test_debug_set_charge_cfg_v8_compat_persists(void)
+{
+    printf("Running test_debug_set_charge_cfg_v8_compat_persists...\n");
+    ASSERT(setup_scenario(), "setup failed");
+    PC_Protocol_ResetTx();
+
+    ChargeCycleConfig_t curr_cfg;
+    ChargeCycleConfig_GetDefaults(&curr_cfg);
+    curr_cfg.charge_mode = 0U; /* FAST */
+    curr_cfg.module_address = 10U;
+    ChargeCycleConfig_Set(&curr_cfg);
+
+    /* Simulate a v8 app sending 253 bytes (v8 payload without module_address) */
+    uint8_t v8_payload[253];
+    memcpy(v8_payload, &curr_cfg, 253);
+    ChargeCycleConfig_t *p_v8 = (ChargeCycleConfig_t *)v8_payload;
+    p_v8->battery_capacity_ah = 175.0f;
+
+    send_pc_frame(DEBUG_CMD_SET_CHARGE_CFG, v8_payload, 253U);
+    uint8_t cmd, resp[255], len;
+    ASSERT(only_tx_frame(&cmd, resp, &len), "expected exactly one response");
+    ASSERT(cmd == DEBUG_RSP_CHARGE_CFG, "v8 config should succeed and echo back DEBUG_RSP_CHARGE_CFG");
+    ASSERT(g_storage_save_called, "v8 config should reach ChargeCycleStorage_Save()");
+
+    ChargeCycleConfig_t stored;
+    ChargeCycleConfig_Get(&stored);
+    ASSERT(stored.battery_capacity_ah == 175.0f, "v8 battery_capacity_ah should be updated");
+    ASSERT(stored.module_address == DEFAULT_MODULE_ADDRESS, "v8 module_address should default to DEFAULT_MODULE_ADDRESS");
+    ASSERT(stored.version == CHARGE_CYCLE_CONFIG_VERSION, "version must be bumped to current version");
+
+    printf("[PASS] test_debug_set_charge_cfg_v8_compat_persists\n");
     return true;
 }
 
@@ -970,6 +1006,7 @@ int main(void)
     pass &= test_debug_set_charge_cfg_valid_config_persists();
     pass &= test_debug_set_charge_cfg_v6_compat_persists();
     pass &= test_debug_set_charge_cfg_v7_compat_persists();
+    pass &= test_debug_set_charge_cfg_v8_compat_persists();
     pass &= test_debug_set_charge_cfg_wrong_length_rejected();
     pass &= test_debug_dual_profiles_protocol_roundtrip();
     pass &= test_debug_get_system_info_matches_wire_struct();

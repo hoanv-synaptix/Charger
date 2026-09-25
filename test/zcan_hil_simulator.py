@@ -489,6 +489,64 @@ class ModuleSimulator(threading.Thread):
             resp_id = (0x060 << 20) | (1 << 19) | (0xF0 << 11) | (self.addr << 3)
             self.dev.transmit(self.CAN_CHANNEL, resp_id, bytes(resp), extended=True)
 
+    def _handle_lianming_rx(self, can_id, data):
+        ADDR_MASK = 0x7F
+        id_base = can_id & ~ADDR_MASK
+        addr = can_id & ADDR_MASK
+        if addr != self.addr:
+            return
+
+        if id_base == 0x1907C080:  # LM_CMD_BASE
+            if len(data) == 0:
+                return
+            cmd = data[0]
+            resp_id = 0x1807C080 | self.addr
+            if cmd == 0x02:  # START_STOP
+                self.actually_on = (data[7] == 0x55) if len(data) >= 8 else False
+                if not self.actually_on:
+                    self.voltage = self.standby_voltage
+                    self.current = 0.0
+                self.dev.transmit(self.CAN_CHANNEL, resp_id, bytes([0x02, 0x01, 0, 0, 0, 0, 0, 0]), extended=True)
+            elif cmd == 0x00:  # SET_OUTPUT
+                self.dev.transmit(self.CAN_CHANNEL, resp_id, bytes([0x00, 0x01, 0, 0, 0, 0, 0, 0]), extended=True)
+            elif cmd == 0x01:  # READ_INFO
+                if self.actually_on:
+                    self.current = self.target_current if self.target_current >= 1.0 else 24.5
+                    if self.bms and self.bms.transmitting and self.bms.pack_voltage_v > 10.0:
+                        self.voltage = self.bms.pack_voltage_v + (self.current * 0.01)
+                    else:
+                        self.voltage = self.target_voltage
+                else:
+                    self.voltage = self.standby_voltage
+                    self.current = 0.0
+                curr_raw = int(self.current * 10.0) & 0xFFFF
+                volt_raw = int(self.voltage * 10.0) & 0xFFFF
+                status = 0x00 if self.actually_on else 0x01
+                if self.fault_bits & 0x0001:
+                    status |= (1 << 5)  # Input undervoltage (E026)
+                resp = bytes([
+                    0x01, int(self.temp_ambient) & 0xFF,
+                    (curr_raw >> 8) & 0xFF, curr_raw & 0xFF,
+                    (volt_raw >> 8) & 0xFF, volt_raw & 0xFF,
+                    (status >> 8) & 0xFF, status & 0xFF,
+                ])
+                self.dev.transmit(self.CAN_CHANNEL, resp_id, resp, extended=True)
+        elif id_base == 0x19008080:  # LM_TEMP_CMD_BASE
+            t_raw = int(self.temp_ambient * 10.0) & 0xFFFF
+            resp = bytes([0, 0, 0, 0, (t_raw >> 8) & 0xFF, t_raw & 0xFF, 0, 0])
+            self.dev.transmit(self.CAN_CHANNEL, 0x18008080 | self.addr, resp, extended=True)
+        elif id_base == 0x1907A080:  # LM_AC_CMD_BASE
+            va_raw = int(self.ac_phase_a * 32.0) & 0xFFFF
+            vb_raw = int(self.ac_phase_b * 32.0) & 0xFFFF
+            vc_raw = int(self.ac_phase_c * 32.0) & 0xFFFF
+            resp = bytes([
+                0x31, 0x00,
+                (va_raw >> 8) & 0xFF, va_raw & 0xFF,
+                (vb_raw >> 8) & 0xFF, vb_raw & 0xFF,
+                (vc_raw >> 8) & 0xFF, vc_raw & 0xFF,
+            ])
+            self.dev.transmit(self.CAN_CHANNEL, 0x1807A080 | self.addr, resp, extended=True)
+
     def run(self):
         last_status = 0
         last_ac = 0
@@ -501,11 +559,13 @@ class ModuleSimulator(threading.Thread):
                 time.sleep(random.uniform(0.05, 0.20))
 
             for can_id, ext, data in self.dev.receive(self.CAN_CHANNEL, wait_ms=0):
-                if ext and len(data) >= 4:
-                    if self.driver == "tonhe":
+                if ext:
+                    if self.driver == "tonhe" and len(data) >= 4:
                         self._handle_tonhe_rx(can_id, data)
-                    elif self.driver == "maxwell":
+                    elif self.driver == "maxwell" and len(data) >= 4:
                         self._handle_maxwell_rx(can_id, data)
+                    elif self.driver == "lianming":
+                        self._handle_lianming_rx(can_id, data)
 
             now = time.monotonic() * 1000.0
             j = (random.uniform(-5, 10) if self.jitter_enabled else 0)
@@ -1565,6 +1625,8 @@ def run_incharge_automation(bms: BmsSimulator, mod: ModuleSimulator, sniffer: Dw
         time.sleep(0.3)
         send_pc_cmd(0x04)
         time.sleep(0.3)
+        send_pc_cmd(0x0A)  # PC_CMD_RESET_FAULT (clears FAULT state)
+        time.sleep(0.3)
         bms.pack_voltage_v = 52.8
         bms.pack_current_a = 0.0
         bms.max_cell_mv = 3315
@@ -1595,25 +1657,26 @@ def run_incharge_automation(bms: BmsSimulator, mod: ModuleSimulator, sniffer: Dw
         mod.transmitting = True
 
         if sniffer and sniffer.available:
-            if sniffer.state["topbar_code"] not in ("0000", "----") or sniffer.state["status_icon"] in (3, 4):
+            if sniffer.state["topbar_code"] not in ("0000", "----", "    ") or sniffer.state["status_icon"] in (3, 4):
                 sniffer.send_button_touch(1)
                 time.sleep(0.5)
 
-        for _ in range(10):
+        for _ in range(24):
             m = read_mcu_info()
             if m and m.get("modules_online", 0) > 0 and m.get("controller_state", 0) in (0, 1):
                 break
-            time.sleep(0.25)
+            send_pc_cmd(0x0A)
+            time.sleep(0.5)
         time.sleep(1.0)
 
     def start_charging(v_set=53.5, i_set=20.0):
         send_pc_cmd(0x03, bytes([0]))  # PC_CMD_START, manual_mode=0
-        time.sleep(0.5)
+        time.sleep(0.8)
         m = read_mcu_info()
-        if not m or m.get("controller_state", 0) != 2:
+        if not m or m.get("controller_state", 0) not in (1, 2):
             if sniffer and sniffer.available:
                 sniffer.send_button_touch(1)
-                time.sleep(0.5)
+                time.sleep(0.8)
                 m = read_mcu_info()
         mod.actually_on = True
         mod.voltage = v_set
@@ -2885,6 +2948,28 @@ def main():
     bms.start()
     mod.start()
 
+    # 4. Synchronize MCU configuration (Driver + Module Address + Clear Faults)
+    driver_map = {"maxwell": 1, "lianming": 2, "tonhe": 3}
+    drv_id = driver_map.get(args.driver.lower(), 3)
+    print(f"[INFO] Đồng bộ cấu hình MCU: driver={args.driver} (id={drv_id}), addr={args.addr}...")
+    send_pc_cmd(0x10)  # DEBUG_CMD_ENTER
+    time.sleep(0.1)
+    send_pc_cmd(0x09, bytes([drv_id]))  # PC_CMD_SET_DRIVER
+    time.sleep(0.1)
+    send_pc_cmd(0x05, bytes([args.addr, 0]))  # PC_CMD_SET_MODULE_ADDR (addr, group)
+    time.sleep(0.2)
+    send_pc_cmd(0x0A)  # PC_CMD_RESET_FAULT
+    time.sleep(0.5)
+
+    print("[INFO] Đợi module kết nối online và MCU chuyển về STANDBY (tối đa 12s)...")
+    for _ in range(24):
+        m = read_mcu_info()
+        if m and m.get("modules_online", 0) > 0 and m.get("controller_state", 0) in (0, 1):
+            print(f"[PASS] MCU online thành công: State={m.get('controller_state')}, ModulesOnline={m.get('modules_online')}, Faults=0x{m.get('controller_fault_flags', 0):04X}")
+            break
+        send_pc_cmd(0x0A)  # retry clear fault once online
+        time.sleep(0.5)
+
     try:
         if args.incharge:
             ok = run_incharge_automation(bms, mod, sniffer, case_filter=args.cases)
@@ -2950,17 +3035,18 @@ def main():
                 sys.exit(1)
         elif args.auto:
             run_full_automation(bms, mod, sniffer)
-            print("\n" + "=" * 80)
-            print("  🎉 TẤT CẢ TEST CASES HOÀN TẤT - DUY TRÌ ĐỒNG BỘ TELEMETRY (STANDBY)")
-            print("  BMS và Module tiếp tục phát CAN để màn hình DWIN và App PC hiển thị đầy đủ.")
-            print("  Dung lượng pin: 82.0 Ah | Điện áp: 52.8V | SOC: 82% | Nhiệt độ: 28.0°C")
-            print("  Nhấn Ctrl+C để dừng giả lập...")
-            print("=" * 80)
-            try:
-                while True:
-                    time.sleep(1.0)
-            except KeyboardInterrupt:
-                print("\n[INFO] Người dùng dừng giả lập.")
+            if not args.exit_after_test:
+                print("\n" + "=" * 80)
+                print("  🎉 TẤT CẢ TEST CASES HOÀN TẤT - DUY TRÌ ĐỒNG BỘ TELEMETRY (STANDBY)")
+                print("  BMS và Module tiếp tục phát CAN để màn hình DWIN và App PC hiển thị đầy đủ.")
+                print("  Dung lượng pin: 82.0 Ah | Điện áp: 52.8V | SOC: 82% | Nhiệt độ: 28.0°C")
+                print("  Nhấn Ctrl+C để dừng giả lập...")
+                print("=" * 80)
+                try:
+                    while True:
+                        time.sleep(1.0)
+                except KeyboardInterrupt:
+                    print("\n[INFO] Người dùng dừng giả lập.")
         else:
             print("\n[INFO] Chế độ giả lập thủ công (Interactive HIL). Đang phát CAN...")
             print("       Nhấn Ctrl+C để thoát.")

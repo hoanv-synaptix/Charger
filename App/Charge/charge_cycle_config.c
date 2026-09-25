@@ -37,6 +37,7 @@ void ChargeCycleConfig_GetDefaults(ChargeCycleConfig_t *config)
     config->module_type = CHARGE_MODULE_TYPE_EVR_10KW_100A_100V;
     config->can_battery_id = 1U;
     config->source_module_count = 1U;
+    config->module_address = DEFAULT_MODULE_ADDRESS;
 
     config->battery_capacity_ah = DEFAULT_BATTERY_CAPACITY_AH;
     config->imin_c = DEFAULT_IMIN_C;
@@ -237,8 +238,9 @@ static void apply_hardware_config(const ChargeCycleConfig_t *config)
     if (drv_id != CHG_LIB_DRV_NONE) {
         CHG_LIB_SelectDriver(drv_id);
         CHG_LIB_Init();
+        uint8_t base_addr = (config->module_address <= 240U) ? config->module_address : DEFAULT_MODULE_ADDRESS;
         for (uint8_t i = 0; i < config->source_module_count; i++) {
-            int8_t idx = CHG_LIB_AddModule((uint8_t)(i + 1), 0);
+            int8_t idx = CHG_LIB_AddModule((uint8_t)(base_addr + i), 0);
             if (idx >= 0 && config->module_i_max_a > 0.0f) {
                 CHG_LIB_SetModuleConfig((uint8_t)idx, config->module_i_max_a);
             }

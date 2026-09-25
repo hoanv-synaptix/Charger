@@ -258,7 +258,7 @@ online; chỉ frame BMS hợp lệ mới refresh watchdog. Queue overflow/FIFO l
 
 | ID | Yêu cầu | ƯP |
 |---|---|---|
-| FR-CFG-01 | `ChargeCycleConfig_t` **253 byte** (Version 8 / header version 7), packed/static-assert. Kế thừa: v5 (239B) + v6 `admin_pin` (4B = 243B) + v7 Profile Fast/Normal & Delay Start (6B = 249B) + v8 trần dòng sạc tuyệt đối `imax_a` (float 4B = 253B, default 100.0A). Giao diện PC đồng bộ hiển thị thẳng hàng BMS CAN ID với Charge Source, tự động disable BMS CAN ID khi sạc Standalone (No BMS). Flash migration giữ nguyên v5/v6/v7, gán default cho trường mới khi nâng cấp. | M |
+| FR-CFG-01 | `ChargeCycleConfig_t` **254 byte** (Version 9 / header version 7), packed/static-assert. Kế thừa: v5 (239B) + v6 `admin_pin` (4B = 243B) + v7 Profile Fast/Normal & Delay Start (6B = 249B) + v8 trần dòng sạc tuyệt đối `imax_a` (float 4B = 253B) + v9 địa chỉ cơ sở CAN ID module sạc `module_address` (1B = 254B, dải 0..240, default 1). Giao diện PC đồng bộ hiển thị thẳng hàng BMS CAN ID với Charge Source, tự động disable BMS CAN ID khi sạc Standalone (No BMS). Flash migration giữ nguyên v5/v6/v7/v8, gán default cho trường mới khi nâng cấp. | M |
 | FR-CFG-02 | Validate: float không NaN/âm, ngưỡng tăng dần, imax≥imin, module 1–8, enum trong phạm vi | M |
 | FR-CFG-03 | Flash record {magic, version, length, CRC32, payload} align 8; append; trang đầy mới erase | M |
 | FR-CFG-04 | Boot: nạp record hợp lệ mới nhất; không có → default | M |

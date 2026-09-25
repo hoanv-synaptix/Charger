@@ -575,6 +575,18 @@ bool DebugProtocol_HandleCommand(uint8_t cmd, const uint8_t *payload, uint16_t l
             config.delay_enabled = curr.delay_enabled;
             config.delay_hours = curr.delay_hours;
             config.delay_minutes = curr.delay_minutes;
+        } else if (len == 253U) {
+            /* v8 payload backward compatibility */
+            target_mode = (payload[243] <= 1U) ? payload[243] : ChargeCycleConfig_GetActiveMode();
+            ChargeCycleConfig_GetProfile(target_mode, &config);
+            memcpy(&config, payload, 253U);
+            config.version = CHARGE_CYCLE_CONFIG_VERSION;
+            config.module_address = DEFAULT_MODULE_ADDRESS;
+            ChargeCycleConfig_t curr;
+            ChargeCycleConfig_GetProfile(target_mode, &curr);
+            config.delay_enabled = curr.delay_enabled;
+            config.delay_hours = curr.delay_hours;
+            config.delay_minutes = curr.delay_minutes;
         } else if (len == 249U) {
             /* v7 payload backward compatibility */
             target_mode = (payload[243] <= 1U) ? payload[243] : ChargeCycleConfig_GetActiveMode();
@@ -582,6 +594,7 @@ bool DebugProtocol_HandleCommand(uint8_t cmd, const uint8_t *payload, uint16_t l
             memcpy(&config, payload, 249U);
             config.version = CHARGE_CYCLE_CONFIG_VERSION;
             config.imax_a = (target_mode == CHARGE_MODE_NORMAL) ? 50.0f : DEFAULT_IMAX_A;
+            config.module_address = DEFAULT_MODULE_ADDRESS;
             ChargeCycleConfig_t curr;
             ChargeCycleConfig_GetProfile(target_mode, &curr);
             config.delay_enabled = curr.delay_enabled;
@@ -593,6 +606,7 @@ bool DebugProtocol_HandleCommand(uint8_t cmd, const uint8_t *payload, uint16_t l
             ChargeCycleConfig_GetProfile(target_mode, &config);
             memcpy(&config, payload, 243U);
             config.version = CHARGE_CYCLE_CONFIG_VERSION;
+            config.module_address = DEFAULT_MODULE_ADDRESS;
             /* Preserve existing charge_mode, delay_enabled, delay_hours, delay_minutes */
         } else if (len == 239U) {
             /* v5 payload backward compatibility */
@@ -601,6 +615,7 @@ bool DebugProtocol_HandleCommand(uint8_t cmd, const uint8_t *payload, uint16_t l
             memcpy(&config, payload, 239U);
             config.version = CHARGE_CYCLE_CONFIG_VERSION;
             config.admin_pin = DEFAULT_ADMIN_PIN;
+            config.module_address = DEFAULT_MODULE_ADDRESS;
         } else {
             reply[0] = 0x01; /* BAD_PARAM */
             PC_Protocol_SendFrame(DEBUG_RSP_ERROR, reply, 1);

@@ -37,7 +37,7 @@ Hệ thống điều khiển trạm sạc gồm 3 thành phần chính:
 
 ## 2. BẢNG DANH MỤC TOÀN BỘ 100% THÔNG SỐ CẤU HÌNH
 
-Cấu trúc cấu hình `ChargeCycleConfig_t` có kích thước cố định **253 bytes** (Version 8) lưu trong Flash/EEPROM, tương thích chuẩn giao tiếp PC và DWIN:
+Cấu trúc cấu hình `ChargeCycleConfig_t` có kích thước cố định **254 bytes** (Version 9) lưu trong Flash/EEPROM, tương thích chuẩn giao tiếp PC và DWIN:
 
 ### 2.1 Nhóm Thông số Pack Pin (General Limits & Pack Parameters)
 
@@ -70,7 +70,7 @@ Khung cấu hình này tương ứng với 2 nhóm **System Mapping** (3 ô nh�
 | `charge_source_mode` | **Charge Source** | Enum | 0..1 | `BMS Controlled` | System Mapping | Chế độ sạc nguồn: `0: BMS Controlled` (Có BMS), `1: Standalone` (Không BMS). |
 | `module_type` | **Module Type** | Enum | 1..4 | `TONHE` | Module Envelope | Loại giao thức module: `1: EVR`, `2: Maxwell`, `3: Lianming`, `4: Tonhe`. |
 | `source_module_count` | **Source Modules** | Cái | $1 \sim 8$ | `1` | Module Envelope | Số module sạc thực tế lắp trong tủ trạm. Dùng chia dòng cho từng module. |
-| `module_address` | **Address Module** | uint8 | $1 \sim 255$ | `1` | Module Envelope | **Địa chỉ CAN bus của Module sạc**. Xác định địa chỉ trạm gọi lệnh tới module. |
+| `module_address` | **Address Module** | uint8 | $0 \sim 240$ | `1` | Module Envelope | **Địa chỉ CAN bus của Module sạc**. Xác định địa chỉ trạm gọi lệnh tới module (Maxwell: 0..63; Lianming: 1..60; TonHe: 1..240). |
 | `module_u_min_v` | **U Min (V)** | V | $0.0 \sim 1000.0$ | `30.0` | Module Envelope | Giới hạn điện áp phát nhỏ nhất của module phần cứng. |
 | `module_u_max_v` | **U Max (V)** | V | $0.0 \sim 1000.0$ | `99.0` | Module Envelope | Giới hạn điện áp phát lớn nhất của module phần cứng. Điện áp lệnh không bao giờ vượt qua mức này. |
 | `module_i_min_a` | **I Min (A)** | A | $0.1 \sim 100.0$ | `5.0` | Module Envelope | Giới hạn dòng phát nhỏ nhất của 1 module (dưới mức này module không phát xung ổn định). |
@@ -374,6 +374,6 @@ stateDiagram-v2
 
 ## 8. KẾT LUẬN & KIẾN NGHỊ BÀN GIAO
 
-1. **Tính hoàn thiện**: Toàn bộ **49 trường thông số** cấu hình trong tài liệu này phản ánh chính xác 100% cấu trúc nhị phân 253 bytes (Version 8) của Firmware MCU STM32 và giao diện ứng dụng C# PC (`ChargerDebugApp` .NET 8).
+1. **Tính hoàn thiện**: Toàn bộ **49 trường thông số** cấu hình trong tài liệu này phản ánh chính xác 100% cấu trúc nhị phân 254 bytes (Version 9) của Firmware MCU STM32 và giao diện ứng dụng C# PC (`ChargerDebugApp` .NET 8).
 2. **Tính thân thiện & Tinh gọn**: Giao diện người dùng PC đã đồng bộ hiển thị thẳng hàng BMS CAN ID và Charge Source, tự động disable BMS CAN ID khi sạc không BMS, bổ sung trường I Max (A) trực quan.
 3. **Tính an toàn tuyệt đối**: Hệ thống bao phủ toàn diện từ bảo vệ pin (3 vùng điện áp, trần dòng kép min(Imax_C, Imax_A), ngắt bão hòa $I_{\min}$, quá nhiệt tự phục hồi 3 lần, cứu pin cạn kiệt qua Pre-charge bypass E021) đến bảo vệ hạ tầng trạm sạc (sụt áp giắc sạc, quá nhiệt đầu cắm 4 kênh NTC, hẹn giờ sạc thấp điểm, cơ chế khôi phục sau dừng khẩn cấp E-Stop).

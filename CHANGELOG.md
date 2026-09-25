@@ -4,6 +4,19 @@ Tất cả các thay đổi quan trọng theo từng phiên bản phát hành c�
 
 ---
 
+## [V2.0.9] - 2026-09-26
+
+### 🚀 Tích hợp Địa chỉ CAN Module Sạc (`module_address`)
+- **Tùy biến địa chỉ CAN Module sạc:**
+  - Bổ sung trường `module_address` vào `ChargeCycleConfig_t` (struct Version 9, kích thước 254 bytes), cho phép người dùng cấu hình địa chỉ trạm CAN của module linh hoạt từ 0 đến 240 (mặc định là 1).
+  - Hỗ trợ module Maxwell có địa chỉ xuất phát từ `0` (`00..63` theo chuẩn Maxwell V1.50 §2.2.3), Lianming (`1..60`), và TonHe (`1..240`).
+  - Khi khởi động hoặc khi nạp cấu hình mới, MCU đăng ký danh sách module theo dải `[base_addr .. base_addr + count - 1]`.
+- **Tương thích ngược & Migration Flash:**
+  - Tự động nhận diện và migrate các bản ghi Flash cũ (v5: 239B, v6: 243B, v7: 249B, v8: 253B) lên v9 (254B), tự động gán `module_address = 1` cho các bản ghi cũ mà không làm mất cấu hình trạm.
+  - Giao thức nhị phân `DEBUG_CMD_SET_CHARGE_CFG` (0x1A) hỗ trợ cả gói tin 254 bytes mới và các gói tin legacy cũ.
+
+---
+
 ## [V2.0.8] - 2026-09-24
 
 ### 🚀 Nâng cấp & Khắc phục Module Lianming & Hệ thống

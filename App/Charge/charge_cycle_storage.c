@@ -17,6 +17,7 @@
 #define CONFIG_V5_PAYLOAD_SIZE  239U
 #define CONFIG_V6_PAYLOAD_SIZE  243U
 #define CONFIG_V7_PAYLOAD_SIZE  249U
+#define CONFIG_V8_PAYLOAD_SIZE  253U
 
 #ifdef CHARGE_CYCLE_STORAGE_HOST_TEST
 extern uint8_t g_charge_config_test_flash[];
@@ -39,6 +40,8 @@ _Static_assert(offsetof(ChargeCycleConfig_t, charge_mode) == CONFIG_V6_PAYLOAD_S
                "v7 must append charge_mode after the v6 payload");
 _Static_assert(offsetof(ChargeCycleConfig_t, imax_a) == CONFIG_V7_PAYLOAD_SIZE,
                "v8 must append imax_a after the v7 payload");
+_Static_assert(offsetof(ChargeCycleConfig_t, module_address) == CONFIG_V8_PAYLOAD_SIZE,
+               "v9 must append module_address after the v8 payload");
 
 static const uint8_t *internal_flash_at(uint32_t address)
 {
@@ -72,6 +75,10 @@ static bool validate_record_length(const ChargeCycleConfigRecord_t *rec, uint16_
 
 static bool validate_record(const ChargeCycleConfigRecord_t *rec) {
     return validate_record_length(rec, sizeof(ChargeCycleConfig_t));
+}
+
+static bool validate_v8_record(const ChargeCycleConfigRecord_t *rec) {
+    return validate_record_length(rec, CONFIG_V8_PAYLOAD_SIZE);
 }
 
 static bool validate_v7_record(const ChargeCycleConfigRecord_t *rec) {
@@ -198,6 +205,21 @@ static bool scan_internal_flash_for_migration(ChargeCycleConfig_t *fast_cfg, Cha
                 last_valid_mode = CHARGE_MODE_FAST;
                 *fast_cfg = record.payload;
             }
+        } else if (validate_v8_record(&record)) {
+            last_valid_offset = (int32_t)offset;
+            if (record.payload.charge_mode == CHARGE_MODE_NORMAL) {
+                latest_norm_offset = (int32_t)offset;
+                last_valid_mode = CHARGE_MODE_NORMAL;
+                memcpy(norm_cfg, &record.payload, CONFIG_V8_PAYLOAD_SIZE);
+                norm_cfg->version = CHARGE_CYCLE_CONFIG_VERSION;
+                norm_cfg->module_address = DEFAULT_MODULE_ADDRESS;
+            } else {
+                latest_fast_offset = (int32_t)offset;
+                last_valid_mode = CHARGE_MODE_FAST;
+                memcpy(fast_cfg, &record.payload, CONFIG_V8_PAYLOAD_SIZE);
+                fast_cfg->version = CHARGE_CYCLE_CONFIG_VERSION;
+                fast_cfg->module_address = DEFAULT_MODULE_ADDRESS;
+            }
         } else if (validate_v7_record(&record)) {
             last_valid_offset = (int32_t)offset;
             if (record.payload.charge_mode == CHARGE_MODE_NORMAL) {
@@ -206,12 +228,14 @@ static bool scan_internal_flash_for_migration(ChargeCycleConfig_t *fast_cfg, Cha
                 memcpy(norm_cfg, &record.payload, CONFIG_V7_PAYLOAD_SIZE);
                 norm_cfg->version = CHARGE_CYCLE_CONFIG_VERSION;
                 norm_cfg->imax_a = 50.0f;
+                norm_cfg->module_address = DEFAULT_MODULE_ADDRESS;
             } else {
                 latest_fast_offset = (int32_t)offset;
                 last_valid_mode = CHARGE_MODE_FAST;
                 memcpy(fast_cfg, &record.payload, CONFIG_V7_PAYLOAD_SIZE);
                 fast_cfg->version = CHARGE_CYCLE_CONFIG_VERSION;
                 fast_cfg->imax_a = DEFAULT_IMAX_A;
+                fast_cfg->module_address = DEFAULT_MODULE_ADDRESS;
             }
         } else if (validate_v6_record(&record) || validate_v5_record(&record)) {
             last_valid_offset = (int32_t)offset;
@@ -273,6 +297,22 @@ static bool load_latest_configs(ChargeCycleConfig_t *fast_cfg, ChargeCycleConfig
                 last_valid_mode = CHARGE_MODE_FAST;
                 *fast_cfg = record.payload;
             }
+        } else if (validate_v8_record(&record)) {
+            last_valid_offset = (int32_t)offset;
+            any_migrated = true;
+            if (record.payload.charge_mode == CHARGE_MODE_NORMAL) {
+                latest_norm_offset = (int32_t)offset;
+                last_valid_mode = CHARGE_MODE_NORMAL;
+                memcpy(norm_cfg, &record.payload, CONFIG_V8_PAYLOAD_SIZE);
+                norm_cfg->version = CHARGE_CYCLE_CONFIG_VERSION;
+                norm_cfg->module_address = DEFAULT_MODULE_ADDRESS;
+            } else {
+                latest_fast_offset = (int32_t)offset;
+                last_valid_mode = CHARGE_MODE_FAST;
+                memcpy(fast_cfg, &record.payload, CONFIG_V8_PAYLOAD_SIZE);
+                fast_cfg->version = CHARGE_CYCLE_CONFIG_VERSION;
+                fast_cfg->module_address = DEFAULT_MODULE_ADDRESS;
+            }
         } else if (validate_v7_record(&record)) {
             last_valid_offset = (int32_t)offset;
             any_migrated = true;
@@ -282,12 +322,14 @@ static bool load_latest_configs(ChargeCycleConfig_t *fast_cfg, ChargeCycleConfig
                 memcpy(norm_cfg, &record.payload, CONFIG_V7_PAYLOAD_SIZE);
                 norm_cfg->version = CHARGE_CYCLE_CONFIG_VERSION;
                 norm_cfg->imax_a = 50.0f;
+                norm_cfg->module_address = DEFAULT_MODULE_ADDRESS;
             } else {
                 latest_fast_offset = (int32_t)offset;
                 last_valid_mode = CHARGE_MODE_FAST;
                 memcpy(fast_cfg, &record.payload, CONFIG_V7_PAYLOAD_SIZE);
                 fast_cfg->version = CHARGE_CYCLE_CONFIG_VERSION;
                 fast_cfg->imax_a = DEFAULT_IMAX_A;
+                fast_cfg->module_address = DEFAULT_MODULE_ADDRESS;
             }
         } else if (validate_v6_record(&record)) {
             last_valid_offset = (int32_t)offset;

@@ -43,6 +43,7 @@ extern "C" {
 #define DEFAULT_DELAY_ENABLED                 0U /* 0: OFF, 1: ON */
 #define DEFAULT_DELAY_HOURS                   2U
 #define DEFAULT_DELAY_MINUTES                 30U
+#define DEFAULT_MODULE_ADDRESS                1U
 
 typedef enum {
     CHARGE_MODULE_TYPE_UNKNOWN = 0,
@@ -147,9 +148,12 @@ typedef struct __attribute__((packed)) {
 
     /* v8: Absolute maximum charging current limit in Amperes */
     float    imax_a;          /* Default: 100.0f (A) */
+
+    /* v9: Base CAN ID address for charging module(s) */
+    uint8_t  module_address;  /* 0..240 (default: 1) */
 } ChargeCycleConfig_t;
 
-_Static_assert(sizeof(ChargeCycleConfig_t) == 253, "ChargeCycleConfig_t must stay 253 bytes");
+_Static_assert(sizeof(ChargeCycleConfig_t) == 254, "ChargeCycleConfig_t must stay 254 bytes");
 
 #define CHARGE_MODE_FAST                      0U
 #define CHARGE_MODE_NORMAL                    1U

@@ -628,6 +628,10 @@ class LianmingModuleSim(threading.Thread):
 
     CMD_BASE = 0x1907C080
     RESP_BASE = 0x1807C080
+    TEMP_CMD_BASE = 0x19008080
+    TEMP_RESP_BASE = 0x18008080
+    AC_CMD_BASE = 0x1907A080
+    AC_RESP_BASE = 0x1807A080
     ADDR_MASK = 0x7F
     CMD_SET_OUTPUT = 0x00
     CMD_READ_INFO = 0x01
@@ -644,29 +648,44 @@ class LianmingModuleSim(threading.Thread):
         self.actually_on = False
         self.voltage = 0.0
         self.current = 0.0
+        self.temp = 32.0
         self.status_raw = 0
         self.pending = False
         self.pending_func = 0
 
     def _handle_rx(self, can_id, data):
         id_base = can_id & ~self.ADDR_MASK
-        if id_base != self.CMD_BASE:
-            return
         addr = can_id & self.ADDR_MASK
         if addr != self.addr:
             return
-        cmd = data[0]
-        if cmd == self.CMD_START_STOP:
-            self.actually_on = (data[7] == self.START_VALUE)
-            if not self.actually_on:
-                self.voltage = 0.0
-                self.current = 0.0
-            elif self.voltage <= 0.0:
-                self.voltage = 1.0
-        # CMD_SET_OUTPUT: byte1-3 current(mA)/4-7 voltage(mV) -- not decoded,
-        # matches sim_can_modules.c's own scope (not needed for RUNNING).
-        self.pending = True
-        self.pending_func = cmd
+
+        if id_base == self.CMD_BASE:
+            if len(data) == 0:
+                return
+            cmd = data[0]
+            if cmd == self.CMD_START_STOP:
+                self.actually_on = (data[7] == self.START_VALUE) if len(data) >= 8 else False
+                if not self.actually_on:
+                    self.voltage = 0.0
+                    self.current = 0.0
+                elif self.voltage <= 0.0:
+                    self.voltage = 1.0
+            # CMD_SET_OUTPUT: byte1-3 current(mA)/4-7 voltage(mV)
+            self.pending = True
+            self.pending_func = cmd
+        elif id_base == self.TEMP_CMD_BASE:
+            t_raw = int(self.temp * 10.0) & 0xFFFF
+            resp = bytes([0, 0, 0, 0, (t_raw >> 8) & 0xFF, t_raw & 0xFF, 0, 0])
+            self.dev.transmit(self.CAN_CHANNEL, self.TEMP_RESP_BASE | self.addr, resp, extended=True)
+        elif id_base == self.AC_CMD_BASE:
+            v_raw = int(220.0 * 32.0) & 0xFFFF
+            resp = bytes([
+                0x31, 0x00,
+                (v_raw >> 8) & 0xFF, v_raw & 0xFF,
+                (v_raw >> 8) & 0xFF, v_raw & 0xFF,
+                (v_raw >> 8) & 0xFF, v_raw & 0xFF,
+            ])
+            self.dev.transmit(self.CAN_CHANNEL, self.AC_RESP_BASE | self.addr, resp, extended=True)
 
     def _tick(self):
         if not self.pending:
@@ -678,7 +697,7 @@ class LianmingModuleSim(threading.Thread):
             self.dev.transmit(self.CAN_CHANNEL, resp_id, bytes([self.pending_func, 0x01, 0, 0, 0, 0, 0, 0]), extended=True)
             return
 
-        # CMD_READ_INFO: 2-3=current(0.1A/bit BE), 4-5=voltage(0.1V/bit BE),
+        # CMD_READ_INFO: 1=temperature (degC), 2-3=current(0.1A/bit BE), 4-5=voltage(0.1V/bit BE),
         # 6-7=status_flags (bit0=0 means running).
         if self.actually_on:
             self.current = self.rated_current * 0.5
@@ -687,7 +706,7 @@ class LianmingModuleSim(threading.Thread):
         status = self.status_raw
         status = (status & ~0x01) if self.actually_on else (status | 0x01)
         resp = bytes([
-            self.CMD_READ_INFO, 0x00,
+            self.CMD_READ_INFO, int(self.temp) & 0xFF,
             (curr_raw >> 8) & 0xFF, curr_raw & 0xFF,
             (volt_raw >> 8) & 0xFF, volt_raw & 0xFF,
             (status >> 8) & 0xFF, status & 0xFF,
@@ -697,7 +716,7 @@ class LianmingModuleSim(threading.Thread):
     def run(self):
         while self.running:
             for can_id, ext, data in self.dev.receive(self.CAN_CHANNEL, wait_ms=0):
-                if ext and len(data) >= 8:
+                if ext:
                     self._handle_rx(can_id, data)
             self._tick()
             time.sleep(0.01)
@@ -800,9 +819,17 @@ def run_scenario(dev: ZlgVci, ser, driver_name: str, module_addr: int) -> bool:
             if info:
                 print(f"  state={info['controller_state']} charging={info['charging']} "
                       f"modules_online={info['modules_online']} target_v={info['controller_target_voltage']:.1f} "
-                      f"fault=0x{info['controller_fault_flags']:08X}")
+                      f"temp={info['max_temp_dcdc']:.1f}C fault=0x{info['controller_fault_flags']:08X}")
                 if info["controller_state"] == CHARGE_CTRL_STATE_RUNNING:
                     reached_running = True
+                    # Hold in RUNNING for 2 seconds to verify AC & Temperature telemetry update
+                    for _ in range(10):
+                        time.sleep(0.2)
+                        info = get_system_info(ser)
+                        if info:
+                            print(f"  state={info['controller_state']} charging={info['charging']} "
+                                  f"modules_online={info['modules_online']} target_v={info['controller_target_voltage']:.1f} "
+                                  f"temp={info['max_temp_dcdc']:.1f}C fault=0x{info['controller_fault_flags']:08X}")
                     break
             time.sleep(0.2)
 
