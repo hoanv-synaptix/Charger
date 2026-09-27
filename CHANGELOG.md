@@ -4,6 +4,28 @@ Tất cả các thay đổi quan trọng theo từng phiên bản phát hành c�
 
 ---
 
+## [V2.0.11] - 2026-09-28
+
+### 🚀 Kiểm Thử Đối Chuẩn Độc Lập HIL Toàn Diện & Chuẩn Hóa Logic Sạc
+- **Kiểm thử đối chuẩn HIL độc lập 100% cho 2 Module TonHe & LianMing:**
+  - Hoàn tất và vượt qua toàn bộ 34 test cases $\times$ 2 module = 68 lượt chạy closed-loop thực tế trên vi điều khiển STM32G0B0, bao gồm: Full Automation (7 cases), In-Charge Real-World (12 cases), Pre-Charge (6 cases), Charging Logic (9 cases).
+- **Chuẩn hóa giá trị mặc định cấu hình phân tầng (`ChargeCycleConfig_GetDefaults`):**
+  - Khởi tạo đầy đủ và chính xác các mốc điện áp cell ($3.20\text{V} \rightarrow 3.60\text{V}$, $1.0\text{C} \rightarrow 0.3\text{C}$), phân tầng nhiệt độ pin ($10^\circ\text{C} \rightarrow 55^\circ\text{C}$, trễ $5.0^\circ\text{C}$) và SOC ($20\% \rightarrow 95\%$) theo đúng tài liệu kỹ thuật khi khôi phục cài đặt gốc hoặc khởi động lần đầu.
+- **Nâng cấp lệnh xóa lỗi PC Protocol (`PC_CMD_RESET_FAULT` 0x0A):**
+  - Tích hợp thêm `Alarm_Acknowledge()`, xóa trạng thái dừng khẩn cấp E-Stop, chốt lỗi bộ điều khiển sạc và xác nhận hoàn tất chu trình sạc chỉ trong một lệnh duy nhất.
+- **Tối ưu truyền thông DWIN RS485 HMI:**
+  - Cải tiến cửa sổ tĩnh lặng chống xung đột truyền nhận trên đường truyền RS485 DWIN (cửa sổ 8ms), giúp nhận dạng tức thời các thao tác cảm ứng phím bấm từ người dùng.
+- **Định dạng thời gian Alarm Rollover:**
+  - Chuẩn hóa chuỗi thời gian khi chuyển sang ngày khác thành định dạng liền mạch `06h26/09` (`%02uh%02u/%02u`, 8 ký tự), loại bỏ khoảng trống thừa trên màn hình DWIN.
+- **Tăng lọc trễ lỗi sụt áp AC lưới đầu vào:**
+  - Tăng thời gian lọc trễ bảo vệ sụt áp lưới AC (`ALARM_DB_AC_UNDERVOLT_SET_MS`) từ 5 giây lên 10 giây nhằm chống cảnh báo ảo khi tắt máy do tụ nguồn xả điện.
+- **Cải tiến đo lường cảm biến nhiệt độ jack sạc NTC:**
+  - Tích hợp hiệu chuẩn ADC phần cứng lúc khởi động (`HAL_ADCEx_Calibration_Start`), tăng thời gian lấy mẫu lên 79.5 cycles, bổ sung bộ lọc số mũ EMA ($\alpha = 0.20$) và giám sát lỗi đứt/chập mạch cảm biến.
+- **Định dạng Hardware Version:**
+  - Chuẩn hóa chuỗi hiển thị HW Revision thành `V1.0.0` (3 trường major.minor.patch).
+
+---
+
 ## [V2.0.9] - 2026-09-26
 
 ### 🚀 Tích hợp Địa chỉ CAN Module Sạc (`module_address`)
