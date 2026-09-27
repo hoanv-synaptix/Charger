@@ -516,8 +516,10 @@ static void process_frame(uint8_t cmd, const uint8_t *payload, uint8_t len)
         break;
 
     case 0x0A: /* PC_CMD_RESET_FAULT */
+        Alarm_Acknowledge(BSP_GetTick());
         (void)ChargeController_ResetEmergencyStop(BSP_GetTick());
         (void)ChargeController_ResetFaultIfSafe(BSP_GetTick());
+        ChargeController_AcknowledgeCompletion();
         ok = true;
         break;
 

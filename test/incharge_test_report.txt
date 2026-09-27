@@ -1,8 +1,18 @@
 ================================================================================
   BÁO CÁO TỔNG KẾT AUTOMATION TEST QUÁ TRÌNH SẠC (IN-CHARGE HIL)
 ================================================================================
-  [FAIL]  | TC-10: Module sụt áp lưới AC W011/E026 (30s)
+  [PASS]  | TC-01: Sạc dòng cao 20A bình thường (35s)
+  [PASS]  | TC-02: Ngắt sạc tự nhiên khi Pin đầy (35s)
+  [PASS]  | TC-03: Dừng sạc thủ công qua DWIN/PC (30s)
+  [PASS]  | TC-04: Dừng sạc khẩn cấp Emergency Stop (30s)
+  [PASS]  | TC-05: Mất kết nối CAN BMS giữa chừng (35s)
+  [PASS]  | TC-06: BMS quá áp cell nguy cấp E004 (30s)
+  [PASS]  | TC-07: BMS quá nhiệt pin nguy cấp E005 (30s)
+  [PASS]  | TC-08: BMS quá áp pack pin nguy cấp E003 (30s)
+  [PASS]  | TC-09: Mất kết nối CAN Module sạc E022 (40s)
+  [PASS]  | TC-10: Module sụt áp lưới AC W011/E026 (30s)
   [PASS]  | TC-11: Module quá nhiệt nội bộ E023 (30s)
+  [PASS]  | TC-12: Mất tải DC đột ngột khi đang sạc 20A (30s)
 --------------------------------------------------------------------------------
-  KẾT QUẢ: SOME CASES FAILED
+  KẾT QUẢ: ALL PASS 100%
 ================================================================================

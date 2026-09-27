@@ -63,6 +63,50 @@ void ChargeCycleConfig_GetDefaults(ChargeCycleConfig_t *config)
     config->delay_minutes = DEFAULT_DELAY_MINUTES;
     config->imax_a = DEFAULT_IMAX_A;
 
+    config->cell_volt_enabled = DEFAULT_CELL_VOLT_ENABLED;
+    config->cell_volt_delta_t_s = DEFAULT_CELL_VOLT_DELTA_T_S;
+    config->cell_volt_1_v = DEFAULT_CELL_VOLT_1_V;
+    config->cell_volt_2_v = DEFAULT_CELL_VOLT_2_V;
+    config->cell_volt_3_v = DEFAULT_CELL_VOLT_3_V;
+    config->cell_volt_4_v = DEFAULT_CELL_VOLT_4_V;
+    config->cell_volt_5_v = DEFAULT_CELL_VOLT_5_V;
+    config->cell_curr_1_c = DEFAULT_CELL_CURR_1_C;
+    config->cell_curr_2_c = DEFAULT_CELL_CURR_2_C;
+    config->cell_curr_3_c = DEFAULT_CELL_CURR_3_C;
+    config->cell_curr_4_c = DEFAULT_CELL_CURR_4_C;
+
+    config->temp_enabled = DEFAULT_TEMP_ENABLED;
+    config->temp_delta_c = DEFAULT_TEMP_DELTA_C;
+    config->temp_1_c = DEFAULT_TEMP_1_C;
+    config->temp_2_c = DEFAULT_TEMP_2_C;
+    config->temp_3_c = DEFAULT_TEMP_3_C;
+    config->temp_4_c = DEFAULT_TEMP_4_C;
+    config->temp_5_c = DEFAULT_TEMP_5_C;
+    config->temp_curr_1_c = DEFAULT_TEMP_CURR_1_C;
+    config->temp_curr_2_c = DEFAULT_TEMP_CURR_2_C;
+    config->temp_curr_3_c = DEFAULT_TEMP_CURR_3_C;
+    config->temp_curr_4_c = DEFAULT_TEMP_CURR_4_C;
+
+    config->soc_enabled = DEFAULT_SOC_ENABLED;
+    config->soc_delta_t_s = DEFAULT_SOC_DELTA_T_S;
+    config->soc_1_pct = DEFAULT_SOC_1_PCT;
+    config->soc_2_pct = DEFAULT_SOC_2_PCT;
+    config->soc_3_pct = DEFAULT_SOC_3_PCT;
+    config->soc_4_pct = DEFAULT_SOC_4_PCT;
+    config->soc_5_pct = DEFAULT_SOC_5_PCT;
+    config->soc_curr_1_c = DEFAULT_SOC_CURR_1_C;
+    config->soc_curr_2_c = DEFAULT_SOC_CURR_2_C;
+    config->soc_curr_3_c = DEFAULT_SOC_CURR_3_C;
+    config->soc_curr_4_c = DEFAULT_SOC_CURR_4_C;
+
+    config->protect_jack_charge_enabled = DEFAULT_PROTECT_JACK_CHARGE_ENABLED;
+    config->protect_jack_charge_delta_v = DEFAULT_PROTECT_JACK_CHARGE_DELTA_V;
+    config->protect_jack_charge_delay_s = DEFAULT_PROTECT_JACK_CHARGE_DELAY_S;
+    config->protect_jack_temp_enabled = DEFAULT_PROTECT_JACK_TEMP_ENABLED;
+    config->protect_jack_temp_delay_s = DEFAULT_PROTECT_JACK_TEMP_DELAY_S;
+    config->protect_jack_temp_threshold_c = DEFAULT_PROTECT_JACK_TEMP_THRESHOLD_C;
+    config->protect_jack_temp_delta_c = DEFAULT_PROTECT_JACK_TEMP_DELTA_C;
+
     /* strncpy into a memset-0 buffer leaves the field NUL-terminated as long
      * as the literal is shorter than the field, which both are. */
     strncpy(config->device_id, DEFAULT_DEVICE_ID, sizeof(config->device_id) - 1U);

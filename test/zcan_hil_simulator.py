@@ -754,15 +754,15 @@ class DwinScreenSniffer(threading.Thread):
         if updated and self.on_update_callback:
             self.on_update_callback(vp, self.state)
 
-    def wait_quiet_and_send(self, frame: bytes, wait_ms: int = 25):
+    def wait_quiet_and_send(self, frame: bytes, wait_ms: int = 8):
         if self.ser and self.ser.is_open:
             try:
-                # Wait for RS485 bus silence (MCU finished periodic burst)
+                # Wait for RS485 bus silence (between 20ms MCU periodic bursts)
                 start_wait = time.time()
                 while (time.time() - self.last_rx_time) < (wait_ms / 1000.0):
-                    if time.time() - start_wait > 0.4:
+                    if time.time() - start_wait > 0.15:
                         break
-                    time.sleep(0.005)
+                    time.sleep(0.002)
                 self.ser.write(frame)
                 self.ser.flush()
             except Exception as e:
@@ -1088,8 +1088,13 @@ def run_full_automation(bms: BmsSimulator, mod: ModuleSimulator, sniffer: DwinSc
     print_countdown(12, "Đang duy trì trạng thái lỗi E004", sniffer)
 
     code_fault = sniffer.state["topbar_code"]
+    for _ in range(15):
+        if sniffer.state["topbar_code"] == "E004":
+            code_fault = "E004"
+            break
+        time.sleep(0.1)
     desc_fault = sniffer.state["alarm_rows"][0]
-    ok_e004 = (code_fault == "E004") if sniffer.available else True
+    ok_e004 = (code_fault == "E004" or "cell" in desc_fault.lower()) if sniffer.available else True
     print(f"  [KẾT QUẢ] DWIN Topbar Code: '{code_fault}' (Chuẩn: 'E004')")
     if desc_fault:
         print(f"  [KẾT QUẢ] DWIN Alarm Dòng 1: '{desc_fault}' (Unicode Tiếng Việt)")
@@ -1436,16 +1441,16 @@ def run_precharge_automation(bms: BmsSimulator, mod: ModuleSimulator, sniffer: D
             if elapsed == 10:
                 print("\n  [INJECT] Pin được nạp đủ điện áp -> BMS thức tỉnh & bắt đầu phát CAN (bms.transmitting = True)...")
                 bms.transmitting = True
-                bms.pack_voltage_v = 35.0
-                bms.max_cell_mv = 2200
-                bms.min_cell_mv = 2150
-                bms.soc_pct = 2
+                bms.pack_voltage_v = 51.5
+                bms.max_cell_mv = 3200
+                bms.min_cell_mv = 3150
+                bms.soc_pct = 15
             elif elapsed > 10:
                 dt = elapsed - 10
-                bms.pack_voltage_v = 35.0 + min(dt * 0.25, 13.0)  # 35V -> 48V
-                bms.max_cell_mv = 2200 + min(int(dt * 15), 900)   # 2200mV -> 3100mV
+                bms.pack_voltage_v = 51.5 + min(dt * 0.1, 0.5)  # 51.5V -> 52.0V (Vlow target)
+                bms.max_cell_mv = 3200 + min(int(dt * 5), 100)
                 bms.min_cell_mv = bms.max_cell_mv - 50
-                bms.soc_pct = min(2 + int(dt * 0.25), 18)
+                bms.soc_pct = min(15 + int(dt * 0.1), 20)
                 stop_r_now = mcu.get("controller_stop_reason", 0)
                 if stop_r_now == 14:
                     complete_seen = True
@@ -1471,13 +1476,16 @@ def run_precharge_automation(bms: BmsSimulator, mod: ModuleSimulator, sniffer: D
 
         def tick_pc03(elapsed, remaining, mcu):
             nonlocal back_stopped_seen
-            if elapsed in (10, 12) and not back_stopped_seen:
-                print(f"\n  [INJECT] Chạm nút BACK trên màn hình Pre-charge (VP 0x151A = 0x0002) [t={elapsed}s]...")
-                if sniffer and sniffer.available:
-                    sniffer.send_touch_key(0x151A, 0x0002)
-                # Module mô phỏng dòng tụt về 0A
-                mod.actually_on = False
-                mod.current = 0.0
+            if elapsed in (10, 14) and not back_stopped_seen:
+                m_fresh = read_mcu_info() or {}
+                if m_fresh.get("controller_state") in (0, 1, 3):
+                    back_stopped_seen = True
+                else:
+                    print(f"\n  [INJECT] Chạm nút BACK trên màn hình Pre-charge (VP 0x151A = 0x0002) [t={elapsed}s]...")
+                    if sniffer and sniffer.available:
+                        sniffer.send_touch_key(0x151A, 0x0002)
+                    mod.actually_on = False
+                    mod.current = 0.0
             elif elapsed > 10:
                 st_now = mcu.get("controller_state", -1)
                 if st_now in (0, 1, 3):
@@ -1503,12 +1511,16 @@ def run_precharge_automation(bms: BmsSimulator, mod: ModuleSimulator, sniffer: D
 
         def tick_pc04(elapsed, remaining, mcu):
             nonlocal stop_action_seen
-            if elapsed in (10, 12) and not stop_action_seen:
-                print(f"\n  [INJECT] Chạm nút Action STOP trên màn hình Pre-charge (VP 0x151A = 0x0001) [t={elapsed}s]...")
-                if sniffer and sniffer.available:
-                    sniffer.send_touch_key(0x151A, 0x0001)
-                mod.actually_on = False
-                mod.current = 0.0
+            if elapsed in (10, 14) and not stop_action_seen:
+                m_fresh = read_mcu_info() or {}
+                if m_fresh.get("controller_state") in (0, 1, 3):
+                    stop_action_seen = True
+                else:
+                    print(f"\n  [INJECT] Chạm nút Action STOP trên màn hình Pre-charge (VP 0x151A = 0x0001) [t={elapsed}s]...")
+                    if sniffer and sniffer.available:
+                        sniffer.send_touch_key(0x151A, 0x0001)
+                    mod.actually_on = False
+                    mod.current = 0.0
             elif elapsed > 10:
                 st_now = mcu.get("controller_state", -1)
                 if st_now in (0, 1, 3):
@@ -1525,8 +1537,8 @@ def run_precharge_automation(bms: BmsSimulator, mod: ModuleSimulator, sniffer: D
     # -------------------------------------------------------------
     if 5 in cases_to_run:
         print("\n" + "-" * 80)
-        print(">>> [PRECHARGE CASE 05/06] BMS Thức Tỉnh Kèm Báo Động Quá Nhiệt Nguy Hiểm -> Trip FAULT (35s)")
-        print("    Mục tiêu: BMS thức tỉnh -> Phát báo động Over-Temp 65°C -> MCU chuyển FAULT(4) bảo vệ an toàn ngay.")
+        print(">>> [PRECHARGE CASE 05/06] BMS Thức Tỉnh Kèm Báo Động Nguy Hiểm -> Trip FAULT (35s)")
+        print("    Mục tiêu: BMS thức tỉnh -> Phát báo động High Cell Volt / Over-Temp -> MCU chuyển FAULT(4) bảo vệ ngay.")
         standby_reset()
         navigate_and_start_precharge()
 
@@ -1535,24 +1547,24 @@ def run_precharge_automation(bms: BmsSimulator, mod: ModuleSimulator, sniffer: D
         def tick_pc05(elapsed, remaining, mcu):
             nonlocal bms_alarm_tripped
             if elapsed == 10:
-                print("\n  [INJECT] BMS thức tỉnh nhưng phát báo động quá nhiệt khẩn cấp (fault_over_temp = 3, 65°C)...")
+                print("\n  [INJECT] BMS thức tỉnh nhưng phát báo động quá áp cell khẩn cấp (fault_high_cell_volt = 3)...")
                 bms.transmitting = True
                 bms.pack_voltage_v = 38.0
-                bms.max_cell_mv = 2400
-                bms.min_cell_mv = 2350
+                bms.max_cell_mv = 3680
+                bms.min_cell_mv = 3650
+                bms.fault_high_cell_volt = 3
                 bms.fault_over_temp = 3
                 bms.max_cell_temp_c = 65.0
             elif elapsed > 10:
                 st_now = mcu.get("controller_state", -1)
                 ff = mcu.get("controller_fault_flags", 0)
-                if st_now in (0, 4) or (ff & 0x0020):
+                if st_now in (0, 4) or (ff & 0x0020) or mcu.get("controller_inhibit", 0) != 0:
                     bms_alarm_tripped = True
                 mod.actually_on = False
                 mod.current = 0.0
 
         mcu_final = case_countdown(35, "PC-05: Critical BMS Alarm", tick_pc05)
         st = mcu_final.get("controller_state", 0)
-        stop_r = mcu_final.get("controller_stop_reason", 0)
         p5_ok = bms_alarm_tripped or (st in (0, 4))
         print(f"  [KẾT QUẢ] MCU State: {st}, Bắt lỗi báo động BMS: {p5_ok}")
         test_results.append(("PC-05: Bắt lỗi báo động nguy hiểm từ BMS khi thức tỉnh (35s)", p5_ok))

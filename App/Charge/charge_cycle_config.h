@@ -45,6 +45,50 @@ extern "C" {
 #define DEFAULT_DELAY_MINUTES                 30U
 #define DEFAULT_MODULE_ADDRESS                1U
 
+#define DEFAULT_CELL_VOLT_ENABLED             1U
+#define DEFAULT_CELL_VOLT_DELTA_T_S           0.0f
+#define DEFAULT_CELL_VOLT_1_V                 3.20f
+#define DEFAULT_CELL_VOLT_2_V                 3.30f
+#define DEFAULT_CELL_VOLT_3_V                 3.40f
+#define DEFAULT_CELL_VOLT_4_V                 3.50f
+#define DEFAULT_CELL_VOLT_5_V                 3.60f
+#define DEFAULT_CELL_CURR_1_C                 1.00f
+#define DEFAULT_CELL_CURR_2_C                 0.80f
+#define DEFAULT_CELL_CURR_3_C                 0.50f
+#define DEFAULT_CELL_CURR_4_C                 0.30f
+
+#define DEFAULT_TEMP_ENABLED                  1U
+#define DEFAULT_TEMP_DELTA_C                  5.0f
+#define DEFAULT_TEMP_1_C                      10.0f
+#define DEFAULT_TEMP_2_C                      25.0f
+#define DEFAULT_TEMP_3_C                      40.0f
+#define DEFAULT_TEMP_4_C                      50.0f
+#define DEFAULT_TEMP_5_C                      55.0f
+#define DEFAULT_TEMP_CURR_1_C                 1.00f
+#define DEFAULT_TEMP_CURR_2_C                 1.00f
+#define DEFAULT_TEMP_CURR_3_C                 0.80f
+#define DEFAULT_TEMP_CURR_4_C                 0.30f
+
+#define DEFAULT_SOC_ENABLED                   1U
+#define DEFAULT_SOC_DELTA_T_S                 2.0f
+#define DEFAULT_SOC_1_PCT                     20.0f
+#define DEFAULT_SOC_2_PCT                     40.0f
+#define DEFAULT_SOC_3_PCT                     60.0f
+#define DEFAULT_SOC_4_PCT                     80.0f
+#define DEFAULT_SOC_5_PCT                     95.0f
+#define DEFAULT_SOC_CURR_1_C                  1.00f
+#define DEFAULT_SOC_CURR_2_C                  0.80f
+#define DEFAULT_SOC_CURR_3_C                  0.50f
+#define DEFAULT_SOC_CURR_4_C                  0.30f
+
+#define DEFAULT_PROTECT_JACK_CHARGE_ENABLED   1U
+#define DEFAULT_PROTECT_JACK_CHARGE_DELTA_V   60.0f
+#define DEFAULT_PROTECT_JACK_CHARGE_DELAY_S   60U
+#define DEFAULT_PROTECT_JACK_TEMP_ENABLED     1U
+#define DEFAULT_PROTECT_JACK_TEMP_DELAY_S     5U
+#define DEFAULT_PROTECT_JACK_TEMP_THRESHOLD_C 60.0f
+#define DEFAULT_PROTECT_JACK_TEMP_DELTA_C     5.0f
+
 typedef enum {
     CHARGE_MODULE_TYPE_UNKNOWN = 0,
     CHARGE_MODULE_TYPE_EVR_10KW_100A_100V = 1,
