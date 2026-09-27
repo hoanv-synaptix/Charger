@@ -1138,15 +1138,15 @@ static bool test_module_ac_undervolt_mirrored_and_derived(void)
     healthy_bms(400.0f);
     ASSERT(start_running(), "controller never RUNNING");
 
-    /* 1. Transient AC undervoltage (e.g. capacitor discharge when AC is turned off, < 5000 ms)
+    /* 1. Transient AC undervoltage (e.g. capacitor discharge when AC is turned off, < 10000 ms)
      * must NOT trip W011. */
     g_sim_module.tonhe_fault_bits = (1U << 0);   /* input undervoltage */
-    drive_ms(2500U);
-    ASSERT(!alarm_active(ALARM_MOD_AC_UNDER_VOLT), "transient AC undervolt < 5s must NOT trip W011");
+    drive_ms(5000U);
+    ASSERT(!alarm_active(ALARM_MOD_AC_UNDER_VOLT), "transient AC undervolt < 10s must NOT trip W011");
 
-    /* Continuing past 5000 ms debounce -> now trips W011 (INFO only) */
-    drive_ms(3000U); /* total 5500 ms */
-    ASSERT(alarm_logged_raise(ALARM_MOD_AC_UNDER_VOLT), "persistent AC undervolt >= 5s must trip W011");
+    /* Continuing past 10000 ms debounce -> now trips W011 (INFO only) */
+    drive_ms(5500U); /* total 10500 ms */
+    ASSERT(alarm_logged_raise(ALARM_MOD_AC_UNDER_VOLT), "persistent AC undervolt >= 10s must trip W011");
     ASSERT(alarm_active(ALARM_MOD_AC_UNDER_VOLT), "module AC-undervolt mirror must be active");
 
     /* Controller must remain RUNNING since E026 was removed */

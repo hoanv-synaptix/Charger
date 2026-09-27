@@ -58,7 +58,7 @@
 #define ALARM_DB_MODULE_COMM_CLEAR_MS 200U
 #define ALARM_DB_NO_PACK_SET_MS       500U
 #define ALARM_DB_NO_PACK_CLEAR_MS    1000U
-#define ALARM_DB_AC_UNDERVOLT_SET_MS 5000U   /* 5s filter: suppress false alarm from cap discharge on AC turn-off */
+#define ALARM_DB_AC_UNDERVOLT_SET_MS 10000U  /* 10s filter: suppress false alarm from cap discharge on AC turn-off */
 #define ALARM_DB_VOLT_MISMATCH_SET_MS 1000U   /* 1s filter: charger voltage vs BMS target mismatch (E032) */
 #define ALARM_DB_LOAD_LOST_CLEAR_MS   3000U  /* Keep code visible 3s after stop before returning to 0000 */
 
