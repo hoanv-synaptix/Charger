@@ -265,23 +265,47 @@ static DwinPageId_e dwin_page_after_panel_reset(void)
     return dwin_precharge_session ? DWIN_PAGE_PRECHARGE : DWIN_PAGE_DASH;
 }
 
+static void dwin_format_hw_version(const char *src, char *dst, size_t dst_size)
+{
+    if (dst == NULL || dst_size == 0U) {
+        return;
+    }
+    if (src == NULL || src[0] == '\0') {
+        (void)snprintf(dst, dst_size, "%s", HW_VERSION_STRING);
+        return;
+    }
+    const char *p = src;
+    if (strncmp(p, "HW ", 3) == 0) {
+        p += 3;
+    } else if (strncmp(p, "HW", 2) == 0) {
+        p += 2;
+    }
+    while (*p == ' ') {
+        p++;
+    }
+    if (*p == 'V' || *p == 'v') {
+        p++;
+    }
+    unsigned maj = 1, min = 0, patch = 0;
+    int n = sscanf(p, "%u.%u.%u", &maj, &min, &patch);
+    if (n >= 2) {
+        if (n == 2) {
+            patch = 0;
+        }
+        (void)snprintf(dst, dst_size, "V%u.%u.%u", maj, min, patch);
+    } else if (*p != '\0') {
+        (void)snprintf(dst, dst_size, "V%s", p);
+    } else {
+        (void)snprintf(dst, dst_size, "%s", HW_VERSION_STRING);
+    }
+}
+
 static void dwin_send_identity_and_page(uint32_t now)
 {
-    const char *hw_str = ChargeCycleConfig_GetHwRev();
-
-    if (strncmp(hw_str, "HW ", 3) == 0) {
-        hw_str += 3;
-    } else if (strncmp(hw_str, "HW", 2) == 0) {
-        hw_str += 2;
-    }
-
     char hw_buf[16];
-    if (hw_str[0] != 'V' && hw_str[0] != 'v' && hw_str[0] != '\0') {
-        (void)snprintf(hw_buf, sizeof(hw_buf), "V%s", hw_str);
-        hw_str = hw_buf;
-    }
+    dwin_format_hw_version(ChargeCycleConfig_GetHwRev(), hw_buf, sizeof(hw_buf));
 
-    DWIN_SendSettingStrings(hw_str, FW_VERSION_STRING,
+    DWIN_SendSettingStrings(hw_buf, FW_VERSION_STRING,
                             ChargeCycleConfig_GetDeviceId());
     DWIN_SetPage(dwin_page_after_panel_reset());
     DWIN_ForceFullRefresh();
@@ -291,9 +315,10 @@ static void dwin_send_identity_and_page(uint32_t now)
 static void dwin_check_and_send_identity_update(void)
 {
     static char s_last_dev_id[16] = "";
-    static char s_last_hw_rev[12] = "";
+    static char s_last_hw_rev[16] = "";
     const char *cur_dev = ChargeCycleConfig_GetDeviceId();
-    const char *cur_hw = ChargeCycleConfig_GetHwRev();
+    char cur_hw[16];
+    dwin_format_hw_version(ChargeCycleConfig_GetHwRev(), cur_hw, sizeof(cur_hw));
 
     if (s_last_dev_id[0] == '\0') {
         strncpy(s_last_dev_id, cur_dev, sizeof(s_last_dev_id) - 1U);
@@ -305,19 +330,7 @@ static void dwin_check_and_send_identity_update(void)
         strncmp(s_last_hw_rev, cur_hw, sizeof(s_last_hw_rev)) != 0) {
         strncpy(s_last_dev_id, cur_dev, sizeof(s_last_dev_id) - 1U);
         strncpy(s_last_hw_rev, cur_hw, sizeof(s_last_hw_rev) - 1U);
-
-        const char *hw_str = cur_hw;
-        if (strncmp(hw_str, "HW ", 3) == 0) {
-            hw_str += 3;
-        } else if (strncmp(hw_str, "HW", 2) == 0) {
-            hw_str += 2;
-        }
-        char hw_buf[16];
-        if (hw_str[0] != 'V' && hw_str[0] != 'v' && hw_str[0] != '\0') {
-            (void)snprintf(hw_buf, sizeof(hw_buf), "V%s", hw_str);
-            hw_str = hw_buf;
-        }
-        DWIN_SendSettingStrings(hw_str, FW_VERSION_STRING, cur_dev);
+        DWIN_SendSettingStrings(cur_hw, FW_VERSION_STRING, cur_dev);
     }
 }
 
@@ -929,18 +942,9 @@ void App_Loop(void)
             dwin_check_and_send_identity_update();
             if ((now - last_dwin_full_tick) >= DWIN_HEARTBEAT_INTERVAL_MS) {
                 last_dwin_full_tick = now;
-                const char *hw_str = ChargeCycleConfig_GetHwRev();
-                if (strncmp(hw_str, "HW ", 3) == 0) {
-                    hw_str += 3;
-                } else if (strncmp(hw_str, "HW", 2) == 0) {
-                    hw_str += 2;
-                }
                 char hw_buf[16];
-                if (hw_str[0] != 'V' && hw_str[0] != 'v' && hw_str[0] != '\0') {
-                    (void)snprintf(hw_buf, sizeof(hw_buf), "V%s", hw_str);
-                    hw_str = hw_buf;
-                }
-                DWIN_SendSettingStrings(hw_str, FW_VERSION_STRING, ChargeCycleConfig_GetDeviceId());
+                dwin_format_hw_version(ChargeCycleConfig_GetHwRev(), hw_buf, sizeof(hw_buf));
+                DWIN_SendSettingStrings(hw_buf, FW_VERSION_STRING, ChargeCycleConfig_GetDeviceId());
                 DWIN_ForceFullRefresh();
             }
         }

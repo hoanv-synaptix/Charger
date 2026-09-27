@@ -369,7 +369,11 @@ const char *ChargeCycleConfig_GetDeviceId(void)
 
 const char *ChargeCycleConfig_GetHwRev(void)
 {
-    if (g_charge_cycle_config.hw_rev[0] == '\0') {
+    if (g_charge_cycle_config.hw_rev[0] == '\0' ||
+        strcmp(g_charge_cycle_config.hw_rev, "HW V1.0") == 0 ||
+        strcmp(g_charge_cycle_config.hw_rev, "V1.0") == 0 ||
+        strcmp(g_charge_cycle_config.hw_rev, "1.0") == 0 ||
+        strcmp(g_charge_cycle_config.hw_rev, "HW 1.0") == 0) {
         return DEFAULT_HW_REV;
     }
     return g_charge_cycle_config.hw_rev;

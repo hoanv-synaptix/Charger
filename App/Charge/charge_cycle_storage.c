@@ -389,6 +389,21 @@ static bool load_latest_configs(ChargeCycleConfig_t *fast_cfg, ChargeCycleConfig
         norm_cfg->imax_c = 0.5f;
     }
 
+    /* Migrate legacy HW revision representations (e.g. "HW V1.0", "V1.0", "1.0", "HW 1.0") to canonical "V1.0.0" */
+    static const char * const legacy_hw_revs[] = {"HW V1.0", "V1.0", "1.0", "HW 1.0"};
+    for (size_t i = 0; i < sizeof(legacy_hw_revs) / sizeof(legacy_hw_revs[0]); i++) {
+        if (strcmp(fast_cfg->hw_rev, legacy_hw_revs[i]) == 0) {
+            strncpy(fast_cfg->hw_rev, DEFAULT_HW_REV, sizeof(fast_cfg->hw_rev) - 1U);
+            fast_cfg->hw_rev[sizeof(fast_cfg->hw_rev) - 1U] = '\0';
+            any_migrated = true;
+        }
+        if (strcmp(norm_cfg->hw_rev, legacy_hw_revs[i]) == 0) {
+            strncpy(norm_cfg->hw_rev, DEFAULT_HW_REV, sizeof(norm_cfg->hw_rev) - 1U);
+            norm_cfg->hw_rev[sizeof(norm_cfg->hw_rev) - 1U] = '\0';
+            any_migrated = true;
+        }
+    }
+
     if (active_mode_out != NULL) {
         *active_mode_out = last_valid_mode;
     }
