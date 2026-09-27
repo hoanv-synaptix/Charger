@@ -277,8 +277,8 @@ static void dwin_format_alarm_time(uint32_t timestamp_s, char *out_buf, size_t b
         (void)snprintf(out_buf, buf_size, "%02u:%02u:%02u",
                        (unsigned)evt_hour, (unsigned)evt_min, (unsigned)evt_sec);
     } else {
-        /* "HHh DD/MM" - 9 chars */
-        (void)snprintf(out_buf, buf_size, "%02uh %02u/%02u",
+        /* "HHhDD/MM" - 8 chars */
+        (void)snprintf(out_buf, buf_size, "%02uh%02u/%02u",
                        (unsigned)evt_hour, (unsigned)evt_day, (unsigned)evt_mon);
     }
 }

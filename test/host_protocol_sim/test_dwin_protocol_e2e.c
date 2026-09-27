@@ -632,13 +632,13 @@ static bool test_alarm_timestamp_day_rollover(void)
     for (int i = 0; i < g_tx_count; i++) {
         uint16_t vp = ((uint16_t)g_tx[i][4] << 8) | g_tx[i][5];
         if (vp == (VP_ALARM_ROW_1 + ALARM_OFFSET_TIME)) {
-            /* 6 words = 12 bytes: "19h 27/09" */
-            if (memcmp(&g_tx[i][6], "19h 27/09", 9) == 0) {
+            /* 6 words = 12 bytes: "19h27/09" */
+            if (memcmp(&g_tx[i][6], "19h27/09", 8) == 0) {
                 found_rolled_time = true;
             }
         }
     }
-    ASSERT(found_rolled_time, "alarm on next day rolls over to HHh DD/MM (19h 27/09)");
+    ASSERT(found_rolled_time, "alarm on next day rolls over to HHhDD/MM (19h27/09)");
 
     g_test_epoch = 0U;
     printf("[PASS] test_alarm_timestamp_day_rollover\n");
