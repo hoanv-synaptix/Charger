@@ -165,6 +165,28 @@ void DWIN_Alarm_Push(const char *time_str, const char *code_str,
                      const uint16_t *desc_utf16, uint8_t desc_len);
 
 /**
+ * @brief Push a new alarm event with its RTC epoch timestamp for Dynamic Day-Rollover.
+ * @param timestamp_s Epoch seconds of the event (or 0 if unknown)
+ * @param code_str    Alarm code like "E006", "W002" (GBK/ASCII, up to 8 chars)
+ * @param desc_utf16  Pointer to Unicode UTF-16BE array (up to 32 chars)
+ * @param desc_len    Character count of desc_utf16
+ */
+void DWIN_Alarm_PushWithTimestamp(uint32_t timestamp_s, const char *code_str,
+                                  const uint16_t *desc_utf16, uint8_t desc_len);
+
+/**
+ * @brief Periodically refresh alarm timestamps for Dynamic Day-Rollover.
+ *        If midnight passes, auto-formats "12:12:12" to "12h28/09" and updates panel.
+ */
+void DWIN_Alarm_RefreshDayRollover(void);
+
+/**
+ * @brief Provide current RTC epoch (UTC) for DWIN alarm timestamp formatting.
+ *        Weakly defined in dwin_protocol.c (returns 0), overridden by app_main.c.
+ */
+uint32_t DWIN_RTC_GetEpoch(void);
+
+/**
  * @brief Clear all 4 alarm rows on the panel.
  */
 void DWIN_Alarm_ClearAll(void);

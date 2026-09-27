@@ -49,6 +49,7 @@ _Static_assert(sizeof(AlarmPersistentRecord_t) == ALARM_RECORD_LENGTH,
  * @return Number of entries restored into RAM log
  */
 uint8_t AlarmStorage_Init(AlarmLogEntry_t *ram_log, uint8_t max_entries, uint32_t *out_sequence);
+uint8_t AlarmStorage_InitEx(AlarmLogEntry_t *ram_log, uint32_t *ram_timestamps, uint8_t max_entries, uint32_t *out_sequence);
 
 /**
  * @brief Append a new alarm event record into External SPI Flash journal.

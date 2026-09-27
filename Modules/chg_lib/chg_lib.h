@@ -201,6 +201,7 @@ bool CHG_LIB_RegisterDriver(CHG_LIB_DriverId_t id, const CHG_LIB_DriverOps_t *op
 bool CHG_LIB_SelectDriver(CHG_LIB_DriverId_t id);
 CHG_LIB_DriverId_t CHG_LIB_GetActiveDriverId(void);
 const char *CHG_LIB_GetActiveDriverName(void);
+bool CHG_LIB_DriverHasInternalVoltageRamp(void);
 
 void CHG_LIB_Init(void);
 int8_t CHG_LIB_AddModule(uint8_t addr, uint8_t group);

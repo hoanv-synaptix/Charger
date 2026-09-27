@@ -157,8 +157,8 @@ typedef enum {
 #define VP_ALARM_ROW_11      0x13E0U
 #define VP_ALARM_ROW_12      0x1410U
 
-#define ALARM_OFFSET_TIME    0x0000U  /* 4 VP (GBK) */
-#define ALARM_OFFSET_CODE    0x0004U  /* 4 VP (GBK) */
+#define ALARM_OFFSET_TIME    0x0000U  /* 6 VP (GBK, 12 bytes Text) */
+#define ALARM_OFFSET_CODE    0x0006U  /* 2 VP (GBK, 4 bytes Text) */
 #define ALARM_OFFSET_DESC    0x0008U  /* 32 VP (UNICODE Vietnamese) */
 
 /* Page ids -- must match the DGUS project's picture order:

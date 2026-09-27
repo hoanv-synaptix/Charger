@@ -1770,6 +1770,7 @@ static bool test_precharge_bms_recovery_hold(void)
     return true;
 }
 
+
 static bool test_precharge_start_invalid_state(void)
 {
     printf("Running test_precharge_start_invalid_state...\n");

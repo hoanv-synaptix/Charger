@@ -83,6 +83,8 @@
 #define LM_MAX_RETRY            3U
 #define LM_STOP_MAX_RETRY       5U      /* BUGFIX B-07: stop-confirm retry cap before FAULT */
 #define LM_DIAG_INTERVAL       2U      /* Poll AC/temp every N cycles */
+#define LM_RUNNING_POLL_INTERVAL_MS 200U /* Status polling interval in RUNNING state (5 Hz) */
+#define LM_SOFT_START_TIMEOUT_MS    8000U /* Max internal soft-start time before declaring HW_FAULT */
 
 /* ============== CAN Frame ID Builder ============== */
 
@@ -137,10 +139,11 @@ static float lm_payload_to_current(const uint8_t *data)
 typedef struct {
     CHG_LIB_ModuleView_t view;
     uint32_t state_enter_tick;   /* Unified: renamed from state_enter_tick */
-    uint32_t last_poll_tick;     /* For IDLE polling */
+    uint32_t last_poll_tick;     /* For IDLE/RUNNING polling */
     uint8_t retry_count;
     uint8_t start_attempts;
     bool should_run;
+    bool pending_output;
     float voltage_setpoint;
     CHG_LIB_TxSource_t voltage_source;
     CHG_LIB_TxSource_t current_source;
@@ -148,6 +151,7 @@ typedef struct {
     uint8_t diag_counter;        /* Counts cycles, triggers AC/temp read */
     uint8_t diag_step;           /* 0=idle, 1=AC read sent, 2=temp read sent */
     uint32_t recovery_start_rx_count;
+    bool start_confirmed;        /* True once Lianming ACKs START (CMD=2 0xFF), executing soft-start */
 } LM_Module_t;
 
 static LM_Module_t g_modules[LM_MAX_MODULES];
@@ -211,13 +215,15 @@ static void set_state(LM_Module_t *mod, CHG_LIB_State_t state, uint32_t now)
     /* Track consecutive start attempts (only increment on transition TO STARTING) */
     if (state == CHG_LIB_STATE_STARTING) {
         mod->start_attempts++;
-    } else if (state == CHG_LIB_STATE_IDLE || state == CHG_LIB_STATE_OFFLINE || state == CHG_LIB_STATE_FAULT) {
+    } else if (state == CHG_LIB_STATE_IDLE || state == CHG_LIB_STATE_RUNNING ||
+               state == CHG_LIB_STATE_OFFLINE || state == CHG_LIB_STATE_FAULT) {
         mod->start_attempts = 0;
     }
 
     mod->view.state = state;
     mod->state_enter_tick = now;
     mod->retry_count = 0;
+    mod->start_confirmed = false;
 
     /* Unified online/running flag management */
     switch (state) {
@@ -228,12 +234,16 @@ static void set_state(LM_Module_t *mod, CHG_LIB_State_t state, uint32_t now)
             mod->view.running = (state == CHG_LIB_STATE_WARNING);
             mod->view.online = (mod->view.last_rx_tick != 0 &&
                               (now - mod->view.last_rx_tick) <= LM_OFFLINE_TIMEOUT_MS);
+            if (state == CHG_LIB_STATE_IDLE || state == CHG_LIB_STATE_STOPPING) {
+                mod->pending_output = false;
+            }
             break;
 
         case CHG_LIB_STATE_FAULT:
             mod->view.running = false;
             mod->view.online = (mod->view.last_rx_tick != 0 &&
                               (now - mod->view.last_rx_tick) <= LM_OFFLINE_TIMEOUT_MS);
+            mod->pending_output = false;
             /* BUGFIX B-08: same 5-clean-reads debounce as
              * OFFLINE->RECOVERING -- see chg_lib_maxwell.c's matching
              * comment for the full rationale. */
@@ -243,6 +253,7 @@ static void set_state(LM_Module_t *mod, CHG_LIB_State_t state, uint32_t now)
         case CHG_LIB_STATE_RUNNING:
             mod->view.running = true;
             mod->view.online = true;
+            mod->last_poll_tick = now;
             break;
 
         case CHG_LIB_STATE_OFFLINE:
@@ -542,34 +553,64 @@ static void process_module(uint8_t idx, uint32_t now)
         break;
 
     case CHG_LIB_STATE_STARTING:
+        if (mod->start_confirmed) {
+            /* Lianming acknowledged the START command (ACK 0xFF).
+             * Module is executing its internal hardware soft-start (~3 to 8s).
+             * Keepalive: periodically send setpoint and poll status. Do NOT re-send START. */
+            if (mod->pending_output || ((now - mod->last_poll_tick) >= LM_RUNNING_POLL_INTERVAL_MS)) {
+                if (mod->voltage_setpoint > 0.0f && mod->view.current_limit > 0.0f) {
+                    lm_set_output(idx, mod->voltage_setpoint, mod->view.current_limit);
+                    mod->pending_output = false;
+                }
+                lm_read_status(idx, now);
+                mod->last_poll_tick = now;
+            }
+            /* If module fails to complete soft-start within 8 seconds, report hardware fault */
+            if ((now - mod->state_enter_tick) >= LM_SOFT_START_TIMEOUT_MS) {
+                mod->view.alarm_flags |= CHG_LIB_ALARM_HW_FAULT;
+                set_state(mod, CHG_LIB_STATE_FAULT, now);
+            }
+            break;
+        }
+
         if (mod->start_attempts > LM_MAX_RETRY) {
             mod->view.alarm_flags |= CHG_LIB_ALARM_COMM_FAIL; /* Timeout */
             set_state(mod, CHG_LIB_STATE_FAULT, now);
             break;
         }
         if (mod->retry_count == 0U) {
-            /* Set voltage and current together (Lianming format) */
-            lm_set_output(idx, mod->voltage_setpoint, mod->view.current_limit);
+            /* Only send output setpoint if already programmed with positive values */
+            if (mod->voltage_setpoint > 0.0f && mod->view.current_limit > 0.0f) {
+                lm_set_output(idx, mod->voltage_setpoint, mod->view.current_limit);
+                mod->pending_output = false;
+            }
             mod->retry_count = 1U;
             mod->state_enter_tick = now;
         } else if (mod->retry_count == 1U && (now - mod->state_enter_tick) >= LM_STEP_DELAY_MS) {
-            /* Start module */
+            /* Start module (CMD=2, 0x55) */
             lm_start_module(idx);
             mod->retry_count = 2U;
+            mod->state_enter_tick = now;
+        } else if (mod->retry_count == 2U && (now - mod->state_enter_tick) >= LM_STEP_DELAY_MS) {
+            /* Read status to confirm running */
+            lm_send_read(mod);
+            mod->retry_count = 3U;
             mod->state_enter_tick = now;
         } else if (mod->retry_count >= 3U && (now - mod->state_enter_tick) >= LM_START_CONFIRM_TIMEOUT_MS) {
             mod->start_attempts++;
             mod->retry_count = 0U;
             mod->state_enter_tick = now;
-        } else if (mod->retry_count == 2U && (now - mod->state_enter_tick) >= LM_STEP_DELAY_MS) {
-            lm_send_read(mod);
-            mod->retry_count = 3U;
-            mod->state_enter_tick = now;
         }
         break;
 
     case CHG_LIB_STATE_RUNNING:
-        lm_read_status(idx, now);
+        if (mod->pending_output || ((now - mod->last_poll_tick) >= LM_RUNNING_POLL_INTERVAL_MS)) {
+            /* Lianming requires periodic setpoint (CMD=0) keepalive to avoid autonomous shutdown */
+            lm_set_output(idx, mod->voltage_setpoint, mod->view.current_limit);
+            mod->pending_output = false;
+            lm_read_status(idx, now);
+            mod->last_poll_tick = now;
+        }
         if (!mod->should_run) {
             lm_stop_module(idx);
             set_state(mod, CHG_LIB_STATE_STOPPING, now);
@@ -660,6 +701,7 @@ static int8_t lm_add_module(uint8_t addr, uint8_t group)
     mod->view.addr = addr;
     mod->view.group = group;
     mod->should_run = false;
+    mod->pending_output = false;
     mod->state_enter_tick = 0;
     mod->last_poll_tick = 0;
     mod->retry_count = 0;
@@ -700,10 +742,7 @@ static bool lm_set_voltage(uint8_t idx, float voltage_v)
     if (!isfinite(voltage_v)) return false; /* BUGFIX B-09: reject NaN/Inf setpoint */
     g_modules[idx].voltage_setpoint = voltage_v;
     g_modules[idx].voltage_source = CHG_LIB_GetCommandSource();
-    /* Lianming: send voltage+current together when running */
-    if (g_modules[idx].view.state == CHG_LIB_STATE_RUNNING) {
-        lm_set_output(idx, voltage_v, g_modules[idx].view.current_limit);
-    }
+    g_modules[idx].pending_output = true;
     return true;
 }
 
@@ -718,10 +757,7 @@ static bool lm_set_current_limit(uint8_t idx, float current_a)
     }
     g_modules[idx].view.current_limit = current_a;
     g_modules[idx].current_source = CHG_LIB_GetCommandSource();
-    /* Lianming: send voltage+current together when running */
-    if (g_modules[idx].view.state == CHG_LIB_STATE_RUNNING) {
-        lm_set_output(idx, g_modules[idx].voltage_setpoint, current_a);
-    }
+    g_modules[idx].pending_output = true;
     return true;
 }
 
@@ -741,6 +777,7 @@ static bool lm_stop(uint8_t idx)
     uint32_t now = CHG_LIB_NowTick();
     if (idx >= g_module_count || !g_modules[idx].view.enabled) return false;
     g_modules[idx].should_run = false;
+    g_modules[idx].pending_output = false;
     LM_Module_t *mod = &g_modules[idx];
     if (mod->view.state == CHG_LIB_STATE_WARNING || mod->view.state == CHG_LIB_STATE_OFFLINE ||
         mod->view.state == CHG_LIB_STATE_RECOVERING) {
@@ -801,6 +838,7 @@ static void lm_emergency_stop(void)
     for (uint8_t i = 0; i < g_module_count; i++) {
         if (!g_modules[i].view.enabled) continue;
         g_modules[i].should_run = false;
+        g_modules[i].pending_output = false;
         lm_stop_module(i);
         set_state(&g_modules[i], CHG_LIB_STATE_STOPPING, now);
     }
@@ -835,11 +873,28 @@ static void lm_process_rx(uint32_t ext_id, const uint8_t *data, uint8_t dlc, uin
         if (data[0] == LM_CMD_READ_INFO) {
             if (dlc < 8U) return;
             apply_status(idx, data, now);
-        } else if (data[0] == LM_CMD_SET_OUTPUT || data[0] == LM_CMD_START_STOP) {
+        } else if (data[0] == LM_CMD_SET_OUTPUT) {
             LM_Module_t *mod = &g_modules[idx];
             mod->view.last_rx_tick = now;
-            if (data[1] != 0U) {
+            /* Per protocol V2.0: 0xFF = both V & I success, 0x0F = current fail, 0xF0 = voltage fail, 0x00 = both fail */
+            if (data[1] == 0xFFU) {
                 mod->view.stats.rx_count++;
+            } else if (data[1] == 0x00U) {
+                mod->view.stats.error_count++;
+            } else {
+                mod->view.stats.rx_count++;
+                mod->view.stats.error_count++;
+            }
+        } else if (data[0] == LM_CMD_START_STOP) {
+            LM_Module_t *mod = &g_modules[idx];
+            mod->view.last_rx_tick = now;
+            /* Per protocol V2.0 & hardware sniff: Byte 1 is 0xFF on success (or byte 7 echoed 0x55/0xAA) */
+            if ((dlc >= 2U && data[1] == 0xFFU) || 
+                (dlc >= 8U && (data[7] == LM_START_VALUE || data[7] == LM_STOP_VALUE))) {
+                mod->view.stats.rx_count++;
+                if (mod->view.state == CHG_LIB_STATE_STARTING && mod->should_run) {
+                    mod->start_confirmed = true;
+                }
             } else {
                 mod->view.stats.error_count++;
             }

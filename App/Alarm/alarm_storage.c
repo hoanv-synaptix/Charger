@@ -62,7 +62,7 @@ static bool is_slot_blank(uint32_t addr)
 
 /* ================= Public API ================= */
 
-uint8_t AlarmStorage_Init(AlarmLogEntry_t *ram_log, uint8_t max_entries, uint32_t *out_sequence)
+uint8_t AlarmStorage_InitEx(AlarmLogEntry_t *ram_log, uint32_t *ram_timestamps, uint8_t max_entries, uint32_t *out_sequence)
 {
     s_storage_ready = false;
     s_next_sequence = 1U;
@@ -127,16 +127,25 @@ uint8_t AlarmStorage_Init(AlarmLogEntry_t *ram_log, uint8_t max_entries, uint32_
         AlarmPersistentRecord_t recs[ALARM_LOG_DEPTH];
         uint16_t count = AlarmStorage_ReadRecent(recs, (max_entries < ALARM_LOG_DEPTH) ? max_entries : ALARM_LOG_DEPTH);
         for (uint16_t i = 0; i < count; i++) {
-            ram_log[i].uptime_ms = recs[i].uptime_ms;
-            ram_log[i].code = recs[i].code;
-            ram_log[i].action = recs[i].action;
-            ram_log[i].event = recs[i].event;
+            uint16_t src_idx = (uint16_t)(count - 1U - i);
+            ram_log[i].uptime_ms = recs[src_idx].uptime_ms;
+            if (ram_timestamps != NULL) {
+                ram_timestamps[i] = recs[src_idx].timestamp_s;
+            }
+            ram_log[i].code = recs[src_idx].code;
+            ram_log[i].action = recs[src_idx].action;
+            ram_log[i].event = recs[src_idx].event;
             restored++;
         }
-        LOG("AlarmStorage: Restored %u recent alarm events into RAM log\r\n", (unsigned)restored);
+        LOG("AlarmStorage: Restored %u recent alarm events into RAM log (chronological)\r\n", (unsigned)restored);
     }
 
     return restored;
+}
+
+uint8_t AlarmStorage_Init(AlarmLogEntry_t *ram_log, uint8_t max_entries, uint32_t *out_sequence)
+{
+    return AlarmStorage_InitEx(ram_log, NULL, max_entries, out_sequence);
 }
 
 bool AlarmStorage_Append(uint32_t now_tick, uint16_t code, uint8_t action, bool raised)
@@ -190,30 +199,44 @@ uint16_t AlarmStorage_ReadRecent(AlarmPersistentRecord_t *out_records, uint16_t 
         return 0U;
     }
 
-    /* Temporary buffer to collect valid records */
     uint16_t collected = 0U;
-
-    for (uint32_t sec = 0; sec < SPI_FLASH_ALARM_SECTORS && collected < max_count; sec++) {
-        for (uint32_t slot = 0; slot < SLOTS_PER_SECTOR && collected < max_count; slot++) {
-            uint32_t addr = record_address(sec, slot);
-            AlarmPersistentRecord_t rec;
-            if (BSP_SPIFlash_Read(addr, (uint8_t *)&rec, sizeof(rec))) {
-                if (is_record_valid(&rec)) {
-                    out_records[collected++] = rec;
-                }
-            }
-        }
+    int32_t sec = (int32_t)s_active_sector;
+    int32_t slot = (int32_t)s_active_slot - 1;
+    if (slot < 0) {
+        sec = (sec - 1 + (int32_t)SPI_FLASH_ALARM_SECTORS) % (int32_t)SPI_FLASH_ALARM_SECTORS;
+        slot = (int32_t)SLOTS_PER_SECTOR - 1;
     }
 
-    /* Sort newest-first (descending by sequence) using simple insertion sort */
-    for (uint16_t i = 1; i < collected; i++) {
-        AlarmPersistentRecord_t key = out_records[i];
-        int32_t j = (int32_t)i - 1;
-        while (j >= 0 && (int32_t)(key.sequence - out_records[j].sequence) > 0) {
-            out_records[j + 1] = out_records[j];
-            j--;
+    uint32_t prev_seq = 0U;
+    uint32_t max_slots_to_check = SPI_FLASH_ALARM_MAX_RECORDS;
+    uint32_t checked = 0U;
+
+    /* Walk backwards from the newest written slot */
+    while (collected < max_count && checked < max_slots_to_check) {
+        uint32_t addr = record_address((uint32_t)sec, (uint32_t)slot);
+        AlarmPersistentRecord_t rec;
+        if (BSP_SPIFlash_Read(addr, (uint8_t *)&rec, sizeof(rec))) {
+            if (is_record_valid(&rec)) {
+                if (collected > 0U && (int32_t)(prev_seq - rec.sequence) <= 0) {
+                    /* Not older than previous record; reached wrap-around boundary */
+                    break;
+                }
+                prev_seq = rec.sequence;
+                out_records[collected++] = rec;
+            } else {
+                /* Blank or invalid slot -- reached end of persistent log */
+                break;
+            }
+        } else {
+            break;
         }
-        out_records[j + 1] = key;
+
+        checked++;
+        slot--;
+        if (slot < 0) {
+            sec = (sec - 1 + (int32_t)SPI_FLASH_ALARM_SECTORS) % (int32_t)SPI_FLASH_ALARM_SECTORS;
+            slot = (int32_t)SLOTS_PER_SECTOR - 1;
+        }
     }
 
     return collected;

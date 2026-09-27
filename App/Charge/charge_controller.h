@@ -70,6 +70,7 @@ typedef enum {
 
 #define PRECHARGE_VOLTAGE_TOLERANCE_V  1.0f
 #define PRECHARGE_HOLD_MS              60000U
+#define PRECHARGE_HOLD_DROP_DEBOUNCE_MS 800U
 /* Intentionally zero: pre-charge waits for an exhausted BMS to wake until
  * the operator stops it or another protection path stops it. */
 #define PRECHARGE_BMS_WAKE_TIMEOUT_MS  0U

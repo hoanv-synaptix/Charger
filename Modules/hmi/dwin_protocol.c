@@ -170,18 +170,121 @@ void DWIN_SetRTC(uint16_t year, uint8_t month, uint8_t day,
 /* ===================== Alarm FIFO Ring Buffer ===================== */
 
 typedef struct {
-    char     time_str[9];
-    char     code_str[9];
+    char     time_str[13];
+    char     code_str[5];
     uint16_t desc_utf16[33];
     uint8_t  desc_len;
+    uint32_t timestamp_s;
     bool     valid;
 } DwinAlarmRowInternal_t;
 
 static DwinAlarmRowInternal_t s_alarm_rows[VP_ALARM_ROW_COUNT];
 static uint16_t s_alarm_dirty = 0U; /* bitmask of rows 0..11 needing update */
 
-void DWIN_Alarm_Push(const char *time_str, const char *code_str,
-                     const uint16_t *desc_utf16, uint8_t desc_len)
+#if defined(__GNUC__)
+__attribute__((weak))
+#endif
+uint32_t DWIN_RTC_GetEpoch(void)
+{
+    return 0U;
+}
+
+static inline bool dwin_is_leap_year(uint16_t y)
+{
+    return ((y % 4U == 0U && y % 100U != 0U) || (y % 400U == 0U));
+}
+
+static void dwin_epoch_to_local_dt(uint32_t epoch_utc, uint16_t *year, uint8_t *month,
+                                   uint8_t *day, uint8_t *hour, uint8_t *min, uint8_t *sec)
+{
+    /* Vietnam Standard Time (ICT, UTC+7) -> +25200 seconds */
+    uint32_t local = epoch_utc + 25200U;
+    if (sec != NULL) {
+        *sec = (uint8_t)(local % 60U);
+    }
+    local /= 60U;
+    if (min != NULL) {
+        *min = (uint8_t)(local % 60U);
+    }
+    local /= 60U;
+    if (hour != NULL) {
+        *hour = (uint8_t)(local % 24U);
+    }
+    uint32_t days = local / 24U;
+
+    uint16_t y = 1970U;
+    while (1) {
+        uint16_t diy = dwin_is_leap_year(y) ? 366U : 365U;
+        if (days < diy) {
+            break;
+        }
+        days -= diy;
+        y++;
+    }
+    if (year != NULL) {
+        *year = y;
+    }
+
+    bool leap = dwin_is_leap_year(y);
+    uint8_t m = 1U;
+    for (; m <= 12U; m++) {
+        uint8_t dim;
+        if (m == 2U) {
+            dim = leap ? 29U : 28U;
+        } else if (m == 4U || m == 6U || m == 9U || m == 11U) {
+            dim = 30U;
+        } else {
+            dim = 31U;
+        }
+        if (days < dim) {
+            break;
+        }
+        days -= dim;
+    }
+    if (month != NULL) {
+        *month = m;
+    }
+    if (day != NULL) {
+        *day = (uint8_t)(days + 1U);
+    }
+}
+
+static void dwin_format_alarm_time(uint32_t timestamp_s, char *out_buf, size_t buf_size)
+{
+    if (out_buf == NULL || buf_size == 0U) {
+        return;
+    }
+    if (timestamp_s == 0U) {
+        (void)snprintf(out_buf, buf_size, "--:--:--");
+        return;
+    }
+
+    uint16_t evt_year = 0U;
+    uint8_t evt_mon = 0U, evt_day = 0U, evt_hour = 0U, evt_min = 0U, evt_sec = 0U;
+    dwin_epoch_to_local_dt(timestamp_s, &evt_year, &evt_mon, &evt_day, &evt_hour, &evt_min, &evt_sec);
+
+    uint32_t now_epoch = DWIN_RTC_GetEpoch();
+    bool same_day = true;
+    if (now_epoch != 0U) {
+        uint16_t now_year = 0U;
+        uint8_t now_mon = 0U, now_day = 0U;
+        dwin_epoch_to_local_dt(now_epoch, &now_year, &now_mon, &now_day, NULL, NULL, NULL);
+        same_day = (evt_year == now_year && evt_mon == now_mon && evt_day == now_day);
+    }
+
+    if (same_day) {
+        /* "HH:MM:SS" - 8 chars */
+        (void)snprintf(out_buf, buf_size, "%02u:%02u:%02u",
+                       (unsigned)evt_hour, (unsigned)evt_min, (unsigned)evt_sec);
+    } else {
+        /* "HHh DD/MM" - 9 chars */
+        (void)snprintf(out_buf, buf_size, "%02uh %02u/%02u",
+                       (unsigned)evt_hour, (unsigned)evt_day, (unsigned)evt_mon);
+    }
+}
+
+void DWIN_Alarm_PushWithTimestamp(uint32_t timestamp_s, const char *code_str,
+                                  const uint16_t *desc_utf16, uint8_t desc_len)
 {
     /* Shift rows 0..2 down to 1..3 */
     for (int8_t i = (int8_t)VP_ALARM_ROW_COUNT - 1; i > 0; i--) {
@@ -189,9 +292,7 @@ void DWIN_Alarm_Push(const char *time_str, const char *code_str,
     }
 
     memset(&s_alarm_rows[0], 0, sizeof(s_alarm_rows[0]));
-    if (time_str != NULL) {
-        strncpy(s_alarm_rows[0].time_str, time_str, sizeof(s_alarm_rows[0].time_str) - 1U);
-    }
+    s_alarm_rows[0].timestamp_s = timestamp_s;
     if (code_str != NULL) {
         strncpy(s_alarm_rows[0].code_str, code_str, sizeof(s_alarm_rows[0].code_str) - 1U);
     }
@@ -202,8 +303,42 @@ void DWIN_Alarm_Push(const char *time_str, const char *code_str,
     }
     s_alarm_rows[0].valid = true;
 
+    dwin_format_alarm_time(timestamp_s, s_alarm_rows[0].time_str, sizeof(s_alarm_rows[0].time_str));
+
     /* Mark all rows dirty so they emit across subsequent scatter ticks */
     s_alarm_dirty = (1U << VP_ALARM_ROW_COUNT) - 1U;
+}
+
+void DWIN_Alarm_Push(const char *time_str, const char *code_str,
+                     const uint16_t *desc_utf16, uint8_t desc_len)
+{
+    DWIN_Alarm_PushWithTimestamp(0U, code_str, desc_utf16, desc_len);
+    if (time_str != NULL && time_str[0] != '\0') {
+        strncpy(s_alarm_rows[0].time_str, time_str, sizeof(s_alarm_rows[0].time_str) - 1U);
+    }
+}
+
+void DWIN_Alarm_RefreshDayRollover(void)
+{
+    uint32_t now_epoch = DWIN_RTC_GetEpoch();
+    if (now_epoch == 0U) {
+        return;
+    }
+
+    for (uint8_t i = 0; i < VP_ALARM_ROW_COUNT; i++) {
+        if (!s_alarm_rows[i].valid || s_alarm_rows[i].timestamp_s == 0U) {
+            continue;
+        }
+
+        char new_time[13];
+        dwin_format_alarm_time(s_alarm_rows[i].timestamp_s, new_time, sizeof(new_time));
+
+        if (strncmp(s_alarm_rows[i].time_str, new_time, sizeof(new_time)) != 0) {
+            strncpy(s_alarm_rows[i].time_str, new_time, sizeof(s_alarm_rows[i].time_str) - 1U);
+            s_alarm_rows[i].time_str[sizeof(s_alarm_rows[i].time_str) - 1U] = '\0';
+            s_alarm_dirty |= (1U << i);
+        }
+    }
 }
 
 void DWIN_Alarm_ClearAll(void)
@@ -219,8 +354,8 @@ static void dwin_emit_alarm_row(uint8_t row)
     }
     uint16_t base = VP_ALARM_ROW_BASE + ((uint16_t)row * VP_ALARM_ROW_STRIDE);
 
-    DWIN_SendString(base + ALARM_OFFSET_TIME, s_alarm_rows[row].time_str, 4);
-    DWIN_SendString(base + ALARM_OFFSET_CODE, s_alarm_rows[row].code_str, 4);
+    DWIN_SendString(base + ALARM_OFFSET_TIME, s_alarm_rows[row].time_str, 6);
+    DWIN_SendString(base + ALARM_OFFSET_CODE, s_alarm_rows[row].code_str, 2);
 
     uint16_t desc_buf[32];
     memset(desc_buf, 0, sizeof(desc_buf));

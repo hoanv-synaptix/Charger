@@ -62,6 +62,13 @@ void DWIN_OnKeyEvent(uint16_t vp, uint16_t keyval)
     g_key_event_count++;
 }
 
+static uint32_t g_test_epoch = 0U;
+
+uint32_t DWIN_RTC_GetEpoch(void)
+{
+    return g_test_epoch;
+}
+
 static void reset_capture(void)
 {
     memset(g_tx, 0, sizeof(g_tx));
@@ -580,6 +587,64 @@ static bool test_alarm_fifo_push(void)
     return true;
 }
 
+static bool test_alarm_timestamp_day_rollover(void)
+{
+    printf("Running test_alarm_timestamp_day_rollover...\n");
+    reset_capture();
+    DWIN_Alarm_ClearAll();
+
+    /* 1727439132 UTC + 25200 = 1727464332 local (2024-09-27 19:12:12) */
+    g_test_epoch = 1727439132U;
+    const uint16_t desc[] = { 'E', 'R', 0 };
+    DWIN_Alarm_PushWithTimestamp(1727439132U, "E031", desc, 2);
+
+    DWIN_SystemData_t d;
+    memset(&d, 0, sizeof(d));
+
+    /* Scatter update to emit row 0 */
+    reset_capture();
+    for (int i = 0; i < 50; i++) {
+        DWIN_UpdateData(&d);
+    }
+
+    bool found_today_time = false;
+    for (int i = 0; i < g_tx_count; i++) {
+        uint16_t vp = ((uint16_t)g_tx[i][4] << 8) | g_tx[i][5];
+        if (vp == (VP_ALARM_ROW_1 + ALARM_OFFSET_TIME)) {
+            /* 4 words = 8 chars */
+            if (memcmp(&g_tx[i][6], "19:12:12", 8) == 0) {
+                found_today_time = true;
+            }
+        }
+    }
+    ASSERT(found_today_time, "alarm on same day displays HH:MM:SS (19:12:12)");
+
+    /* Advance time to next day (add 24h = 86400s) */
+    g_test_epoch = 1727439132U + 86400U;
+    DWIN_Alarm_RefreshDayRollover();
+
+    reset_capture();
+    for (int i = 0; i < 50; i++) {
+        DWIN_UpdateData(&d);
+    }
+
+    bool found_rolled_time = false;
+    for (int i = 0; i < g_tx_count; i++) {
+        uint16_t vp = ((uint16_t)g_tx[i][4] << 8) | g_tx[i][5];
+        if (vp == (VP_ALARM_ROW_1 + ALARM_OFFSET_TIME)) {
+            /* 6 words = 12 bytes: "19h 27/09" */
+            if (memcmp(&g_tx[i][6], "19h 27/09", 9) == 0) {
+                found_rolled_time = true;
+            }
+        }
+    }
+    ASSERT(found_rolled_time, "alarm on next day rolls over to HHh DD/MM (19h 27/09)");
+
+    g_test_epoch = 0U;
+    printf("[PASS] test_alarm_timestamp_day_rollover\n");
+    return true;
+}
+
 static bool test_soc_color_write_and_cache(void)
 {
     printf("Running test_soc_color_write_and_cache...\n");
@@ -925,6 +990,7 @@ int main(void)
     pass &= test_update_data_scatter();
     pass &= test_dwin_time_update_not_dropped_when_changed_mid_cycle();
     pass &= test_alarm_fifo_push();
+    pass &= test_alarm_timestamp_day_rollover();
     pass &= test_soc_color_write_and_cache();
     pass &= test_dwin_precharge_page_update_and_diff();
     pass &= test_dwin_login_keypad_full_matrix();

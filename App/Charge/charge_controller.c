@@ -156,6 +156,7 @@ static struct {
     bool precharge_mode;
     bool precharge_hold_active;
     uint32_t precharge_hold_start_tick;
+    uint32_t precharge_hold_loss_tick;
 
     /* Jack/connector temperature, in degrees C, supplied by the composition
      * root (App_Loop) once per control cycle via ChargeController_SetJackTempC().
@@ -817,13 +818,24 @@ static void apply_charge_targets(uint32_t now_tick) {
                 g_ctrl.target_current_per_module_a);
             CHG_LIB_StartAll();
         } else {
-            g_ctrl.applied_voltage_v = 0.0f;
-            LOG("CC: APPLY_START_ZERO state=%d last_run=%u inhibit=%u target=%.3fA/mod applied=0.000A/mod V=%.3fV src=%u band=%u\r\n",
-                (int)g_ctrl.state, (unsigned)g_ctrl.last_running, (unsigned)g_ctrl.inhibit,
+            if (CHG_LIB_DriverHasInternalVoltageRamp()) {
+                /* Modules with internal hardware soft-start (Lianming):
+                 * Command the full session target voltage immediately so the module's
+                 * internal converter softly ramps its output voltage.
+                 * Relay arming check (>= 90% pack voltage) remains fully enforced. */
+                g_ctrl.applied_voltage_v = g_ctrl.target_voltage_v;
+                CHG_LIB_SetVoltageAllEx(g_ctrl.target_voltage_v, CHG_LIB_TX_SOURCE_CC_START);
+            } else {
+                /* Modules requiring software voltage ramp from zero (TonHe, Maxwell):
+                 * Ramp up gradually to protect contactor relays. */
+                g_ctrl.applied_voltage_v = 0.0f;
+                CHG_LIB_SetVoltageAllEx(0.0f, CHG_LIB_TX_SOURCE_CC_START);
+            }
+            LOG("CC: APPLY_START state=%d last_run=%u target=%.3fA/mod applied_V=%.3fV target_V=%.3fV\r\n",
+                (int)g_ctrl.state, (unsigned)g_ctrl.last_running,
                 g_ctrl.target_current_per_module_a,
-                g_ctrl.target_voltage_v,
-                (unsigned)g_ctrl.active_limit_source, (unsigned)g_ctrl.active_stage_band);
-            CHG_LIB_SetVoltageAllEx(0.0f, CHG_LIB_TX_SOURCE_CC_START);
+                g_ctrl.applied_voltage_v,
+                g_ctrl.target_voltage_v);
             g_ctrl.current_ramp_ready =
                 CHG_LIB_SetCurrentLimitAllEx(0.0f, CHG_LIB_TX_SOURCE_CC_START);
             if (g_ctrl.current_ramp_ready) {
@@ -928,24 +940,42 @@ static void apply_charge_targets(uint32_t now_tick) {
         g_ctrl.ramp_tick = now_tick;
 
         float step_s = (float)CHARGE_CTRL_RAMP_STEP_MS / 1000.0f;
-        /* Fast rate while arming (module unloaded), slow rate once the
-         * relay is latched and real current can flow. */
-        float v_rate = g_ctrl.relay_latched_closed
-                           ? CHARGE_CTRL_VOLTAGE_RAMP_V_PER_S
-                           : CHARGE_CTRL_VOLTAGE_PRECLOSE_RAMP_V_PER_S;
-        float new_v = ramp_value(g_ctrl.applied_voltage_v, g_ctrl.target_voltage_v,
-                                 v_rate * step_s);
-        float new_i = ramp_value(g_ctrl.applied_current_per_module_a,
-                                 g_ctrl.target_current_per_module_a,
-                                 CHARGE_CTRL_CURRENT_RAMP_A_PER_S * step_s);
 
-        if (new_v != g_ctrl.applied_voltage_v) {
-            g_ctrl.applied_voltage_v = new_v;
-            CHG_LIB_SetVoltageAllEx(new_v, CHG_LIB_TX_SOURCE_CC_RAMP);
-        }
-        if (new_i != g_ctrl.applied_current_per_module_a) {
-            if (CHG_LIB_SetCurrentLimitAllEx(new_i, CHG_LIB_TX_SOURCE_CC_RAMP)) {
-                g_ctrl.applied_current_per_module_a = new_i;
+        if (CHG_LIB_DriverHasInternalVoltageRamp()) {
+            /* Lianming: voltage setpoint is already at target_voltage_v (or tracks updates).
+             * Only ramp the CURRENT setpoint per Lianming vendor specification (Section 6.2). */
+            if (g_ctrl.applied_voltage_v != g_ctrl.target_voltage_v) {
+                g_ctrl.applied_voltage_v = g_ctrl.target_voltage_v;
+                CHG_LIB_SetVoltageAllEx(g_ctrl.target_voltage_v, CHG_LIB_TX_SOURCE_CC_RAMP);
+            }
+            float new_i = ramp_value(g_ctrl.applied_current_per_module_a,
+                                     g_ctrl.target_current_per_module_a,
+                                     CHARGE_CTRL_CURRENT_RAMP_A_PER_S * step_s);
+            if (new_i != g_ctrl.applied_current_per_module_a) {
+                if (CHG_LIB_SetCurrentLimitAllEx(new_i, CHG_LIB_TX_SOURCE_CC_RAMP)) {
+                    g_ctrl.applied_current_per_module_a = new_i;
+                }
+            }
+        } else {
+            /* TonHe & Maxwell: full software voltage ramp from zero + current ramp (100% UNCHANGED).
+             * Fast rate while arming (module unloaded), slow rate once relay is latched. */
+            float v_rate = g_ctrl.relay_latched_closed
+                               ? CHARGE_CTRL_VOLTAGE_RAMP_V_PER_S
+                               : CHARGE_CTRL_VOLTAGE_PRECLOSE_RAMP_V_PER_S;
+            float new_v = ramp_value(g_ctrl.applied_voltage_v, g_ctrl.target_voltage_v,
+                                     v_rate * step_s);
+            float new_i = ramp_value(g_ctrl.applied_current_per_module_a,
+                                     g_ctrl.target_current_per_module_a,
+                                     CHARGE_CTRL_CURRENT_RAMP_A_PER_S * step_s);
+
+            if (new_v != g_ctrl.applied_voltage_v) {
+                g_ctrl.applied_voltage_v = new_v;
+                CHG_LIB_SetVoltageAllEx(new_v, CHG_LIB_TX_SOURCE_CC_RAMP);
+            }
+            if (new_i != g_ctrl.applied_current_per_module_a) {
+                if (CHG_LIB_SetCurrentLimitAllEx(new_i, CHG_LIB_TX_SOURCE_CC_RAMP)) {
+                    g_ctrl.applied_current_per_module_a = new_i;
+                }
             }
         }
     }
@@ -971,6 +1001,7 @@ static void stop_charging(void) {
     g_ctrl.bms_temp_recovery_start_tick = 0U;
     g_ctrl.precharge_hold_active = false;
     g_ctrl.precharge_hold_start_tick = 0;
+    g_ctrl.precharge_hold_loss_tick = 0;
     g_ctrl.cell_candidate_start_tick = 0;
     g_ctrl.cell_candidate_band = CHARGE_STAGE_BAND_NONE;
     g_ctrl.cell_below_min_start_tick = 0;
@@ -1948,7 +1979,8 @@ static bool precharge_modules_at_target(const ChargeCycleConfig_t *cfg, uint32_t
 
         if (view.last_rx_tick == 0U ||
             (now_tick - view.last_rx_tick) > CHARGE_CTRL_MODULE_VOLTAGE_MAX_AGE_MS ||
-            fabsf(view.voltage - cfg->vlow_v) > PRECHARGE_VOLTAGE_TOLERANCE_V) {
+            view.voltage < (cfg->vlow_v - PRECHARGE_VOLTAGE_TOLERANCE_V) ||
+            (cfg->vmax_v > 0.0f && view.voltage > cfg->vmax_v)) {
             return false;
         }
         ready_count++;
@@ -1997,9 +2029,17 @@ static void run_precharge_mode(uint32_t now_tick)
     bool conditions_met = precharge_modules_at_target(&cfg, now_tick) &&
                           BMS_HasFreshPrechargeData(now_tick);
     if (!conditions_met) {
-        g_ctrl.precharge_hold_active = false;
+        if (g_ctrl.precharge_hold_active) {
+            g_ctrl.precharge_hold_active = false;
+            g_ctrl.precharge_hold_start_tick = 0U;
+            g_ctrl.precharge_hold_loss_tick = 0U;
+            LOG("CC: Pre-charge hold reset\r\n");
+        }
         return;
     }
+
+    /* Conditions met: clear transient loss debounce timer */
+    g_ctrl.precharge_hold_loss_tick = 0U;
 
     if (!g_ctrl.precharge_hold_active) {
         g_ctrl.precharge_hold_active = true;
@@ -2011,6 +2051,7 @@ static void run_precharge_mode(uint32_t now_tick)
     if ((now_tick - g_ctrl.precharge_hold_start_tick) >= PRECHARGE_HOLD_MS) {
         g_ctrl.stop_reason = CHARGE_STOP_PRECHARGE_COMPLETE;
         g_ctrl.precharge_hold_active = false;
+        g_ctrl.precharge_hold_loss_tick = 0U;
         LOG("CC: Pre-charge recovery complete\r\n");
         transition_to(CHARGE_CTRL_STATE_STOPPING, now_tick);
     }
@@ -2326,6 +2367,7 @@ bool ChargeController_StartPrecharge(ChargeCtrlOwner_t owner, uint32_t now_tick)
     g_ctrl.stop_reason = CHARGE_STOP_NONE;
     g_ctrl.precharge_hold_active = false;
     g_ctrl.precharge_hold_start_tick = 0U;
+    g_ctrl.precharge_hold_loss_tick = 0U;
     g_ctrl.last_running = 0U;
     g_ctrl.relay_latched_closed = false;
     g_ctrl.relay_should_close = false;

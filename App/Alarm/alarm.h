@@ -135,6 +135,15 @@ void Alarm_Acknowledge(uint32_t now_tick);
 uint8_t Alarm_GetLog(AlarmLogEntry_t *out, uint8_t max);
 
 /**
+ * @brief Copy up to @p max newest-first log entries with their RTC epochs into @p out and @p out_timestamps_s.
+ * @param out Pointer to receive AlarmLogEntry_t entries
+ * @param out_timestamps_s Pointer to receive epoch seconds (0 if RTC was not set)
+ * @param max Maximum entries to copy
+ * @return number of entries written.
+ */
+uint8_t Alarm_GetLogWithTimestamps(AlarmLogEntry_t *out, uint32_t *out_timestamps_s, uint8_t max);
+
+/**
  * @brief Return the number of event-log writes since Alarm_Init().
  *
  * This generation advances for both raised and cleared events. It is

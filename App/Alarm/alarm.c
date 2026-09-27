@@ -23,6 +23,7 @@
 #include "chg_lib.h"
 #include "debug_log.h"
 #include "alarm_storage.h"
+#include "bsp_rtc.h"
 
 #include <string.h>
 #include <math.h>
@@ -271,6 +272,7 @@ static struct {
 
     /* event log ring */
     AlarmLogEntry_t log[ALARM_LOG_DEPTH];
+    uint32_t log_timestamp[ALARM_LOG_DEPTH];
     uint8_t  log_head;   /* next write index */
     uint8_t  log_count;
     uint32_t log_sequence; /* total event-log writes since init */
@@ -431,6 +433,7 @@ static void log_edge(uint32_t now, AlarmCode_t code, AlarmAction_t action, bool 
     e->code = (uint16_t)code;
     e->action = (uint8_t)action;
     e->event = raised ? 1U : 0U;
+    g_alarm.log_timestamp[g_alarm.log_head] = BSP_RTC_IsTimeValid() ? BSP_RTC_GetEpoch() : 0U;
     g_alarm.log_head = (uint8_t)((g_alarm.log_head + 1U) % ALARM_LOG_DEPTH);
     if (g_alarm.log_count < ALARM_LOG_DEPTH) g_alarm.log_count++;
     g_alarm.log_sequence++;
@@ -580,7 +583,7 @@ void Alarm_Init(void) {
 
     /* Restore recent persistent alarm events from External SPI Flash */
     uint32_t last_seq = 0U;
-    uint8_t restored = AlarmStorage_Init(g_alarm.log, ALARM_LOG_DEPTH, &last_seq);
+    uint8_t restored = AlarmStorage_InitEx(g_alarm.log, g_alarm.log_timestamp, ALARM_LOG_DEPTH, &last_seq);
     if (restored > 0U) {
         g_alarm.log_count = restored;
         g_alarm.log_head = (uint8_t)(restored % ALARM_LOG_DEPTH);
@@ -654,6 +657,20 @@ uint8_t Alarm_GetLog(AlarmLogEntry_t *out, uint8_t max) {
         /* newest-first: head-1 is newest */
         uint8_t idx = (uint8_t)((g_alarm.log_head + ALARM_LOG_DEPTH - 1U - k) % ALARM_LOG_DEPTH);
         out[k] = g_alarm.log[idx];
+    }
+    return n;
+}
+
+uint8_t Alarm_GetLogWithTimestamps(AlarmLogEntry_t *out, uint32_t *out_timestamps_s, uint8_t max) {
+    if (out == NULL || max == 0U) return 0U;
+    uint8_t n = (g_alarm.log_count < max) ? g_alarm.log_count : max;
+    for (uint8_t k = 0; k < n; k++) {
+        /* newest-first: head-1 is newest */
+        uint8_t idx = (uint8_t)((g_alarm.log_head + ALARM_LOG_DEPTH - 1U - k) % ALARM_LOG_DEPTH);
+        out[k] = g_alarm.log[idx];
+        if (out_timestamps_s != NULL) {
+            out_timestamps_s[k] = g_alarm.log_timestamp[idx];
+        }
     }
     return n;
 }

@@ -250,6 +250,15 @@ uint8_t AlarmStorage_Init(void *ram_log, uint8_t max_entries, uint32_t *out_sequ
     return 0;
 }
 
+uint8_t AlarmStorage_InitEx(void *ram_log, uint32_t *ram_timestamps, uint8_t max_entries, uint32_t *out_sequence)
+{
+    (void)ram_log;
+    (void)ram_timestamps;
+    (void)max_entries;
+    if (out_sequence) *out_sequence = 0;
+    return 0;
+}
+
 bool AlarmStorage_Append(uint32_t now_tick, uint16_t code, uint8_t action, bool raised)
 {
     (void)now_tick;

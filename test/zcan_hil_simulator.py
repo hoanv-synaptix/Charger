@@ -502,13 +502,21 @@ class ModuleSimulator(threading.Thread):
             cmd = data[0]
             resp_id = 0x1807C080 | self.addr
             if cmd == 0x02:  # START_STOP
-                self.actually_on = (data[7] == 0x55) if len(data) >= 8 else False
+                val = data[7] if len(data) >= 8 else 0xAA
+                self.actually_on = (val == 0x55)
                 if not self.actually_on:
                     self.voltage = self.standby_voltage
                     self.current = 0.0
-                self.dev.transmit(self.CAN_CHANNEL, resp_id, bytes([0x02, 0x01, 0, 0, 0, 0, 0, 0]), extended=True)
+                resp = bytes([0x02, 0x00, 0, 0, 0, 0, 0, val])
+                self.dev.transmit(self.CAN_CHANNEL, resp_id, resp, extended=True)
             elif cmd == 0x00:  # SET_OUTPUT
-                self.dev.transmit(self.CAN_CHANNEL, resp_id, bytes([0x00, 0x01, 0, 0, 0, 0, 0, 0]), extended=True)
+                if len(data) >= 8:
+                    curr_ma = (data[1] << 16) | (data[2] << 8) | data[3]
+                    volt_mv = (data[4] << 24) | (data[5] << 16) | (data[6] << 8) | data[7]
+                    self.target_current = curr_ma / 1000.0
+                    self.target_voltage = volt_mv / 1000.0
+                resp = bytes([0x00, 0xFF, 0, 0, 0, 0, 0, 0])
+                self.dev.transmit(self.CAN_CHANNEL, resp_id, resp, extended=True)
             elif cmd == 0x01:  # READ_INFO
                 if self.actually_on:
                     self.current = self.target_current if self.target_current >= 1.0 else 24.5
@@ -523,7 +531,11 @@ class ModuleSimulator(threading.Thread):
                 volt_raw = int(self.voltage * 10.0) & 0xFFFF
                 status = 0x00 if self.actually_on else 0x01
                 if self.fault_bits & 0x0001:
-                    status |= (1 << 5)  # Input undervoltage (E026)
+                    status |= (1 << 5)  # Input undervoltage (W011 / E026)
+                if self.fault_bits & 0x0002:
+                    status |= (1 << 9)  # Internal overtemperature (E023)
+                if self.fault_bits & 0x0004:
+                    status |= (1 << 1)  # Hardware fault (E027)
                 resp = bytes([
                     0x01, int(self.temp_ambient) & 0xFF,
                     (curr_raw >> 8) & 0xFF, curr_raw & 0xFF,
@@ -985,11 +997,11 @@ def run_full_automation(bms: BmsSimulator, mod: ModuleSimulator, sniffer: DwinSc
     print_countdown(10, "Đang đồng bộ Standby", sniffer)
 
     code_ok = (sniffer.state["topbar_code"] in ("0000", "----")) if sniffer.available else True
-    cap_ok = (sniffer.state["cap_remain_ah"] >= 80.0) if sniffer.available else True
+    cap_ok = (sniffer.state["soc"] >= 80) if sniffer.available else True
     temp_ok = (20.0 <= sniffer.state["temp_charge"] <= 45.0) if sniffer.available else True
     st_ok = (sniffer.state["status_icon"] in (0, -1)) if sniffer.available else True
     print(f"  [KẾT QUẢ] Topbar Code: '{sniffer.state['topbar_code']}' (Chuẩn: '0000') | Status: {sniffer.state['status_icon']} (Chuẩn: 0=READY)")
-    print(f"            Dung lượng pin DWIN (0x1012): {sniffer.state['cap_remain_ah']:.1f} Ah (BMS phát 82.0 Ah)")
+    print(f"            SOC Pin DWIN (0x1048): {sniffer.state['soc']}% (BMS phát 82%)")
     print(f"            Nhiệt độ sạc DWIN (0x1031): {sniffer.state['temp_charge']:.1f} °C | Nhiệt độ Pin (0x1030): {sniffer.state['temp_battery']:.1f} °C")
     test_results.append(("Test 1: Standby & Full Telemetry Sync", code_ok and cap_ok and temp_ok and st_ok))
 
@@ -1002,6 +1014,7 @@ def run_full_automation(bms: BmsSimulator, mod: ModuleSimulator, sniffer: DwinSc
         print("  -> Chạm nút START trên màn hình DWIN để kích hoạt phiên sạc...")
         sniffer.send_button_touch(1)
         time.sleep(1.0)
+    send_pc_cmd(0x03, bytes([0]))
 
     mod.target_voltage = 53.5
     mod.target_current = 24.5
@@ -1046,18 +1059,21 @@ def run_full_automation(bms: BmsSimulator, mod: ModuleSimulator, sniffer: DwinSc
 
     st_complete = sniffer.state["status_icon"]
     btn_complete = sniffer.state["button_icon"]
-    cap_retained = sniffer.state["cap_remain_ah"]
     dur_frozen = sniffer.state["charge_duration"]
     print(f"  [KẾT QUẢ] Trạng thái DWIN: Icon {st_complete} (Chuẩn: 3=COMPLETE) | Nút: {btn_complete} (Chuẩn: 2=RESET)")
-    print(f"            Dung lượng lưu trữ: {cap_retained:.1f} Ah (Giữ nguyên) | SOC: {sniffer.state['soc']}% | Thời gian đóng băng: '{dur_frozen}'")
-    ok_complete = (st_complete == 3 and cap_retained >= 80.0) if sniffer.available else True
+    print(f"            SOC lưu trữ: {sniffer.state['soc']}% | Thời gian đóng băng: '{dur_frozen}'")
+    ok_complete = (st_complete == 3 and sniffer.state["soc"] >= 80) if sniffer.available else True
     test_results.append(("Test 3: Natural Charge Complete & Data Retention", ok_complete))
 
     # Acknowledge hoàn tất sạc để đưa hệ thống về READY
     if sniffer.available and sniffer.state["status_icon"] == 3:
         print("  -> Chạm nút trên DWIN để Xác nhận hoàn tất (Acknowledge) -> Hệ thống trở về READY...")
         sniffer.send_button_touch(1)
-        time.sleep(2.0)
+        time.sleep(1.0)
+    send_pc_cmd(0x04)
+    time.sleep(0.3)
+    send_pc_cmd(0x0A)
+    time.sleep(0.5)
 
     # -------------------------------------------------------------
     # Test Case 4: BMS Fault Injection - Quá Áp Cell Pin E004 (12s)
@@ -1065,6 +1081,7 @@ def run_full_automation(bms: BmsSimulator, mod: ModuleSimulator, sniffer: DwinSc
     print("\n>>> [TEST CASE 4/7] Bơm Lỗi BMS Quá Áp Cell E004 (BMS High Cell Voltage - 12s)")
     bms.max_cell_mv = 3680  # > 3600 mV critical threshold
     bms.fault_high_cell_volt = 2
+    send_pc_cmd(0x03, bytes([0]))  # Thử start khi cell quá áp
     print("  -> Đã bơm điện áp Cell = 3680 mV (> ngưỡng an toàn 3600 mV)")
     print("  -> MCU lập tức phát hiện cảnh báo nguy cấp, chuyển sang ERROR (4)...")
     print("  -> Màn hình DWIN: Topbar phải nhảy 'E004', Bảng Alarm phải hiện 'Quá áp cell pin BMS'...")
@@ -1092,6 +1109,8 @@ def run_full_automation(bms: BmsSimulator, mod: ModuleSimulator, sniffer: DwinSc
         print("  -> Gửi chạm nút DWIN để Xác nhận xóa lỗi (Acknowledge)...")
         sniffer.send_button_touch(1)
         time.sleep(1.0)
+    send_pc_cmd(0x0A)
+    time.sleep(0.5)
 
     print_countdown(8, "Đang hồi phục hệ thống", sniffer)
 
@@ -1102,19 +1121,19 @@ def run_full_automation(bms: BmsSimulator, mod: ModuleSimulator, sniffer: DwinSc
     test_results.append(("Test 5: BMS Fault Recovery", ok_rec))
 
     # -------------------------------------------------------------
-    # Test Case 6: Module Fault Injection - Sụt Áp AC Đầu Vào E026 (12s)
+    # Test Case 6: Module Fault Injection - Sụt Áp AC Đầu Vào W011 (12s)
     # -------------------------------------------------------------
-    print("\n>>> [TEST CASE 6/7] Bơm Lỗi Sụt Áp AC Đầu Vào Module Sạc E026 (AC Undervoltage - 12s)")
-    mod.fault_bits = 0x0001  # Bit 0: Input undervoltage -> ALARM_AC_UNDERVOLT -> E026
+    print("\n>>> [TEST CASE 6/7] Bơm Cảnh Báo Sụt Áp AC Đầu Vào Module Sạc W011 (AC Undervoltage - 12s)")
+    mod.fault_bits = 0x0001  # Bit 0: Input undervoltage -> ALARM_AC_UNDERVOLT -> W011
     print("  -> Đã kích hoạt cờ cảnh báo sụt áp AC đầu vào Module Sạc (Bit 0)")
-    print("  -> MCU phát hiện sụt áp AC, Topbar DWIN phải nhảy sang 'E026'...")
+    print("  -> MCU phát hiện sụt áp AC, Topbar DWIN phải nhảy sang 'W011'...")
     print("  -> Bảng Alarm DWIN: Đẩy lỗi cũ xuống Dòng 2, ghi lỗi mới vào Dòng 1...")
-    print_countdown(12, "Đang duy trì lỗi Module E026", sniffer)
+    print_countdown(12, "Đang duy trì cảnh báo Module W011", sniffer)
 
     code_mod = sniffer.state["topbar_code"]
-    ok_mod = (code_mod == "E026") if sniffer.available else True
-    print(f"  [KẾT QUẢ] DWIN Topbar Code: '{code_mod}' (Chuẩn: 'E026')")
-    test_results.append(("Test 6: Module AC Undervoltage E026", ok_mod))
+    ok_mod = (code_mod in ("W011", "E026")) if sniffer.available else True
+    print(f"  [KẾT QUẢ] DWIN Topbar Code: '{code_mod}' (Chuẩn: 'W011')")
+    test_results.append(("Test 6: Module AC Undervoltage W011", ok_mod))
 
     # -------------------------------------------------------------
     # Test Case 7: Module Recovery & Standby Clear (15s)
@@ -1127,17 +1146,18 @@ def run_full_automation(bms: BmsSimulator, mod: ModuleSimulator, sniffer: DwinSc
         print("  -> Gửi xác nhận lỗi (Acknowledge) qua nút bấm DWIN để đưa hệ thống về READY...")
         sniffer.send_button_touch(1)
         time.sleep(1.0)
+    send_pc_cmd(0x0A)
+    time.sleep(0.5)
 
     print_countdown(10, "Đang xác thực trạng thái kết thúc & lưu trữ", sniffer)
 
     code_final = sniffer.state["topbar_code"]
     st_final = sniffer.state["status_icon"]
     btn_final = sniffer.state["button_icon"]
-    cap_final = sniffer.state["cap_remain_ah"]
     ok_final_code = (code_final in ("0000", "----")) if sniffer.available else True
     ok_final_st = (st_final in (0, -1)) if sniffer.available else True
     print(f"  [KẾT QUẢ] Topbar Code cuối cùng: '{code_final}' (Chuẩn: '0000') | Status: {st_final} (Chuẩn: 0=READY)")
-    print(f"            Nút bấm DWIN: {btn_final} (Chuẩn: 0=START) | Dung lượng: {cap_final:.1f} Ah")
+    print(f"            Nút bấm DWIN: {btn_final} (Chuẩn: 0=START) | SOC: {sniffer.state['soc']}%")
     test_results.append(("Test 7: Module Recovery & Final Standby Sync", ok_final_code and ok_final_st))
 
     # -------------------------------------------------------------
@@ -1950,16 +1970,16 @@ def run_incharge_automation(bms: BmsSimulator, mod: ModuleSimulator, sniffer: Dw
             if elapsed == 10:
                 print("\n  [INJECT] Module kích hoạt cảnh báo sụt áp AC lưới (fault_bits bit 0)...")
                 mod.fault_bits |= 0x0001
-            elif elapsed == 12:
+            elif elapsed == 16:
                 mod.actually_on = False
                 mod.current = 0.0
         mcu_final = case_countdown(30, "TC-10: Module AC Undervolt", tick_tc10)
         st = mcu_final.get("controller_state", 0)
         stop_r = mcu_final.get("controller_stop_reason", 0)
         code = sniffer.state["topbar_code"] if (sniffer and sniffer.available) else "----"
-        p10_ok = (st != 2) or (stop_r == 7) or (code == "E026")
+        p10_ok = (st != 2) or (stop_r == 7) or (code in ("E026", "W011"))
         print(f"  [KẾT QUẢ] MCU State: {st}, DWIN Code: '{code}', Stop Reason: {stop_r} ({CHARGE_STOP_REASON_NAMES.get(stop_r, '')})")
-        test_results.append(("TC-10: Module sụt áp lưới AC E026 (30s)", p10_ok))
+        test_results.append(("TC-10: Module sụt áp lưới AC W011/E026 (30s)", p10_ok))
 
     # -------------------------------------------------------------
     # Test Case 11: Module Sạc Báo Quá Nhiệt Nội Bộ DCDC E023 (30s)

@@ -93,6 +93,11 @@ const char *CHG_LIB_GetActiveDriverName(void)
     return (driver != 0 && driver->name != 0) ? driver->name : "none";
 }
 
+bool CHG_LIB_DriverHasInternalVoltageRamp(void)
+{
+    return (s_active_driver_id == CHG_LIB_DRV_LIANMING);
+}
+
 void CHG_LIB_Init(void)
 {
     const CHG_LIB_DriverOps_t *driver = get_active();

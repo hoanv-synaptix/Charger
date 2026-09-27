@@ -929,6 +929,18 @@ void App_Loop(void)
             dwin_check_and_send_identity_update();
             if ((now - last_dwin_full_tick) >= DWIN_HEARTBEAT_INTERVAL_MS) {
                 last_dwin_full_tick = now;
+                const char *hw_str = ChargeCycleConfig_GetHwRev();
+                if (strncmp(hw_str, "HW ", 3) == 0) {
+                    hw_str += 3;
+                } else if (strncmp(hw_str, "HW", 2) == 0) {
+                    hw_str += 2;
+                }
+                char hw_buf[16];
+                if (hw_str[0] != 'V' && hw_str[0] != 'v' && hw_str[0] != '\0') {
+                    (void)snprintf(hw_buf, sizeof(hw_buf), "V%s", hw_str);
+                    hw_str = hw_buf;
+                }
+                DWIN_SendSettingStrings(hw_str, FW_VERSION_STRING, ChargeCycleConfig_GetDeviceId());
                 DWIN_ForceFullRefresh();
             }
         }
@@ -1178,7 +1190,8 @@ void App_Loop(void)
          * generation counter to detect writes after the ring is full. */
         static uint32_t s_last_log_sequence = 0U;
         AlarmLogEntry_t log_entries[ALARM_LOG_DEPTH];
-        uint8_t log_count = Alarm_GetLog(log_entries, ALARM_LOG_DEPTH);
+        uint32_t log_timestamps[ALARM_LOG_DEPTH];
+        uint8_t log_count = Alarm_GetLogWithTimestamps(log_entries, log_timestamps, ALARM_LOG_DEPTH);
         uint32_t log_sequence = Alarm_GetLogSequence();
         uint32_t new_events = log_sequence - s_last_log_sequence;
         if (new_events > ALARM_LOG_DEPTH) {
@@ -1189,65 +1202,24 @@ void App_Loop(void)
              * Push oldest-of-new-batch first so newest ends up at row 0. */
             for (int8_t i = (int8_t)new_events - 1; i >= 0; i--) {
                 if (log_entries[i].event == 1U) { /* Raised */
-                    char time_buf[10];
-                    if (BSP_RTC_IsTimeValid()) {
-                        /* Compute approximate epoch of the event using uptime delta.
-                         * BSP_RTC_GetEpoch() returns UTC; add timezone offset to get
-                         * local time before comparing calendar day. */
-                        uint32_t now_epoch  = BSP_RTC_GetEpoch();
-                        uint32_t tick_now   = BSP_GetTick();
-                        uint32_t tick_evt   = log_entries[i].uptime_ms;
-                        uint32_t delta_s    = (tick_now >= tick_evt)
-                                              ? (tick_now - tick_evt) / 1000U
-                                              : 0U;
-                        uint32_t local_offset = (uint32_t)BSP_RTC_TIMEZONE_SEC;
-                        uint32_t evt_local  = now_epoch + local_offset
-                                              - delta_s;
-                        uint32_t now_local  = now_epoch + local_offset;
-
-                        BSP_RTC_DateTime_t evt_dt;
-                        BSP_RTC_DateTime_t now_dt;
-                        BSP_RTC_EpochToDateTime(evt_local, &evt_dt);
-                        BSP_RTC_EpochToDateTime(now_local, &now_dt);
-
-                        bool same_day = (evt_dt.day   == now_dt.day) &&
-                                        (evt_dt.month == now_dt.month);
-                        if (same_day) {
-                            /* e.g. "08:30:11" */
-                            (void)snprintf(time_buf, sizeof(time_buf),
-                                           "%02u:%02u:%02u",
-                                           (unsigned)evt_dt.hour,
-                                           (unsigned)evt_dt.minute,
-                                           (unsigned)evt_dt.second);
-                        } else {
-                            /* e.g. "08h23/09" — exactly 8 chars, fits 4 VP */
-                            (void)snprintf(time_buf, sizeof(time_buf),
-                                           "%02uh%02u/%02u",
-                                           (unsigned)evt_dt.hour,
-                                           (unsigned)evt_dt.day,
-                                           (unsigned)evt_dt.month);
-                        }
-                    } else {
-                        /* RTC not synchronised — fall back to uptime counter */
-                        uint32_t sec = log_entries[i].uptime_ms / 1000U;
-                        uint32_t h = (sec / 3600U) % 24U;
-                        uint32_t m = (sec % 3600U) / 60U;
-                        uint32_t s = sec % 60U;
-                        (void)snprintf(time_buf, sizeof(time_buf), "%02u:%02u:%02u",
-                                       (unsigned)h, (unsigned)m, (unsigned)s);
-                    }
-
                     AlarmCode_t c = (AlarmCode_t)log_entries[i].code;
                     const char *c_str = DWIN_Alarm_GetCodeString(c);
                     uint8_t d_len = 0;
                     const uint16_t *d_utf16 = DWIN_Alarm_GetDescUtf16(c, &d_len);
 
-                    DWIN_Alarm_Push(time_buf, c_str, d_utf16, d_len);
+                    DWIN_Alarm_PushWithTimestamp(log_timestamps[i], c_str, d_utf16, d_len);
                 }
             }
         }
         (void)log_count; /* Snapshot size is used to bound available entries. */
         s_last_log_sequence = log_sequence;
+
+        /* Refresh day-rollover once per second so midnight transition updates HH:MM:SS to HHhDD/MM */
+        static uint32_t s_last_day_rollover_tick = 0U;
+        if ((uint32_t)(now - s_last_day_rollover_tick) >= 1000U) {
+            s_last_day_rollover_tick = now;
+            DWIN_Alarm_RefreshDayRollover();
+        }
 
         static bool s_was_error = false;
         if (raw_status == DWIN_STATUS_ERROR) {
@@ -1270,6 +1242,11 @@ void App_Loop(void)
 
     /* (5) Refresh IWDG — main loop only, never in ISR (~1s timeout) */
     MX_IWDG_Refresh();
+}
+
+uint32_t DWIN_RTC_GetEpoch(void)
+{
+    return BSP_RTC_IsTimeValid() ? BSP_RTC_GetEpoch() : 0U;
 }
 
 /* The DGUS button uploads a fixed keycode on VP_SYS_BTN_KEY (0x1043);
