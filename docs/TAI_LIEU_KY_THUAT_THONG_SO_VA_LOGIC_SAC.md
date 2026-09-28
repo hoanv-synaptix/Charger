@@ -367,8 +367,26 @@ stateDiagram-v2
 | **`E003`** | **Điện áp pin cao** | `ALARM_ACT_STOP` | BMS gửi cờ quá áp pack pin `high_pack_volt`. | Ngắt sạc dừng module ngay lập tức. |
 | **`E004`** | **Điện áp cell pin cao** | `ALARM_ACT_STOP` | BMS gửi cờ quá áp cell đơn lẻ `high_cell_volt`. | Ngắt sạc bảo vệ cell pin tránh nổ/phồng. |
 | **`E023`** | **Mất tải DC** | `ALARM_ACT_STOP` | Dòng sạc thực tế sụt bất thường về $\approx 0\text{A}$ trong khi module đang phát áp cao. | Tự động vô hiệu hóa khi hệ thống đang chủ động kẹp dòng do quá nhiệt E005 (`inhibit = 1`), tránh báo lỗi ảo. |
+| **`E010`** | **Lỗi phần cứng module** | `ALARM_ACT_STOP` | Module gửi cờ `HW_FAULT` qua CAN. | **Debounce động theo trạng thái**: IDLE = 10 giây (lọc 100% xung xả tụ khi tắt Aptomat AC), ACTIVE = 1 giây (ngắt khẩn cấp). Chế áp hoàn toàn khi có sụt áp AC, lỗi PFC hoặc module offline trong IDLE. |
+| **`W011`** | **Điện lưới AC bị yếu** | `ALARM_ACT_INFO` | Module gửi cờ sụt áp AC `AC_UNDER_VOLT`. | Tự động **BYPASS** trong IDLE (Clean Shutdown); chỉ giám sát trong phiên sạc hoạt động (debounce set 1s, clear 3s). |
 | **`E030`** | **Sụt áp jack sạc** | `ALARM_ACT_STOP` | Chênh lệch điện áp đầu cắm $\Delta V = V_{\text{cap}} - V_{\text{batt}} > 2.0\text{V}$ khi đang có tải $\ge 2.0\text{A}$. | Chỉ đánh giá khi có dòng sạc thật; bỏ qua khi ngắt nhiệt E005 hoặc relay mở. |
 | **`E031`** | **Quá nhiệt jack sạc** | `ALARM_ACT_STOP` | Nhiệt độ tại 4 kênh NTC giắc cắm vượt ngưỡng tới hạn `protect_jack_temp_trip_c`. | Dừng sạc khẩn cấp bảo vệ chống cháy nổ tiếp điểm đầu cắm. |
+
+---
+
+### 7.1 Kiến trúc & Logic Ghi Nhật ký Lỗi (Alarm & Event Logging)
+
+1. **Bộ đệm Kép (Dual Buffer Storage):**
+   * **RAM Ring Buffer (Độ sâu 16 bản ghi):** Lưu trữ 16 sự kiện gần nhất trong RAM, phục vụ hiển thị tức thời lên bảng Nhật ký lỗi DWIN (Trang 10).
+   * **External SPI Flash (W25Qxx lưu trữ vĩnh viễn):** Mỗi lần sự kiện chuyển trạng thái (Edge), hàm `AlarmStorage_Append()` ghi trực tiếp vào Flash không bay hơi để làm dữ liệu truy xuất và bảo hành.
+2. **Nguyên tắc Ghi Theo Sườn (Edge Detection):**
+   * Chỉ ghi **1 sự kiện RAISED (`event = 1`)** khi cờ lỗi duy trì vượt ngưỡng `set_ms`.
+   * Chỉ ghi **1 sự kiện CLEARED (`event = 0`)** khi cờ lỗi hết và ổn định đủ `clear_ms` (với lỗi non-latching).
+   * Tuyệt đối không ghi lặp lại theo chu kỳ định kỳ, chống tràn và bảo vệ chip Flash.
+3. **Cơ chế Chế áp Dây chuyền (Cascade Suppression):**
+   * Khi ngắt nguồn AC: Chế áp hoàn toàn `E010`, `E015`, `W010`, chống hiện tượng "bão log domino".
+   * Khi rút giắc đột ngột (Hot Unplug): Bắt duy nhất lỗi gốc `E023`, chế áp hoàn toàn `E021` và `E022`.
+
 
 ---
 

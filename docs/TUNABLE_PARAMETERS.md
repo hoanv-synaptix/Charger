@@ -46,13 +46,15 @@ behaviour and have not been checked against a real DC bus / scope"*.
 | `ALARM_AC_PHASE_FLOOR_V` | 55 | 150.0 V | Dưới mức này coi là mất pha AC | HW-TBD |
 | `ALARM_AC_PHASE_LOSS_FRAC` | 56 | 0.5 | Tỉ lệ lệch pha để coi là mất pha | HW-TBD |
 | `ALARM_AC_UNDERVOLT_V` | 57 | 170.0 V | Ngưỡng AC under-voltage | HW-TBD |
-| `ALARM_DB_MIRROR_CLEAR_MS` | 60 | 200 ms | Debounce clear cho alarm mirror (nguồn đã debounce sẵn) | HW-TBD |
-| `ALARM_DB_COMM_SET_MS` | 61 | 200 ms | Debounce set mất comms | HW-TBD |
-| `ALARM_DB_COMM_CLEAR_MS` | 62 | 500 ms | Debounce clear mất comms | HW-TBD |
-| `ALARM_DB_NO_PACK_SET_MS` | 63 | 500 ms | Debounce set "chưa đấu pin" | HW-TBD |
-| `ALARM_DB_NO_PACK_CLEAR_MS` | 64 | 1000 ms | Debounce clear "chưa đấu pin" | HW-TBD |
-| `ALARM_DB_AC_MS` | 65 | 1000 ms | Debounce alarm AC | HW-TBD |
-| `ALARM_LOG_MIN_INTERVAL_MS` | 73 | 1000 ms | Giới hạn tần suất LOG() console (tránh chặn ISR, xem comment tại chỗ) | Product decision (bảo vệ timing LOG, không phải ngưỡng vật lý) |
+| `ALARM_DB_HW_FAULT_IDLE_SET_MS` | 60 | 10000 ms | Debounce set E010 trong IDLE (lọc xung xả tụ khi tắt Aptomat AC) | HW-confirmed (V2.0.14) |
+| `ALARM_DB_HW_FAULT_ACTIVE_SET_MS` | 59 | 1000 ms | Debounce set E010 khi ACTIVE (ngắt sạc khẩn cấp bảo vệ an toàn) | HW-confirmed (V2.0.14) |
+| `ALARM_DB_MIRROR_CLEAR_MS` | 64 | 200 ms | Debounce clear cho alarm mirror (nguồn đã debounce sẵn) | HW-TBD |
+| `ALARM_DB_COMM_SET_MS` | 65 | 200 ms | Debounce set mất comms | HW-TBD |
+| `ALARM_DB_COMM_CLEAR_MS` | 66 | 500 ms | Debounce clear mất comms | HW-TBD |
+| `ALARM_DB_NO_PACK_SET_MS` | 67 | 500 ms | Debounce set "chưa đấu pin" | HW-TBD |
+| `ALARM_DB_NO_PACK_CLEAR_MS` | 68 | 1000 ms | Debounce clear "chưa đấu pin" | HW-TBD |
+| `ALARM_DB_AC_MS` | 69 | 1000 ms | Debounce alarm AC | HW-TBD |
+| `ALARM_LOG_MIN_INTERVAL_MS` | 77 | 1000 ms | Giới hạn tần suất LOG() console (tránh chặn ISR, xem comment tại chỗ) | Product decision (bảo vệ timing LOG, không phải ngưỡng vật lý) |
 
 ## App/Charge — `App/Charge/charge_controller.c`
 
