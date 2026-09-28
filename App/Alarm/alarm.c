@@ -176,26 +176,15 @@ static bool ev_bms_temp_high(const AlarmInputs_t *in, uint32_t bit) {
 static bool ev_mod(const AlarmInputs_t *in, uint32_t bit) {
     return (in->mod_alarm_or & bit) != 0U;
 }
-static bool ev_mod_pfc(const AlarmInputs_t *in, uint32_t param) {
-    (void)param;
-    return (in->mod_pfc_fault_or != 0U) ||
-           ((in->mod_alarm_or &
-             (CHG_LIB_ALARM_PFC_FAULT | CHG_LIB_ALARM_AC_PHASE_LOSS)) != 0U);
-}
-static bool ev_mod_comm_lost(const AlarmInputs_t *in, uint32_t param) {
-    (void)param;
-    bool active_session = (in->cc.state == CHARGE_CTRL_STATE_RUNNING ||
-                           in->cc.state == CHARGE_CTRL_STATE_READY ||
-                           in->cc.state == CHARGE_CTRL_STATE_PRECHARGE);
-    return active_session &&
-           (in->mod_offline_count != 0U ||
-            (in->mod_alarm_or & CHG_LIB_ALARM_COMM_FAIL) != 0U);
-}
 static bool ev_ctrl(const AlarmInputs_t *in, uint32_t bit) {
     return (in->cc.fault_flags & bit) != 0U;
 }
 
-/* ---- derived evals (forward decl; defined after g_alarm) ---- */
+/* ---- derived and cascade-suppressed evals (forward decl; defined after g_alarm) ---- */
+static bool ev_mod_hw_fault(const AlarmInputs_t *in, uint32_t param);
+static bool ev_mod_ac_undervolt(const AlarmInputs_t *in, uint32_t param);
+static bool ev_mod_pfc(const AlarmInputs_t *in, uint32_t param);
+static bool ev_mod_comm_lost(const AlarmInputs_t *in, uint32_t param);
 static bool ev_bms_comm_lost(const AlarmInputs_t *in, uint32_t param);
 static bool ev_bms_no_pack_voltage(const AlarmInputs_t *in, uint32_t param);
 static bool ev_dc_load_lost(const AlarmInputs_t *in, uint32_t param);
@@ -228,12 +217,12 @@ static const AlarmSpec_t k_specs[] = {
     { ALARM_BMS_OVER_DCHG_CURR,  ALARM_ACT_INFO,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms, BMS_ALARM_OVER_DCHG_CURR,  "BMS over discharge current" },
 
     /* --- module-reported --- */
-    { ALARM_MOD_HW_FAULT,        ALARM_ACT_STOP,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_HW_FAULT,         "Module hardware fault" },
+    { ALARM_MOD_HW_FAULT,        ALARM_ACT_STOP,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod_hw_fault, 0,                      "Module hardware fault" },
     { ALARM_MOD_COMM_FAIL,       ALARM_ACT_INFO,  false, 0, ALARM_DB_MODULE_COMM_CLEAR_MS, ev_mod_comm_lost, 0,                "Module comms fail" },
     { ALARM_MOD_OVER_TEMP,       ALARM_ACT_STOP,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_OVER_TEMP,        "Module over-temp" },
     { ALARM_MOD_OVER_VOLT_OUT,   ALARM_ACT_ESTOP, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_OVER_VOLTAGE_OUT, "Module output over-voltage" },
     { ALARM_MOD_SHORT_CIRCUIT,   ALARM_ACT_ESTOP, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_SHORT_CIRCUIT,    "Module output short circuit" },
-    { ALARM_MOD_AC_UNDER_VOLT,   ALARM_ACT_INFO,  false, ALARM_DB_AC_UNDERVOLT_SET_MS, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_AC_UNDER_VOLT, "Module AC under-voltage" },
+    { ALARM_MOD_AC_UNDER_VOLT,   ALARM_ACT_INFO,  false, ALARM_DB_AC_UNDERVOLT_SET_MS, ALARM_DB_MIRROR_CLEAR_MS, ev_mod_ac_undervolt, CHG_LIB_ALARM_AC_UNDER_VOLT, "Module AC under-voltage" },
     { ALARM_MOD_OVER_CURR_OUT,   ALARM_ACT_STOP,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_OVER_CURR_OUT,    "Module output over-current" },
     { ALARM_MOD_PFC_FAULT,       ALARM_ACT_STOP,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod_pfc, 0,                          "Module PFC fault" },
 
@@ -290,7 +279,74 @@ typedef struct {
     const char  *first_cleared_desc;
 } AlarmEdgeTally_t;
 
-/* ============== Derived evals ============== */
+/* Helper: Check if an alarm code is currently active or latched */
+static inline bool is_alarm_active_or_latched(AlarmCode_t code) {
+    return ((g_alarm.view.active_mask | g_alarm.view.latched_mask) & (1ULL << code)) != 0ULL;
+}
+
+/* ============== Cascade-suppressed & Derived Evals ============== */
+
+static bool ev_mod_hw_fault(const AlarmInputs_t *in, uint32_t param) {
+    (void)param;
+    if ((in->mod_alarm_or & CHG_LIB_ALARM_HW_FAULT) == 0U) return false;
+
+    /* Root cause suppression: suppress E010 if AC input is under-voltage (e.g. capacitor discharge on power-off) */
+    if ((in->mod_alarm_or & CHG_LIB_ALARM_AC_UNDER_VOLT) != 0U ||
+        is_alarm_active_or_latched(ALARM_MOD_AC_UNDER_VOLT)) {
+        return false;
+    }
+
+    /* Root cause suppression: suppress generic E010 if a specific module protection is active */
+    uint32_t specific_mask = CHG_LIB_ALARM_OVER_TEMP |
+                             CHG_LIB_ALARM_OVER_VOLTAGE_OUT |
+                             CHG_LIB_ALARM_SHORT_CIRCUIT |
+                             CHG_LIB_ALARM_OVER_CURR_OUT |
+                             CHG_LIB_ALARM_FAN_FAULT |
+                             CHG_LIB_ALARM_AC_OVER_VOLT;
+    if ((in->mod_alarm_or & specific_mask) != 0U) return false;
+
+    return true;
+}
+
+static bool ev_mod_ac_undervolt(const AlarmInputs_t *in, uint32_t param) {
+    /* Only monitor and raise AC undervolt during an active or preparing charging session.
+     * When in IDLE (Standby / DWIN READY), cutting AC is normal equipment shutdown,
+     * where capacitor discharge must not trigger a false W011 alarm in the event log. */
+    bool active_session = (in->cc.state != CHARGE_CTRL_STATE_IDLE);
+    if (!active_session) return false;
+
+    return (in->mod_alarm_or & param) != 0U;
+}
+
+static bool ev_mod_pfc(const AlarmInputs_t *in, uint32_t param) {
+    (void)param;
+    /* Root cause suppression: suppress PFC fault if caused by AC under-voltage / power-down */
+    if ((in->mod_alarm_or & CHG_LIB_ALARM_AC_UNDER_VOLT) != 0U ||
+        is_alarm_active_or_latched(ALARM_MOD_AC_UNDER_VOLT)) {
+        return false;
+    }
+
+    return (in->mod_pfc_fault_or != 0U) ||
+           ((in->mod_alarm_or &
+             (CHG_LIB_ALARM_PFC_FAULT | CHG_LIB_ALARM_AC_PHASE_LOSS)) != 0U);
+}
+
+static bool ev_mod_comm_lost(const AlarmInputs_t *in, uint32_t param) {
+    (void)param;
+    bool active_session = (in->cc.state == CHARGE_CTRL_STATE_RUNNING ||
+                           in->cc.state == CHARGE_CTRL_STATE_READY ||
+                           in->cc.state == CHARGE_CTRL_STATE_PRECHARGE);
+    if (!active_session) return false;
+
+    /* Root cause suppression: if modules went offline due to AC power loss, suppress W010 */
+    if ((in->mod_alarm_or & CHG_LIB_ALARM_AC_UNDER_VOLT) != 0U ||
+        is_alarm_active_or_latched(ALARM_MOD_AC_UNDER_VOLT)) {
+        return false;
+    }
+
+    return (in->mod_offline_count != 0U ||
+            (in->mod_alarm_or & CHG_LIB_ALARM_COMM_FAIL) != 0U);
+}
 
 /* The charge controller reacts to a lost BMS link itself (run_bms_controlled_mode
  * -> set_fault(CHARGE_CTRL_FAULT_BMS_OFFLINE) -> FAULT) usually before this
@@ -301,6 +357,12 @@ static bool ev_bms_comm_lost(const AlarmInputs_t *in, uint32_t param) {
     (void)param;
     if (in->cfg_source_mode != CHARGE_SOURCE_BMS_CONTROLLED) return false;
     if (in->bms.online) return false;
+
+    /* Root cause suppression: suppress E021 if session was stopped by hot unplug (E023 DC load lost) */
+    if (is_alarm_active_or_latched(ALARM_DC_LOAD_LOST)) {
+        return false;
+    }
+
     return (in->cc.state == CHARGE_CTRL_STATE_RUNNING) ||
            (in->cc.state == CHARGE_CTRL_STATE_READY) ||
            ((in->cc.fault_flags & CHARGE_CTRL_FAULT_BMS_OFFLINE) != 0U);
@@ -310,6 +372,12 @@ static bool ev_bms_no_pack_voltage(const AlarmInputs_t *in, uint32_t param) {
     (void)param;
     if (in->cfg_source_mode != CHARGE_SOURCE_BMS_CONTROLLED) return false;
     if (!in->bms.online) return false;
+
+    /* Root cause suppression: suppress E022 if E023 DC load lost is already active/latched */
+    if (is_alarm_active_or_latched(ALARM_DC_LOAD_LOST)) {
+        return false;
+    }
+
     if (in->cc.state != CHARGE_CTRL_STATE_RUNNING &&
         in->cc.state != CHARGE_CTRL_STATE_READY) return false;
     if (in->cfg_vmax_v <= 0.0f) return false;

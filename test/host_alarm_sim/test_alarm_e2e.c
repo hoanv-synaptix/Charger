@@ -120,6 +120,7 @@ static void healthy_bms(float pack_v)
  * field so each test proves the raw-to-normalized mapping independently. */
 static void set_bms_alarm_severity(uint8_t field, uint8_t severity)
 {
+    g_sim_bms.alm_info_tx_enabled = true;
     switch (field) {
         case 0:  g_sim_bms.low_pack_volt       = severity; break;
         case 1:  g_sim_bms.low_cell_volt       = severity; break;
@@ -313,8 +314,13 @@ static bool setup_variant(uint8_t module_type, uint8_t module_count,
         registered = true;
     }
     mock_tick = 0;
-    g_sim_driver_kind = (module_type == CHARGE_MODULE_TYPE_MAXWELL)
-        ? SIM_DRV_MAXWELL : SIM_DRV_TONHE;
+    if (module_type == CHARGE_MODULE_TYPE_MAXWELL) {
+        g_sim_driver_kind = SIM_DRV_MAXWELL;
+    } else if (module_type == CHARGE_MODULE_TYPE_LIANMING) {
+        g_sim_driver_kind = SIM_DRV_LIANMING;
+    } else {
+        g_sim_driver_kind = SIM_DRV_TONHE;
+    }
     sim_install_backend(g_sim_driver_kind);
     if (module_count > 1U && g_sim_driver_kind == SIM_DRV_MAXWELL) {
         sim_module_reset_n(module_count, 1U, 0U);
@@ -1639,11 +1645,381 @@ static bool test_alarm_time_format_smart(void)
     return true;
 }
 
+static bool test_cascade_suppression_comprehensive(void)
+{
+    printf("Running test_cascade_suppression_comprehensive...\n");
 
+    /* ===================================================================
+     * 1. Clean Shutdown in IDLE / Standby (DWIN READY)
+     * When turning off the AC circuit breaker while in IDLE, capacitors drain
+     * over 20-60s. The system must NOT record W011 or E010 or E015 in IDLE.
+     * =================================================================== */
+    ASSERT(setup(NULL), "setup IDLE");
+    healthy_bms(400.0f);
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_IDLE, "must start in IDLE");
+
+    /* AC undervoltage occurs as AC is cut */
+    g_sim_module.tonhe_fault_bits = (1U << 0);
+    drive_ms(15000U); /* Past 10s debounce */
+    ASSERT(!alarm_active(ALARM_MOD_AC_UNDER_VOLT), "AC undervolt in IDLE must NOT trip W011");
+
+    /* Capacitors drain further, module sets HW fault and PFC fault */
+    g_sim_module.tonhe_fault_bits |= (1U << 7); /* HW fault */
+    g_sim_module.tonhe_pfc_bits = 0xFF;         /* PFC fault */
+    drive_ms(2000U);
+    ASSERT(!alarm_active(ALARM_MOD_HW_FAULT), "HW fault caused by AC drain in IDLE must NOT trip E010");
+    ASSERT(!alarm_active(ALARM_MOD_PFC_FAULT), "PFC fault caused by AC drain in IDLE must NOT trip E015");
+
+    /* Module loses power completely (offline) */
+    g_sim_module.actually_on = false;
+    drive_ms(3000U);
+    ASSERT(!alarm_active(ALARM_MOD_COMM_FAIL), "Module going dark in IDLE must NOT trip W010");
+
+    AlarmView_t av;
+    Alarm_GetView(&av);
+    ASSERT(av.active_count == 0U, "Clean shutdown in IDLE must have 0 active alarms");
+    ASSERT(av.worst_code == ALARM_NONE, "Clean shutdown in IDLE must have worst_code 0000");
+
+    /* ===================================================================
+     * 2. Zero False Negatives: Genuine Hardware Failure in IDLE
+     * While AC is healthy, if a module actually fails hardware, E010 MUST fire!
+     * =================================================================== */
+    ASSERT(setup(NULL), "setup genuine HW fault in IDLE");
+    healthy_bms(400.0f);
+    g_sim_module.tonhe_fault_bits = (1U << 7); /* HW fault only, AC is healthy (bit 0 = 0) */
+    drive_ms(200U);
+    ASSERT(alarm_active(ALARM_MOD_HW_FAULT), "Genuine HW fault in IDLE must trip E010 (zero false negatives)");
+
+    /* ===================================================================
+     * 3. Specific Module Fault suppresses Generic E010
+     * When short circuit (E013) or over-temp occurs, module sets HW fault bit too.
+     * Only E013 should be reported, generic E010 must be suppressed.
+     * =================================================================== */
+    ASSERT(setup(NULL), "setup specific vs generic");
+    healthy_bms(400.0f);
+    ASSERT(start_running(), "start running");
+    g_sim_module.tonhe_fault_bits = (1U << 15) | (1U << 7); /* Short-circuit + HW fault */
+    drive_ms(200U);
+    ASSERT(alarm_active(ALARM_MOD_SHORT_CIRCUIT), "Short circuit must trip E013");
+    ASSERT(!alarm_active(ALARM_MOD_HW_FAULT), "Specific short circuit must suppress generic E010");
+
+    /* ===================================================================
+     * 4. AC Loss during RUNNING suppresses secondary HW/PFC faults
+     * During RUNNING, AC undervolt raises W011. As capacitors drain, secondary
+     * HW fault and PFC fault must be suppressed.
+     * =================================================================== */
+    ASSERT(setup(NULL), "setup AC loss in RUNNING");
+    healthy_bms(400.0f);
+    ASSERT(start_running(), "start running");
+    g_sim_module.tonhe_fault_bits = (1U << 0); /* AC undervolt */
+    drive_ms(10500U);                          /* Past 10s debounce */
+    ASSERT(alarm_active(ALARM_MOD_AC_UNDER_VOLT), "AC undervolt during RUNNING must trip W011");
+
+    /* Caps drain and module sets HW fault and PFC fault */
+    g_sim_module.tonhe_fault_bits |= (1U << 7);
+    g_sim_module.tonhe_pfc_bits = 0xFF;
+    drive_ms(500U);
+    ASSERT(alarm_active(ALARM_MOD_AC_UNDER_VOLT), "W011 must remain root alarm");
+    ASSERT(!alarm_active(ALARM_MOD_HW_FAULT), "HW fault during AC loss must be suppressed");
+    ASSERT(!alarm_active(ALARM_MOD_PFC_FAULT), "PFC fault during AC loss must be suppressed");
+
+    /* ===================================================================
+     * 5. Hot Unplug (E023) suppresses subsequent BMS CAN loss (E021) and No Pack (E022)
+     * =================================================================== */
+    ASSERT(setup(NULL), "setup hot unplug cascade");
+    healthy_bms(400.0f);
+    ASSERT(start_running(), "start running for hot unplug");
+
+    /* Establish real current */
+    establish_load(400.0f, 40.0f);
+
+    /* Hot unplug: current drops to 0A, module output stays at target */
+    ChargeCtrlView_t cv_hu;
+    ChargeController_GetView(&cv_hu);
+    g_sim_module.voltage = cv_hu.target_voltage_v;
+    g_sim_module.current = 0.0f;
+    g_sim_bms.pack_current_a = 0.0f;
+    drive_ms(1500U); /* Past 800ms debounce */
+    ASSERT(alarm_active(ALARM_DC_LOAD_LOST), "E023 must trip on hot unplug");
+
+    /* BMS communication drops after hot unplug (car powers down, CAN lost) */
+    g_sim_bms.transmitting = false;
+    drive_ms(6000U); /* Past 5000ms BMS comm timeout */
+    ASSERT(alarm_logged_raise(ALARM_DC_LOAD_LOST), "E023 must have been logged as root cause");
+    ASSERT(!alarm_logged_raise(ALARM_BMS_COMM_LOST), "Subsequent BMS comm lost must not be logged");
+    ASSERT(!alarm_logged_raise(ALARM_BMS_NO_PACK_VOLTAGE), "Subsequent No Pack Voltage must not be logged");
+
+    printf("[PASS] test_cascade_suppression_comprehensive\n");
+    return true;
+}
+
+#define TEST_MXR_ALARM_MODULE_FAULT     (1U << 0)
+#define TEST_MXR_ALARM_DCDC_OV          (1U << 7)
+#define TEST_MXR_ALARM_AC_OV            (1U << 13)
+#define TEST_MXR_ALARM_AC_UNDERVOLTAGE  (1U << 14)
+#define TEST_MXR_ALARM_TEMP_DERATING    (1U << 24)
+
+static bool test_all_31_codes_metadata_and_contracts(void)
+{
+    printf("Running test_all_31_codes_metadata_and_contracts...\n");
+    static const char *const k_expected_codes[ALARM_CODE_COUNT] = {
+        [ALARM_NONE]                    = "----",
+        [ALARM_BMS_LOW_PACK_VOLT]       = "E001",
+        [ALARM_BMS_LOW_CELL_VOLT]       = "E002",
+        [ALARM_BMS_HIGH_PACK_VOLT]      = "E003",
+        [ALARM_BMS_HIGH_CELL_VOLT]      = "E004",
+        [ALARM_BMS_TEMP_HIGH_CHG]       = "E005",
+        [ALARM_BMS_TEMP_HIGH_DCHG]      = "W001",
+        [ALARM_BMS_TEMP_LOW_CHG]        = "E006",
+        [ALARM_BMS_TEMP_LOW_DCHG]       = "W002",
+        [ALARM_BMS_TEMP_RELAY_HIGH]     = "W003",
+        [ALARM_BMS_OVER_CHG_CURR]       = "E007",
+        [ALARM_BMS_OVER_DCHG_CURR]      = "W004",
+        [ALARM_MOD_HW_FAULT]            = "E010",
+        [ALARM_MOD_COMM_FAIL]           = "W010",
+        [ALARM_MOD_OVER_TEMP]           = "E011",
+        [ALARM_MOD_OVER_VOLT_OUT]       = "E012",
+        [ALARM_MOD_SHORT_CIRCUIT]       = "E013",
+        [ALARM_MOD_AC_UNDER_VOLT]       = "W011",
+        [ALARM_MOD_OVER_CURR_OUT]       = "E014",
+        [ALARM_MOD_PFC_FAULT]           = "E015",
+        [ALARM_CTRL_NO_MODULE]          = "E027",
+        [ALARM_CTRL_MODULE_MISMATCH]    = "E028",
+        [ALARM_CTRL_INVALID_CONFIG]     = "E029",
+        [ALARM_CTRL_JACK_OVER_V]        = "E030",
+        [ALARM_CTRL_JACK_OVER_TEMP]     = "E031",
+        [ALARM_BMS_COMM_LOST]           = "E021",
+        [ALARM_BMS_NO_PACK_VOLTAGE]     = "E022",
+        [ALARM_DC_LOAD_LOST]            = "E023",
+        [ALARM_DC_OUT_NOT_ESTABLISHED]  = "E024",
+        [ALARM_MOD_FAN_FAULT]           = "E016",
+        [ALARM_MOD_AC_OVER_VOLT]        = "E017",
+        [ALARM_BMS_VOLT_MISMATCH]       = "E032"
+    };
+
+    for (uint32_t i = 1; i < ALARM_CODE_COUNT; i++) {
+        const char *code_str = DWIN_Alarm_GetCodeString((AlarmCode_t)i);
+        ASSERT(code_str != NULL, "Code string must not be NULL");
+        ASSERT(strcmp(code_str, k_expected_codes[i]) == 0, "Code string mismatch with contract");
+
+        uint8_t desc_len = 0;
+        const uint16_t *desc = DWIN_Alarm_GetDescUtf16((AlarmCode_t)i, &desc_len);
+        ASSERT(desc != NULL, "UTF-16 description must not be NULL");
+        ASSERT(desc_len > 0, "UTF-16 description length must be > 0");
+    }
+
+    ASSERT(strcmp(DWIN_Alarm_GetCodeString((AlarmCode_t)0), "0000") == 0, "ALARM_NONE must return 0000");
+    ASSERT(strcmp(DWIN_Alarm_GetCodeString((AlarmCode_t)ALARM_CODE_COUNT), "E999") == 0, "OOB must return E999");
+
+    printf("[PASS] test_all_31_codes_metadata_and_contracts\n");
+    return true;
+}
+
+static bool test_alarm_action_priority_arbiter(void)
+{
+    printf("Running test_alarm_action_priority_arbiter...\n");
+    ASSERT(setup(NULL), "setup arbiter");
+    healthy_bms(400.0f);
+    ASSERT(start_running(), "start running arbiter");
+
+    /* 1. Only INFO alarm: ALARM_BMS_LOW_CELL_VOLT (E002) */
+    set_bms_alarm_severity(1, 1); /* low_cell_volt */
+    drive_ms(800U);
+    ASSERT(alarm_active(ALARM_BMS_LOW_CELL_VOLT), "E002 should be active");
+    AlarmView_t v1;
+    Alarm_GetView(&v1);
+    ASSERT(v1.highest_action == ALARM_ACT_INFO, "Single E002 must have ALARM_ACT_INFO");
+    ASSERT(v1.worst_code == ALARM_BMS_LOW_CELL_VOLT, "Worst code must be E002");
+
+    /* 2. Co-existence: INFO (E002) + STOP (E001) */
+    set_bms_alarm_severity(0, 1); /* low_pack_volt */
+    drive_ms(800U);
+    ASSERT(alarm_active(ALARM_BMS_LOW_PACK_VOLT), "E001 should be active");
+    AlarmView_t v2;
+    Alarm_GetView(&v2);
+    ASSERT(v2.highest_action == ALARM_ACT_STOP, "STOP must override INFO");
+    ASSERT(v2.worst_code == ALARM_BMS_LOW_PACK_VOLT, "Worst code must be STOP code (E001)");
+
+    /* 3. Co-existence: INFO (E002) + STOP (E001) + ESTOP (E013 Short Circuit) */
+    g_sim_module.tonhe_fault_bits |= (1U << 15); /* Short circuit bit 15 */
+    drive_ms(400U);
+    ASSERT(alarm_active(ALARM_MOD_SHORT_CIRCUIT), "E013 should be active");
+    AlarmView_t v3;
+    Alarm_GetView(&v3);
+    ASSERT(v3.highest_action == ALARM_ACT_ESTOP, "ESTOP must override STOP and INFO");
+    ASSERT(v3.worst_code == ALARM_MOD_SHORT_CIRCUIT, "Worst code must be ESTOP code (E013)");
+
+    printf("[PASS] test_alarm_action_priority_arbiter\n");
+    return true;
+}
+
+static bool test_cascade_suppression_all_three_module_drivers(void)
+{
+    printf("Running test_cascade_suppression_all_three_module_drivers...\n");
+
+    /* ==========================================================
+     * 1. TonHe Driver Verification
+     * ========================================================== */
+    /* 1.1 Clean shutdown at IDLE */
+    ASSERT(setup_variant(CHARGE_MODULE_TYPE_TONHE, 1U, NULL), "setup TonHe IDLE");
+    healthy_bms(400.0f);
+    drive_ms(1000U);
+    g_sim_module.tonhe_fault_bits = (1U << 0) | (1U << 7); /* AC undervolt + HW fault */
+    drive_ms(11000U);
+    AlarmView_t view_th_idle;
+    Alarm_GetView(&view_th_idle);
+    ASSERT(view_th_idle.active_count == 0, "TonHe clean shutdown at IDLE: must have 0 alarms");
+
+    /* 1.2 AC Loss during RUNNING */
+    ASSERT(setup_variant(CHARGE_MODULE_TYPE_TONHE, 1U, NULL), "setup TonHe RUNNING");
+    healthy_bms(400.0f);
+    ASSERT(start_running(), "start TonHe running");
+    g_sim_module.tonhe_fault_bits = (1U << 0); /* AC undervolt */
+    drive_ms(10500U);
+    ASSERT(alarm_active(ALARM_MOD_AC_UNDER_VOLT), "TonHe W011 must be active");
+    g_sim_module.tonhe_fault_bits |= (1U << 7); /* Cap drained, HW fault */
+    g_sim_module.tonhe_pfc_bits = 0xFF;
+    drive_ms(500U);
+    ASSERT(alarm_active(ALARM_MOD_AC_UNDER_VOLT), "TonHe W011 must remain root");
+    ASSERT(!alarm_active(ALARM_MOD_HW_FAULT), "TonHe E010 must be suppressed");
+    ASSERT(!alarm_active(ALARM_MOD_PFC_FAULT), "TonHe E015 must be suppressed");
+
+    /* 1.3 Specific fault vs HW fault */
+    ASSERT(setup_variant(CHARGE_MODULE_TYPE_TONHE, 1U, NULL), "setup TonHe specific");
+    healthy_bms(400.0f);
+    ASSERT(start_running(), "start TonHe running specific");
+    g_sim_module.tonhe_fault_bits = (1U << 5); /* Over-temp */
+    drive_ms(500U);
+    ASSERT(alarm_active(ALARM_MOD_OVER_TEMP), "TonHe E011 must trip on overtemp");
+    ASSERT(!alarm_active(ALARM_MOD_HW_FAULT), "TonHe E010 must be suppressed by E011");
+
+    /* ==========================================================
+     * 2. LianMing Driver Verification
+     * ========================================================== */
+    /* 2.1 Clean shutdown at IDLE */
+    ASSERT(setup_variant(CHARGE_MODULE_TYPE_LIANMING, 1U, NULL), "setup LianMing IDLE");
+    healthy_bms(400.0f);
+    drive_ms(1000U);
+    /* Byte 7 bit 5: Input undervolt (1<<5), Byte 7 bit 1: Module fault (1<<1) */
+    g_sim_module.lianming_status_raw = (1U << 5) | (1U << 1);
+    drive_ms(11000U);
+    AlarmView_t view_lm_idle;
+    Alarm_GetView(&view_lm_idle);
+    ASSERT(view_lm_idle.active_count == 0, "LianMing clean shutdown at IDLE: must have 0 alarms");
+
+    /* 2.2 AC Loss during RUNNING */
+    ASSERT(setup_variant(CHARGE_MODULE_TYPE_LIANMING, 1U, NULL), "setup LianMing RUNNING");
+    healthy_bms(400.0f);
+    ASSERT(start_running(), "start LianMing running");
+    g_sim_module.lianming_status_raw = (1U << 5); /* Input undervolt */
+    drive_ms(10500U);
+    ASSERT(alarm_active(ALARM_MOD_AC_UNDER_VOLT), "LianMing W011 must trip");
+    g_sim_module.lianming_status_raw |= (1U << 1); /* Module fault after caps drain */
+    drive_ms(500U);
+    ASSERT(alarm_active(ALARM_MOD_AC_UNDER_VOLT), "LianMing W011 must remain root");
+    ASSERT(!alarm_active(ALARM_MOD_HW_FAULT), "LianMing E010 must be suppressed");
+
+    /* 2.3 Specific fault vs HW fault: Output overvoltage (Byte 7 bit 6) */
+    ASSERT(setup_variant(CHARGE_MODULE_TYPE_LIANMING, 1U, NULL), "setup LianMing specific");
+    healthy_bms(400.0f);
+    ASSERT(start_running(), "start LianMing running specific");
+    g_sim_module.lianming_status_raw = (1U << 6); /* Output overvoltage */
+    drive_ms(500U);
+    ASSERT(alarm_active(ALARM_MOD_OVER_VOLT_OUT), "LianMing E012 must trip on OV");
+    ASSERT(!alarm_active(ALARM_MOD_HW_FAULT), "LianMing E010 must be suppressed by E012");
+
+    /* ==========================================================
+     * 3. Maxwell Driver Verification
+     * ========================================================== */
+    /* 3.1 Clean shutdown at IDLE */
+    ASSERT(setup_variant(CHARGE_MODULE_TYPE_MAXWELL, 1U, NULL), "setup Maxwell IDLE");
+    healthy_bms(400.0f);
+    drive_ms(1000U);
+    g_sim_module.maxwell_alarm_raw = TEST_MXR_ALARM_AC_UNDERVOLTAGE | TEST_MXR_ALARM_MODULE_FAULT;
+    drive_ms(11000U);
+    AlarmView_t view_mx_idle;
+    Alarm_GetView(&view_mx_idle);
+    ASSERT(view_mx_idle.active_count == 0, "Maxwell clean shutdown at IDLE: must have 0 alarms");
+
+    /* 3.2 AC Loss during RUNNING */
+    ASSERT(setup_variant(CHARGE_MODULE_TYPE_MAXWELL, 1U, NULL), "setup Maxwell RUNNING");
+    healthy_bms(400.0f);
+    ASSERT(start_running(), "start Maxwell running");
+    g_sim_module.maxwell_alarm_raw = TEST_MXR_ALARM_AC_UNDERVOLTAGE;
+    drive_ms(10500U);
+    ASSERT(alarm_active(ALARM_MOD_AC_UNDER_VOLT), "Maxwell W011 must trip");
+    g_sim_module.maxwell_alarm_raw |= TEST_MXR_ALARM_MODULE_FAULT;
+    drive_ms(500U);
+    ASSERT(alarm_active(ALARM_MOD_AC_UNDER_VOLT), "Maxwell W011 must remain root");
+    ASSERT(!alarm_active(ALARM_MOD_HW_FAULT), "Maxwell E010 must be suppressed");
+
+    /* 3.3 Specific fault vs HW fault: DCDC OV */
+    ASSERT(setup_variant(CHARGE_MODULE_TYPE_MAXWELL, 1U, NULL), "setup Maxwell specific");
+    healthy_bms(400.0f);
+    ASSERT(start_running(), "start Maxwell running specific");
+    g_sim_module.maxwell_alarm_raw = TEST_MXR_ALARM_DCDC_OV;
+    drive_ms(2000U); /* Give Maxwell round-robin polling time to poll ALARM_STATUS */
+    ASSERT(alarm_active(ALARM_MOD_OVER_VOLT_OUT), "Maxwell E012 must trip on DCDC OV");
+    ASSERT(!alarm_active(ALARM_MOD_HW_FAULT), "Maxwell E010 must be suppressed by E012");
+
+    printf("[PASS] test_cascade_suppression_all_three_module_drivers\n");
+    return true;
+}
+
+static bool test_bms_isolation_and_cascade(void)
+{
+    printf("Running test_bms_isolation_and_cascade...\n");
+
+    /* 1. Normal session: E022 vs E021 mutual exclusivity */
+    ASSERT(setup(NULL), "setup bms isolation");
+    healthy_bms(400.0f);
+    ASSERT(start_running(), "start running bms isolation");
+
+    /* Pack voltage collapses while BMS CAN is online */
+    g_sim_bms.pack_voltage_v = 100.0f; /* < 50% Vmax */
+    drive_ms(800U);
+    ASSERT(alarm_active(ALARM_BMS_NO_PACK_VOLTAGE), "E022 must trip when CAN online and Vpack low");
+    ASSERT(!alarm_active(ALARM_BMS_COMM_LOST), "E021 must NOT trip when CAN online");
+
+    /* Once session stops due to E022, subsequent BMS offline does not falsely raise E021 */
+    g_sim_bms.transmitting = false;
+    drive_ms(6000U);
+    ASSERT(!alarm_active(ALARM_BMS_COMM_LOST), "E021 must not trip after session stopped by E022");
+
+    /* 2. Direct BMS CAN loss during active session */
+    ASSERT(setup(NULL), "setup bms comm loss");
+    healthy_bms(400.0f);
+    ASSERT(start_running(), "start running bms comm loss");
+    g_sim_bms.transmitting = false;
+    drive_ms(6000U);
+    ASSERT(alarm_active(ALARM_BMS_COMM_LOST), "E021 must trip when BMS CAN lost during running");
+    ASSERT(!alarm_active(ALARM_BMS_NO_PACK_VOLTAGE), "E022 must not trip when BMS offline");
+
+    /* 3. Standalone mode: BMS alarms completely disabled */
+    ChargeCycleConfig_t cfg_sa;
+    ASSERT(setup(&cfg_sa), "setup standalone");
+    cfg_sa.charge_source_mode = CHARGE_SOURCE_STANDALONE_NO_BMS;
+    ASSERT(ChargeCycleConfig_Set(&cfg_sa), "set standalone mode");
+    g_sim_bms.transmitting = false;
+    drive_ms(6000U);
+    AlarmView_t v_sa;
+    Alarm_GetView(&v_sa);
+    ASSERT(!alarm_active(ALARM_BMS_COMM_LOST), "E021 must be disabled in standalone");
+    ASSERT(!alarm_active(ALARM_BMS_NO_PACK_VOLTAGE), "E022 must be disabled in standalone");
+
+    printf("[PASS] test_bms_isolation_and_cascade\n");
+    return true;
+}
 
 int main(void)
 {
     bool ok = true;
+    ok &= test_all_31_codes_metadata_and_contracts();
+    ok &= test_alarm_action_priority_arbiter();
+    ok &= test_cascade_suppression_all_three_module_drivers();
+    ok &= test_bms_isolation_and_cascade();
     ok &= test_bms_alm_info_raw_e005();
     ok &= test_alarm_log_sequence_survives_full_ring();
     ok &= test_all_bms_alm_info_fields_from_pdf();
@@ -1674,6 +2050,7 @@ int main(void)
     ok &= test_bms_alarm_timeout_auto_recovers_to_0000();
     ok &= test_bms_volt_mismatch_e032();
     ok &= test_alarm_time_format_smart();
+    ok &= test_cascade_suppression_comprehensive();
 
     if (ok) { printf("\nALL TESTS PASSED.\n"); return 0; }
     printf("\nSOME TESTS FAILED.\n");
