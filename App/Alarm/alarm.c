@@ -61,6 +61,7 @@
 #define ALARM_DB_AC_UNDERVOLT_SET_MS 1000U   /* 1s filter: prompt AC drop detection during active charge */
 #define ALARM_DB_AC_UNDERVOLT_CLEAR_MS 3000U /* 3s filter: grid stabilization recovery hysteresis */
 #define ALARM_DB_VOLT_MISMATCH_SET_MS 1000U   /* 1s filter: charger voltage vs BMS target mismatch (E032) */
+#define ALARM_DB_HW_FAULT_SET_MS      1000U  /* 1s filter: filter out transient dying frames on power-down */
 #define ALARM_DB_LOAD_LOST_CLEAR_MS   3000U  /* Keep code visible 3s after stop before returning to 0000 */
 
 /* Console (LOG) breadcrumb rate-limit. LOG() blocks up to 50 ms
@@ -218,7 +219,7 @@ static const AlarmSpec_t k_specs[] = {
     { ALARM_BMS_OVER_DCHG_CURR,  ALARM_ACT_INFO,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms, BMS_ALARM_OVER_DCHG_CURR,  "BMS over discharge current" },
 
     /* --- module-reported --- */
-    { ALARM_MOD_HW_FAULT,        ALARM_ACT_STOP,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod_hw_fault, 0,                      "Module hardware fault" },
+    { ALARM_MOD_HW_FAULT,        ALARM_ACT_STOP,  false, ALARM_DB_HW_FAULT_SET_MS, ALARM_DB_MIRROR_CLEAR_MS, ev_mod_hw_fault, 0,                      "Module hardware fault" },
     { ALARM_MOD_COMM_FAIL,       ALARM_ACT_INFO,  false, 0, ALARM_DB_MODULE_COMM_CLEAR_MS, ev_mod_comm_lost, 0,                "Module comms fail" },
     { ALARM_MOD_OVER_TEMP,       ALARM_ACT_STOP,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_OVER_TEMP,        "Module over-temp" },
     { ALARM_MOD_OVER_VOLT_OUT,   ALARM_ACT_ESTOP, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_OVER_VOLTAGE_OUT, "Module output over-voltage" },
@@ -291,9 +292,25 @@ static bool ev_mod_hw_fault(const AlarmInputs_t *in, uint32_t param) {
     (void)param;
     if ((in->mod_alarm_or & CHG_LIB_ALARM_HW_FAULT) == 0U) return false;
 
-    /* Root cause suppression: suppress E010 if AC input is under-voltage (e.g. capacitor discharge on power-off) */
-    if ((in->mod_alarm_or & CHG_LIB_ALARM_AC_UNDER_VOLT) != 0U ||
-        is_alarm_active_or_latched(ALARM_MOD_AC_UNDER_VOLT)) {
+    /* Root cause suppression: suppress E010 if AC input is under-voltage, PFC fault, phase loss,
+     * or frequency fault (e.g. capacitor discharge / power-down when turning off AC breaker) */
+    uint32_t ac_pfc_mask = CHG_LIB_ALARM_AC_UNDER_VOLT |
+                           CHG_LIB_ALARM_PFC_FAULT |
+                           CHG_LIB_ALARM_AC_PHASE_LOSS |
+                           CHG_LIB_ALARM_FREQ_FAULT |
+                           CHG_LIB_ALARM_PFC_IMBALANCE |
+                           CHG_LIB_ALARM_PFC_OVERCURR |
+                           CHG_LIB_ALARM_PFC_OVERVOLT;
+    if ((in->mod_alarm_or & ac_pfc_mask) != 0U ||
+        in->mod_pfc_fault_or != 0U ||
+        is_alarm_active_or_latched(ALARM_MOD_AC_UNDER_VOLT) ||
+        is_alarm_active_or_latched(ALARM_MOD_PFC_FAULT)) {
+        return false;
+    }
+
+    /* In IDLE (standby / not charging), equipment power-down (tắt át) causes module DC bus to collapse.
+     * If any module is offline or going offline, do not report hardware fault in IDLE. */
+    if (in->cc.state == CHARGE_CTRL_STATE_IDLE && in->mod_offline_count != 0U) {
         return false;
     }
 
@@ -321,6 +338,9 @@ static bool ev_mod_ac_undervolt(const AlarmInputs_t *in, uint32_t param) {
 
 static bool ev_mod_pfc(const AlarmInputs_t *in, uint32_t param) {
     (void)param;
+    /* In IDLE, equipment power-down (tắt át) causes PFC shutdown; do not raise E015 in IDLE */
+    if (in->cc.state == CHARGE_CTRL_STATE_IDLE) return false;
+
     /* Root cause suppression: suppress PFC fault if caused by AC under-voltage / power-down */
     if ((in->mod_alarm_or & CHG_LIB_ALARM_AC_UNDER_VOLT) != 0U ||
         is_alarm_active_or_latched(ALARM_MOD_AC_UNDER_VOLT)) {

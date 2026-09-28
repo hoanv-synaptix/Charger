@@ -170,10 +170,10 @@ static CHG_LIB_AlarmFlag_t tonhe_parse_fault(uint16_t fault_bits, uint8_t pfc_bi
     if (fault_bits & (1U << 5)) flags |= CHG_LIB_ALARM_OVER_TEMP;          /* Temperature high */
     if (fault_bits & (1U << 6)) flags |= CHG_LIB_ALARM_FAN_FAULT;          /* Fan fault */
     if (fault_bits & (1U << 7)) flags |= CHG_LIB_ALARM_HW_FAULT;           /* Hardware fault */
-    if (fault_bits & (1U << 8)) flags |= CHG_LIB_ALARM_HW_FAULT;           /* Bus exception */
+    if (fault_bits & (1U << 8)) flags |= CHG_LIB_ALARM_PFC_FAULT;          /* Bus exception (DC link bus voltage drop) */
     if (fault_bits & (1U << 9)) flags |= CHG_LIB_ALARM_COMM_FAIL;          /* SCI communication */
     if (fault_bits & (1U << 10)) flags |= CHG_LIB_ALARM_HW_FAULT;         /* Discharge fault */
-    if (fault_bits & (1U << 11)) flags |= CHG_LIB_ALARM_HW_FAULT;         /* PFC shutdown */
+    if (fault_bits & (1U << 11)) flags |= CHG_LIB_ALARM_PFC_FAULT;         /* PFC shutdown */
     if (fault_bits & (1U << 12)) flags |= CHG_LIB_ALARM_OUTPUT_UNDER_VOLT; /* Output undervoltage warning */
     if (fault_bits & (1U << 13)) flags |= CHG_LIB_ALARM_OUTPUT_OVER_VOLT_WARN; /* Output overvoltage warning */
     if (fault_bits & (1U << 14)) flags |= CHG_LIB_ALARM_OVER_TEMP;        /* Power limit due to high temperature */
@@ -184,7 +184,7 @@ static CHG_LIB_AlarmFlag_t tonhe_parse_fault(uint16_t fault_bits, uint8_t pfc_bi
     if (pfc_bits & (1U << 0)) flags |= CHG_LIB_ALARM_PFC_OVERCURR;        /* Input overcurrent */
     if (pfc_bits & (1U << 1)) flags |= CHG_LIB_ALARM_FREQ_FAULT;           /* Mains frequency fault */
     if (pfc_bits & (1U << 2)) flags |= CHG_LIB_ALARM_PFC_IMBALANCE;       /* Mains imbalance */
-    if (pfc_bits & (1U << 3)) flags |= CHG_LIB_ALARM_HW_FAULT;            /* DCTz fault */
+    if (pfc_bits & (1U << 3)) flags |= CHG_LIB_ALARM_PFC_FAULT;            /* DCTz fault (PFC driver trip) */
     if (pfc_bits & (1U << 4)) flags |= CHG_LIB_ALARM_HW_FAULT;            /* Address conflict */
     if (pfc_bits & (1U << 5)) flags |= CHG_LIB_ALARM_PFC_IMBALANCE;       /* Bus bias */
     if (pfc_bits & (1U << 6)) flags |= CHG_LIB_ALARM_AC_PHASE_LOSS;       /* Phase exception */

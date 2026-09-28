@@ -1661,15 +1661,18 @@ static bool test_cascade_suppression_comprehensive(void)
     ChargeController_GetView(&cv);
     ASSERT(cv.state == CHARGE_CTRL_STATE_IDLE, "must start in IDLE");
 
-    /* AC undervoltage occurs as AC is cut */
-    g_sim_module.tonhe_fault_bits = (1U << 0);
-    drive_ms(15000U); /* Past 10s debounce */
+    /* AC is cut: In real hardware, module sends bus exception / PFC shutdown without bit 0 */
+    g_sim_module.tonhe_fault_bits = (1U << 8) | (1U << 11); /* Bus exception + PFC shutdown */
+    g_sim_module.tonhe_pfc_bits = 0x08;                     /* DCTz fault */
+    drive_ms(500U);
+    ASSERT(!alarm_active(ALARM_MOD_HW_FAULT), "HW fault caused by AC drain in IDLE must NOT trip E010");
+    ASSERT(!alarm_active(ALARM_MOD_PFC_FAULT), "PFC fault caused by AC drain in IDLE must NOT trip E015");
     ASSERT(!alarm_active(ALARM_MOD_AC_UNDER_VOLT), "AC undervolt in IDLE must NOT trip W011");
 
     /* Capacitors drain further, module sets HW fault and PFC fault */
     g_sim_module.tonhe_fault_bits |= (1U << 7); /* HW fault */
     g_sim_module.tonhe_pfc_bits = 0xFF;         /* PFC fault */
-    drive_ms(2000U);
+    drive_ms(500U);
     ASSERT(!alarm_active(ALARM_MOD_HW_FAULT), "HW fault caused by AC drain in IDLE must NOT trip E010");
     ASSERT(!alarm_active(ALARM_MOD_PFC_FAULT), "PFC fault caused by AC drain in IDLE must NOT trip E015");
 
@@ -1690,7 +1693,9 @@ static bool test_cascade_suppression_comprehensive(void)
     ASSERT(setup(NULL), "setup genuine HW fault in IDLE");
     healthy_bms(400.0f);
     g_sim_module.tonhe_fault_bits = (1U << 7); /* HW fault only, AC is healthy (bit 0 = 0) */
-    drive_ms(200U);
+    drive_ms(500U);
+    ASSERT(!alarm_active(ALARM_MOD_HW_FAULT), "Transient HW fault < 1000ms must not trip E010 yet");
+    drive_ms(600U); /* Total 1100ms > 1000ms */
     ASSERT(alarm_active(ALARM_MOD_HW_FAULT), "Genuine HW fault in IDLE must trip E010 (zero false negatives)");
 
     /* ===================================================================

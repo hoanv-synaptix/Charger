@@ -2,6 +2,20 @@
 
 Tất cả các thay đổi quan trọng theo từng phiên bản phát hành của hệ thống Charger Firmware và Tool điều khiển.
 
+## [V2.0.13] - 2026-09-28
+
+### 🚀 Triệt Tiêu Lỗi Ảo Phần Cứng (E010) Khi Ngắt Nguồn AC Ở Chế Độ IDLE
+- **Sửa ánh xạ cờ trạng thái module TonHe (`chg_lib_tonhe.c`):**
+  - Chuyển phân loại cờ Bit 11 (`PFC shutdown`) và Bit 8 (`Bus exception`) từ `CHG_LIB_ALARM_HW_FAULT` sang `CHG_LIB_ALARM_PFC_FAULT`. Khắc phục triệt để việc module bị nhận diện nhầm là "Lỗi phần cứng" khi tụ DC-link xả điện lúc ngắt nguồn AC/Aptomat.
+  - Sửa cờ `pfc_bits bit 3` (`DCTz fault`) ánh xạ đúng vào `CHG_LIB_ALARM_PFC_FAULT`.
+- **Bổ sung bộ lọc trễ cho cảnh báo phần cứng (`ALARM_MOD_HW_FAULT`):**
+  - Thiết lập `ALARM_DB_HW_FAULT_SET_MS = 1000U` (1.0 giây). Lọc sạch các frame nhiễu/hấp hối (dying frames) trong giai đoạn vi điều khiển module sạc tắt nguồn, loại bỏ hoàn toàn hiện tượng báo lỗi rồi tự xóa về `CODE: 0000` trước khi sập nguồn.
+- **Nâng cấp cơ chế khóa chặn cảnh báo tầng (`ev_mod_hw_fault` & `ev_mod_pfc`):**
+  - Mở rộng mặt nạ triệt tiêu `E010`: Bất cứ khi nào nguồn AC xuất hiện bất thường (sụt áp, mất pha, lỗi PFC, lệch tần số), cảnh báo `E010 Lỗi phần cứng bộ sạc` sẽ tự động bị khóa chặn.
+  - Ở trạng thái IDLE (Standby), nếu phát hiện module chuyển sang offline do người dùng ngắt nguồn AC, hệ thống sẽ ức chế hoàn toàn các cờ báo lỗi phần cứng và PFC, đảm bảo quá trình tắt máy (power-down) diễn ra êm đềm, không ghi log rác vào màn hình DWIN HMI.
+
+---
+
 ## [V2.0.12] - 2026-09-28
 
 ### 🚀 Tối Ưu Hệ Thống Cảnh Báo (Alarm Debounce) & Bảng Hiển Thị Lịch Sử DWIN HMI
