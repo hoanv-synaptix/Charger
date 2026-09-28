@@ -187,6 +187,25 @@ void DWIN_Alarm_RefreshDayRollover(void);
 uint32_t DWIN_RTC_GetEpoch(void);
 
 /**
+ * @brief Structure representing a single alarm row for DWIN table update.
+ */
+typedef struct {
+    uint32_t timestamp_s;
+    const char *code_str;
+    const uint16_t *desc_utf16;
+    uint8_t desc_len;
+} DwinAlarmRowInput_t;
+
+/**
+ * @brief Synchronize the 12-row DWIN alarm table directly from an ordered list of alarms.
+ *        Row 0 gets entries[0] (newest), Row 1 gets entries[1], etc.
+ *        Diff-suppression: only rows whose content actually changes are marked dirty.
+ * @param entries Array of up to VP_ALARM_ROW_COUNT alarm entries (newest first).
+ * @param count   Number of valid entries in the array (0..12). Rows beyond count are cleared.
+ */
+void DWIN_Alarm_SyncTable(const DwinAlarmRowInput_t *entries, uint8_t count);
+
+/**
  * @brief Clear all 4 alarm rows on the panel.
  */
 void DWIN_Alarm_ClearAll(void);

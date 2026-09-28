@@ -56,7 +56,7 @@
 #define ERROR_BEEP_DURATION_X8MS     20U     /* 20 * 8ms = 160ms buzzer beep */
 
 #define DWIN_BOOT_DELAY_MS           3000U   /* Wait for DWIN panel to finish boot */
-#define DWIN_HEARTBEAT_INTERVAL_MS   5000U   /* Periodic force-full-refresh interval */
+#define DWIN_HEARTBEAT_INTERVAL_MS   10000U  /* Periodic force-full-refresh interval */
 #define DWIN_UPDATE_INTERVAL_MS      20U     /* Field scatter cadence (20ms per group -> ~220ms full cycle) */
 #define DWIN_RESET_INTERVAL_MS       (12U * 60U * 60U * 1000U)
 #define DWIN_REBOOT_WAIT_MS          3000U   /* Wait for panel after SW reset */
@@ -1189,34 +1189,29 @@ void App_Loop(void)
             strncpy(dd.topbar_fault_code, c_str, sizeof(dd.topbar_fault_code) - 1U);
         }
 
-        /* Synchronize alarm event log with DWIN 4-row FIFO ring buffer.
-         * The RAM log count saturates at ALARM_LOG_DEPTH, so use its
-         * generation counter to detect writes after the ring is full. */
-        static uint32_t s_last_log_sequence = 0U;
+        /* Synchronize alarm event log with DWIN 12-row table across 3 pages.
+         * Extract up to 12 newest RAISED alarms directly from Alarm_GetLogWithTimestamps()
+         * (which returns newest-first: index 0 is newest). Row 0 is guaranteed to hold the
+         * newest raised alarm, Row 1 the 2nd newest, etc. Diff-suppression inside DWIN_Alarm_SyncTable
+         * ensures zero UART traffic when alarms do not change. */
         AlarmLogEntry_t log_entries[ALARM_LOG_DEPTH];
         uint32_t log_timestamps[ALARM_LOG_DEPTH];
         uint8_t log_count = Alarm_GetLogWithTimestamps(log_entries, log_timestamps, ALARM_LOG_DEPTH);
-        uint32_t log_sequence = Alarm_GetLogSequence();
-        uint32_t new_events = log_sequence - s_last_log_sequence;
-        if (new_events > ALARM_LOG_DEPTH) {
-            new_events = ALARM_LOG_DEPTH;
-        }
-        if (new_events > 0U) {
-            /* Alarm_GetLog returns newest-first: index 0 is newest.
-             * Push oldest-of-new-batch first so newest ends up at row 0. */
-            for (int8_t i = (int8_t)new_events - 1; i >= 0; i--) {
-                if (log_entries[i].event == 1U) { /* Raised */
-                    AlarmCode_t c = (AlarmCode_t)log_entries[i].code;
-                    const char *c_str = DWIN_Alarm_GetCodeString(c);
-                    uint8_t d_len = 0;
-                    const uint16_t *d_utf16 = DWIN_Alarm_GetDescUtf16(c, &d_len);
 
-                    DWIN_Alarm_PushWithTimestamp(log_timestamps[i], c_str, d_utf16, d_len);
-                }
+        DwinAlarmRowInput_t alarm_inputs[VP_ALARM_ROW_COUNT];
+        uint8_t alarm_row_count = 0U;
+
+        for (uint8_t i = 0; (i < log_count) && (alarm_row_count < VP_ALARM_ROW_COUNT); i++) {
+            if (log_entries[i].event == 1U) { /* Raised */
+                AlarmCode_t c = (AlarmCode_t)log_entries[i].code;
+                alarm_inputs[alarm_row_count].timestamp_s = log_timestamps[i];
+                alarm_inputs[alarm_row_count].code_str = DWIN_Alarm_GetCodeString(c);
+                alarm_inputs[alarm_row_count].desc_utf16 = DWIN_Alarm_GetDescUtf16(c, &alarm_inputs[alarm_row_count].desc_len);
+                alarm_row_count++;
             }
         }
-        (void)log_count; /* Snapshot size is used to bound available entries. */
-        s_last_log_sequence = log_sequence;
+
+        DWIN_Alarm_SyncTable(alarm_inputs, alarm_row_count);
 
         /* Refresh day-rollover once per second so midnight transition updates HH:MM:SS to HHhDD/MM */
         static uint32_t s_last_day_rollover_tick = 0U;

@@ -1144,15 +1144,14 @@ static bool test_module_ac_undervolt_mirrored_and_derived(void)
     healthy_bms(400.0f);
     ASSERT(start_running(), "controller never RUNNING");
 
-    /* 1. Transient AC undervoltage (e.g. capacitor discharge when AC is turned off, < 10000 ms)
-     * must NOT trip W011. */
+    /* 1. Transient AC undervoltage (< 1000 ms) must NOT trip W011. */
     g_sim_module.tonhe_fault_bits = (1U << 0);   /* input undervoltage */
-    drive_ms(5000U);
-    ASSERT(!alarm_active(ALARM_MOD_AC_UNDER_VOLT), "transient AC undervolt < 10s must NOT trip W011");
+    drive_ms(500U);
+    ASSERT(!alarm_active(ALARM_MOD_AC_UNDER_VOLT), "transient AC undervolt < 1s must NOT trip W011");
 
-    /* Continuing past 10000 ms debounce -> now trips W011 (INFO only) */
-    drive_ms(5500U); /* total 10500 ms */
-    ASSERT(alarm_logged_raise(ALARM_MOD_AC_UNDER_VOLT), "persistent AC undervolt >= 10s must trip W011");
+    /* Continuing past 1000 ms debounce -> now trips W011 (INFO only) */
+    drive_ms(600U); /* total 1100 ms */
+    ASSERT(alarm_logged_raise(ALARM_MOD_AC_UNDER_VOLT), "persistent AC undervolt >= 1s must trip W011");
     ASSERT(alarm_active(ALARM_MOD_AC_UNDER_VOLT), "module AC-undervolt mirror must be active");
 
     /* Controller must remain RUNNING since E026 was removed */
@@ -1160,11 +1159,13 @@ static bool test_module_ac_undervolt_mirrored_and_derived(void)
     ChargeController_GetView(&cv);
     ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "AC under-voltage warning must not stop charge");
 
-    /* 2. AC grid recovers -> module alarm auto-clears after debounce */
+    /* 2. AC grid recovers -> module alarm auto-clears after 3000ms grid stabilization debounce */
     g_sim_module.tonhe_fault_bits = 0;
     drive_ms(1500U);
+    ASSERT(alarm_active(ALARM_MOD_AC_UNDER_VOLT), "module AC-undervolt mirror must stay active during 3s stabilization");
 
-    ASSERT(!alarm_active(ALARM_MOD_AC_UNDER_VOLT), "module AC-undervolt mirror must clear after AC recovers");
+    drive_ms(1600U); /* total 3100 ms > 3000 ms */
+    ASSERT(!alarm_active(ALARM_MOD_AC_UNDER_VOLT), "module AC-undervolt mirror must clear after 3s AC recovery");
     AlarmView_t av;
     Alarm_GetView(&av);
     ASSERT(av.worst_code == ALARM_NONE, "worst_code must return to ALARM_NONE (0000)");

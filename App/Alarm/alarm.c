@@ -58,7 +58,8 @@
 #define ALARM_DB_MODULE_COMM_CLEAR_MS 200U
 #define ALARM_DB_NO_PACK_SET_MS       500U
 #define ALARM_DB_NO_PACK_CLEAR_MS    1000U
-#define ALARM_DB_AC_UNDERVOLT_SET_MS 10000U  /* 10s filter: suppress false alarm from cap discharge on AC turn-off */
+#define ALARM_DB_AC_UNDERVOLT_SET_MS 1000U   /* 1s filter: prompt AC drop detection during active charge */
+#define ALARM_DB_AC_UNDERVOLT_CLEAR_MS 3000U /* 3s filter: grid stabilization recovery hysteresis */
 #define ALARM_DB_VOLT_MISMATCH_SET_MS 1000U   /* 1s filter: charger voltage vs BMS target mismatch (E032) */
 #define ALARM_DB_LOAD_LOST_CLEAR_MS   3000U  /* Keep code visible 3s after stop before returning to 0000 */
 
@@ -222,7 +223,7 @@ static const AlarmSpec_t k_specs[] = {
     { ALARM_MOD_OVER_TEMP,       ALARM_ACT_STOP,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_OVER_TEMP,        "Module over-temp" },
     { ALARM_MOD_OVER_VOLT_OUT,   ALARM_ACT_ESTOP, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_OVER_VOLTAGE_OUT, "Module output over-voltage" },
     { ALARM_MOD_SHORT_CIRCUIT,   ALARM_ACT_ESTOP, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_SHORT_CIRCUIT,    "Module output short circuit" },
-    { ALARM_MOD_AC_UNDER_VOLT,   ALARM_ACT_INFO,  false, ALARM_DB_AC_UNDERVOLT_SET_MS, ALARM_DB_MIRROR_CLEAR_MS, ev_mod_ac_undervolt, CHG_LIB_ALARM_AC_UNDER_VOLT, "Module AC under-voltage" },
+    { ALARM_MOD_AC_UNDER_VOLT,   ALARM_ACT_INFO,  false, ALARM_DB_AC_UNDERVOLT_SET_MS, ALARM_DB_AC_UNDERVOLT_CLEAR_MS, ev_mod_ac_undervolt, CHG_LIB_ALARM_AC_UNDER_VOLT, "Module AC under-voltage" },
     { ALARM_MOD_OVER_CURR_OUT,   ALARM_ACT_STOP,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_OVER_CURR_OUT,    "Module output over-current" },
     { ALARM_MOD_PFC_FAULT,       ALARM_ACT_STOP,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod_pfc, 0,                          "Module PFC fault" },
 

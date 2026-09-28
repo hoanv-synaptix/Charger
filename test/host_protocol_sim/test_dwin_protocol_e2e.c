@@ -601,9 +601,9 @@ static bool test_alarm_timestamp_day_rollover(void)
     DWIN_SystemData_t d;
     memset(&d, 0, sizeof(d));
 
-    /* Scatter update to emit row 0 */
+    /* Scatter update to emit all alarm rows (12 rows * 11 steps = 132 steps) */
     reset_capture();
-    for (int i = 0; i < 50; i++) {
+    for (int i = 0; i < 150; i++) {
         DWIN_UpdateData(&d);
     }
 
@@ -642,6 +642,98 @@ static bool test_alarm_timestamp_day_rollover(void)
 
     g_test_epoch = 0U;
     printf("[PASS] test_alarm_timestamp_day_rollover\n");
+    return true;
+}
+
+static bool test_alarm_sync_table(void)
+{
+    printf("Running test_alarm_sync_table...\n");
+    reset_capture();
+    DWIN_Alarm_ClearAll();
+
+    g_test_epoch = 1727506866U; /* 2024-09-28 14:01:06 local */
+
+    const uint16_t desc_hw[]   = { 'H', 'W', 0 };
+    const uint16_t desc_grid[] = { 'A', 'C', 0 };
+
+    DwinAlarmRowInput_t rows[5];
+    /* Row 0: newest (14:01:06) */
+    rows[0].timestamp_s = 1727506866U;
+    rows[0].code_str = "E010";
+    rows[0].desc_utf16 = desc_hw;
+    rows[0].desc_len = 2;
+
+    /* Row 1: 2nd newest (14:00:39) */
+    rows[1].timestamp_s = 1727506839U;
+    rows[1].code_str = "E010";
+    rows[1].desc_utf16 = desc_hw;
+    rows[1].desc_len = 2;
+
+    /* Row 2: 3rd newest (13:58:48) */
+    rows[2].timestamp_s = 1727506728U;
+    rows[2].code_str = "W011";
+    rows[2].desc_utf16 = desc_grid;
+    rows[2].desc_len = 2;
+
+    /* Row 3: 4th newest (13:58:35) */
+    rows[3].timestamp_s = 1727506715U;
+    rows[3].code_str = "E010";
+    rows[3].desc_utf16 = desc_hw;
+    rows[3].desc_len = 2;
+
+    /* Row 4: 5th newest (13:57:10) - lands on Page 2 Row 1 (VP 0x12C0) */
+    rows[4].timestamp_s = 1727506630U;
+    rows[4].code_str = "W011";
+    rows[4].desc_utf16 = desc_grid;
+    rows[4].desc_len = 2;
+
+    DWIN_Alarm_SyncTable(rows, 5);
+
+    DWIN_SystemData_t d;
+    memset(&d, 0, sizeof(d));
+
+    /* Drain scatter steps until all dirty alarm rows are emitted */
+    reset_capture();
+    for (int i = 0; i < 200; i++) {
+        DWIN_UpdateData(&d);
+    }
+
+    /* Verify Row 0 (0x1200) has 14:01:06 and E010 */
+    bool found_row0_time = false, found_row0_code = false;
+    /* Verify Row 4 (0x12C0, Page 2 Row 1) has 13:57:10 and W011 */
+    bool found_row4_time = false, found_row4_code = false;
+
+    for (int i = 0; i < g_tx_count; i++) {
+        uint16_t vp = ((uint16_t)g_tx[i][4] << 8) | g_tx[i][5];
+        if (vp == (VP_ALARM_ROW_1 + ALARM_OFFSET_TIME)) {
+            if (memcmp(&g_tx[i][6], "14:01:06", 8) == 0) found_row0_time = true;
+        }
+        if (vp == (VP_ALARM_ROW_1 + ALARM_OFFSET_CODE)) {
+            if (memcmp(&g_tx[i][6], "E010", 4) == 0) found_row0_code = true;
+        }
+        if (vp == (VP_ALARM_ROW_5 + ALARM_OFFSET_TIME)) {
+            if (memcmp(&g_tx[i][6], "13:57:10", 8) == 0) found_row4_time = true;
+        }
+        if (vp == (VP_ALARM_ROW_5 + ALARM_OFFSET_CODE)) {
+            if (memcmp(&g_tx[i][6], "W011", 4) == 0) found_row4_code = true;
+        }
+    }
+
+    ASSERT(found_row0_time, "Row 0 has newest time 14:01:06");
+    ASSERT(found_row0_code, "Row 0 has code E010");
+    ASSERT(found_row4_time, "Row 4 (Page 2 Row 1) has 13:57:10");
+    ASSERT(found_row4_code, "Row 4 (Page 2 Row 1) has code W011");
+
+    /* Test diff-suppression: syncing identical table produces 0 new frames */
+    reset_capture();
+    DWIN_Alarm_SyncTable(rows, 5);
+    for (int i = 0; i < 50; i++) {
+        DWIN_UpdateData(&d);
+    }
+    ASSERT(g_tx_count == 0, "identical sync emits 0 UART frames (diff-suppression)");
+
+    g_test_epoch = 0U;
+    printf("[PASS] test_alarm_sync_table\n");
     return true;
 }
 
@@ -991,6 +1083,7 @@ int main(void)
     pass &= test_dwin_time_update_not_dropped_when_changed_mid_cycle();
     pass &= test_alarm_fifo_push();
     pass &= test_alarm_timestamp_day_rollover();
+    pass &= test_alarm_sync_table();
     pass &= test_soc_color_write_and_cache();
     pass &= test_dwin_precharge_page_update_and_diff();
     pass &= test_dwin_login_keypad_full_matrix();

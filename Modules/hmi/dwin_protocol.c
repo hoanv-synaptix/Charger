@@ -179,7 +179,8 @@ typedef struct {
 } DwinAlarmRowInternal_t;
 
 static DwinAlarmRowInternal_t s_alarm_rows[VP_ALARM_ROW_COUNT];
-static uint16_t s_alarm_dirty = 0U; /* bitmask of rows 0..11 needing update */
+static uint16_t s_alarm_dirty = 0U;   /* bitmask of rows 0..11 needing update */
+static uint8_t  s_alarm_emit_rr = 0U; /* round-robin emit pointer for fair scheduling */
 
 #if defined(__GNUC__)
 __attribute__((weak))
@@ -341,10 +342,48 @@ void DWIN_Alarm_RefreshDayRollover(void)
     }
 }
 
+void DWIN_Alarm_SyncTable(const DwinAlarmRowInput_t *entries, uint8_t count)
+{
+    if (count > VP_ALARM_ROW_COUNT) {
+        count = VP_ALARM_ROW_COUNT;
+    }
+
+    for (uint8_t i = 0; i < VP_ALARM_ROW_COUNT; i++) {
+        DwinAlarmRowInternal_t new_row;
+        memset(&new_row, 0, sizeof(new_row));
+
+        if (i < count && entries != NULL && entries[i].code_str != NULL && entries[i].code_str[0] != '\0') {
+            new_row.timestamp_s = entries[i].timestamp_s;
+            strncpy(new_row.code_str, entries[i].code_str, sizeof(new_row.code_str) - 1U);
+            if (entries[i].desc_utf16 != NULL && entries[i].desc_len > 0U) {
+                uint8_t n = (entries[i].desc_len > 32U) ? 32U : entries[i].desc_len;
+                memcpy(new_row.desc_utf16, entries[i].desc_utf16, n * sizeof(uint16_t));
+                new_row.desc_len = n;
+            }
+            new_row.valid = true;
+            dwin_format_alarm_time(new_row.timestamp_s, new_row.time_str, sizeof(new_row.time_str));
+        }
+
+        /* Diff-suppression: only mark row dirty if content changed */
+        bool diff = (s_alarm_rows[i].valid != new_row.valid) ||
+                    (s_alarm_rows[i].timestamp_s != new_row.timestamp_s) ||
+                    (strncmp(s_alarm_rows[i].time_str, new_row.time_str, sizeof(new_row.time_str)) != 0) ||
+                    (strncmp(s_alarm_rows[i].code_str, new_row.code_str, sizeof(new_row.code_str)) != 0) ||
+                    (s_alarm_rows[i].desc_len != new_row.desc_len) ||
+                    (memcmp(s_alarm_rows[i].desc_utf16, new_row.desc_utf16, new_row.desc_len * sizeof(uint16_t)) != 0);
+
+        if (diff) {
+            s_alarm_rows[i] = new_row;
+            s_alarm_dirty |= (1U << i);
+        }
+    }
+}
+
 void DWIN_Alarm_ClearAll(void)
 {
     memset(s_alarm_rows, 0, sizeof(s_alarm_rows));
     s_alarm_dirty = (1U << VP_ALARM_ROW_COUNT) - 1U;
+    s_alarm_emit_rr = 0U;
 }
 
 static void dwin_emit_alarm_row(uint8_t row)
@@ -627,10 +666,12 @@ void DWIN_UpdateData(const DWIN_SystemData_t *d)
 
     case STEP_ALARM_ROW:
         if (s_alarm_dirty != 0U) {
-            for (uint8_t r = 0; r < VP_ALARM_ROW_COUNT; r++) {
+            for (uint8_t i = 0; i < VP_ALARM_ROW_COUNT; i++) {
+                uint8_t r = (uint8_t)((s_alarm_emit_rr + i) % VP_ALARM_ROW_COUNT);
                 if ((s_alarm_dirty & (1U << r)) != 0U) {
                     dwin_emit_alarm_row(r);
                     s_alarm_dirty &= ~(1U << r);
+                    s_alarm_emit_rr = (uint8_t)((r + 1U) % VP_ALARM_ROW_COUNT);
                     break; /* Emit ONE row per scatter cycle */
                 }
             }
