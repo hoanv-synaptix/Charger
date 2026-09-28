@@ -18,7 +18,7 @@
 #define TIMEOUT_SHUTDOWN_SETTLE_MS      2000U   /* Wait before cutting PB5 power */
 
 /* UART RX Ring Buffer Size */
-#define QUECTEL_RX_BUF_SIZE             2048U
+#define QUECTEL_RX_BUF_SIZE             8192U
 
 /* Private State */
 static volatile QuectelPowerState_t s_pwr_state = QUECTEL_PWR_OFF;
@@ -62,6 +62,9 @@ void BSP_Quectel_Init(void)
 
     s_rx_tail = 0U;
     s_rx_overflow_count = 0U;
+
+    /* Enable OVRDIS (Overrun Disable) so transient buffer congestion never aborts DMA */
+    huart5.Instance->CR3 |= USART_CR3_OVRDIS;
 
     /* Start USART5 circular DMA RX */
     if (!s_rx_started) {
@@ -110,6 +113,13 @@ void BSP_Quectel_PowerOff(bool graceful)
 
 void BSP_Quectel_Process(uint32_t now_tick)
 {
+    /* Auto-healing watchdog: ensure USART5 circular DMA RX is always running */
+    if (s_rx_started && huart5.hdmarx != NULL && huart5.hdmarx->State != HAL_DMA_STATE_BUSY) {
+        __HAL_UART_CLEAR_FLAG(&huart5, UART_CLEAR_OREF | UART_CLEAR_FEF |
+                                      UART_CLEAR_NEF | UART_CLEAR_PEF);
+        HAL_UART_Receive_DMA(&huart5, s_rx_buf, QUECTEL_RX_BUF_SIZE);
+    }
+
     uint32_t elapsed = now_tick - s_state_start_tick;
 
     switch (s_pwr_state) {

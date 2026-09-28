@@ -29,7 +29,7 @@
 #define OTA_ERASE_TIMEOUT_MS     10000U
 #define OTA_AT_TIMEOUT_MS        12000U  /* AT cmds on EC200U can take up to 10s */
 #define OTA_HTTP_TIMEOUT_MS      90000U  /* HTTP GET/READ requests over 4G */
-#define OTA_BODY_TIMEOUT_MS      45000U  /* Stream chunk timeout tolerating 4G cellular jitter */
+#define OTA_BODY_TIMEOUT_MS      60000U  /* Stream chunk timeout tolerating 4G cellular jitter */
 #define OTA_CURRENT_SAFE_A       0.5f
 #define OTA_DEFAULT_CHECK_INTERVAL_MS (1UL * 60UL * 60UL * 1000UL) /* 1 hour default check cycle */
 #define OTA_AUTO_APPLY_IDLE_DELAY_MS  (3UL * 60UL * 1000UL)  /* 3 continuous IDLE minutes (180s) */
@@ -879,11 +879,24 @@ void OTAService_Process(uint32_t now_tick)
 
     case OTA_STEP_READING_STREAM: {
         uint8_t chunk[OTA_STREAM_CHUNK_SIZE];
-        uint32_t received_total = s_manifest_mode ? s_manifest_received : s_desc.downloaded_bytes;
-        uint32_t remaining = s_read_expected_bytes - received_total;
-        uint16_t wanted = (remaining > sizeof(chunk)) ? sizeof(chunk) : (uint16_t)remaining;
-        uint16_t received = BSP_Quectel_Read(chunk, wanted);
-        if (received > 0U) {
+        bool got_data_this_tick = false;
+
+        /* Drain all available incoming bytes from UART circular DMA in this loop cycle */
+        while (true) {
+            uint32_t current_len = s_manifest_mode ? s_manifest_received : s_desc.downloaded_bytes;
+            if (current_len >= s_read_expected_bytes) {
+                break;
+            }
+            uint32_t remaining = s_read_expected_bytes - current_len;
+            uint16_t wanted = (remaining > sizeof(chunk)) ? sizeof(chunk) : (uint16_t)remaining;
+            uint16_t received = BSP_Quectel_Read(chunk, wanted);
+            if (received == 0U) {
+                break; /* Circular buffer currently drained, yield to main loop */
+            }
+
+            got_data_this_tick = true;
+            s_step_tick = now_tick;
+
             if (s_manifest_mode) {
                 memcpy(&s_manifest_buf[s_manifest_received], chunk, received);
                 s_manifest_received += received;
@@ -903,7 +916,7 @@ void OTAService_Process(uint32_t now_tick)
                         (unsigned long)s_desc.downloaded_bytes, (unsigned long)s_read_expected_bytes);
                 }
             }
-            s_step_tick = now_tick;
+
             if ((s_manifest_mode ? s_manifest_received : s_desc.downloaded_bytes) == s_read_expected_bytes) {
                 if (s_manifest_mode) {
                     LOG("OTA: Manifest read complete (%lu bytes), waiting for OK\r\n",
@@ -916,8 +929,11 @@ void OTAService_Process(uint32_t now_tick)
                     s_step = OTA_STEP_VERIFY;
                     s_step_tick = now_tick;
                 }
+                break;
             }
-        } else if ((uint32_t)(now_tick - s_step_tick) >= OTA_BODY_TIMEOUT_MS) {
+        }
+
+        if (!got_data_this_tick && ((uint32_t)(now_tick - s_step_tick) >= OTA_BODY_TIMEOUT_MS)) {
             LOG("OTA: READING_STREAM stall timeout\r\n");
             fail_ota(OTA_STATUS_ERROR_TIMEOUT);
         }
