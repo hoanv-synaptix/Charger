@@ -1163,8 +1163,8 @@ void App_Loop(void)
             s_total_charged_ah += cur_f * hours;
             s_total_energy_kwh += (cur_f * volt_f * 0.001f) * hours;
         }
-        dd.total_charged_ah_x10 = (uint32_t)(s_total_charged_ah * 10.0f);
-        dd.total_energy_kwh_x10 = (uint32_t)(s_total_energy_kwh * 10.0f);
+        dd.total_charged_ah = (uint32_t)roundf(s_total_charged_ah);
+        dd.total_energy_kwh = (uint32_t)roundf(s_total_energy_kwh);
         ChargeEnergyStorage_Process(now, is_charging, s_total_charged_ah,
                                     s_total_energy_kwh);
 

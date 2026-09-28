@@ -63,8 +63,8 @@ typedef struct {
 
     /* --- setting --- */
     uint32_t uptime_s;
-    uint32_t total_charged_ah_x10;
-    uint32_t total_energy_kwh_x10;
+    uint32_t total_charged_ah;   /* Integer standard (Ah) */
+    uint32_t total_energy_kwh;   /* Integer standard (kWh) */
 } DWIN_SystemData_t;
 
 /** No-op today (BSP owns the UART); kept as the module's init seam. */

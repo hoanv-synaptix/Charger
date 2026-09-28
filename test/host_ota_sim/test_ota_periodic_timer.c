@@ -20,7 +20,7 @@
         } \
     } while (0)
 
-#define OTA_DEFAULT_CHECK_INTERVAL_MS (6U * 3600U * 1000U)
+#define OTA_DEFAULT_CHECK_INTERVAL_MS (1U * 3600U * 1000U) /* 1h default */
 #define OTA_URL_MAX_LENGTH            128U
 
 /* Mock OTA service timer state matching ota_service.c logic */
@@ -118,10 +118,10 @@ static bool test_ota_interval_zero_fallback(void)
     printf("Running test_ota_interval_zero_fallback...\n");
     s_auto_check_triggers = 0;
 
-    /* Interval 0 should fall back to OTA_DEFAULT_CHECK_INTERVAL_MS (6h) */
+    /* Interval 0 should fall back to OTA_DEFAULT_CHECK_INTERVAL_MS (1h) */
     bool ok = sim_set_policy(true, 0U, "https://example.com/manifest.json", 0U);
     ASSERT(ok, "setting policy with interval 0 must succeed");
-    ASSERT(s_policy_interval_ms == OTA_DEFAULT_CHECK_INTERVAL_MS, "interval 0 must fall back to 6h default");
+    ASSERT(s_policy_interval_ms == OTA_DEFAULT_CHECK_INTERVAL_MS, "interval 0 must fall back to 1h default");
 
     printf("[PASS] test_ota_interval_zero_fallback\n");
     return true;

@@ -610,17 +610,15 @@ void DWIN_UpdateData(const DWIN_SystemData_t *d)
 
     case STEP_SETTING_STATS:
         if (first || s_prev_data.uptime_s != d->uptime_s ||
-            s_prev_data.total_charged_ah_x10 != d->total_charged_ah_x10 ||
-            s_prev_data.total_energy_kwh_x10 != d->total_energy_kwh_x10) {
+            s_prev_data.total_charged_ah != d->total_charged_ah ||
+            s_prev_data.total_energy_kwh != d->total_energy_kwh) {
             char str[16];
-            (void)snprintf(str, sizeof(str), "%lu.%u Ah",
-                           (unsigned long)(d->total_charged_ah_x10 / 10U),
-                           (unsigned)(d->total_charged_ah_x10 % 10U));
+            (void)snprintf(str, sizeof(str), "%lu Ah",
+                           (unsigned long)d->total_charged_ah);
             DWIN_SendString(VP_SET_TOTAL_CHARGED, str, 8);
 
-            (void)snprintf(str, sizeof(str), "%lu.%u kWh",
-                           (unsigned long)(d->total_energy_kwh_x10 / 10U),
-                           (unsigned)(d->total_energy_kwh_x10 % 10U));
+            (void)snprintf(str, sizeof(str), "%lu kWh",
+                           (unsigned long)d->total_energy_kwh);
             DWIN_SendString(VP_SET_TOTAL_ENERGY, str, 8);
 
             uint32_t u = d->uptime_s;
@@ -632,8 +630,8 @@ void DWIN_UpdateData(const DWIN_SystemData_t *d)
             DWIN_SendString(VP_SET_UPTIME, str, 8);
 
             s_prev_data.uptime_s = d->uptime_s;
-            s_prev_data.total_charged_ah_x10 = d->total_charged_ah_x10;
-            s_prev_data.total_energy_kwh_x10 = d->total_energy_kwh_x10;
+            s_prev_data.total_charged_ah = d->total_charged_ah;
+            s_prev_data.total_energy_kwh = d->total_energy_kwh;
         }
         break;
 

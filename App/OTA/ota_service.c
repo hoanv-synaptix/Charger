@@ -31,7 +31,7 @@
 #define OTA_HTTP_TIMEOUT_MS      90000U  /* HTTP GET/READ requests over 4G */
 #define OTA_BODY_TIMEOUT_MS      45000U  /* Stream chunk timeout tolerating 4G cellular jitter */
 #define OTA_CURRENT_SAFE_A       0.5f
-#define OTA_DEFAULT_CHECK_INTERVAL_MS (6UL * 60UL * 60UL * 1000UL)
+#define OTA_DEFAULT_CHECK_INTERVAL_MS (1UL * 60UL * 60UL * 1000UL) /* 1 hour default check cycle */
 #define OTA_AUTO_APPLY_IDLE_DELAY_MS  (3UL * 60UL * 1000UL)  /* 3 continuous IDLE minutes (180s) */
 
 static OtaDescriptor_t s_desc;
