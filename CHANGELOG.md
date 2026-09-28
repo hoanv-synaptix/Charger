@@ -2,6 +2,23 @@
 
 Tất cả các thay đổi quan trọng theo từng phiên bản phát hành của hệ thống Charger Firmware và Tool điều khiển.
 
+## [V2.0.12] - 2026-09-28
+
+### 🚀 Tối Ưu Hệ Thống Cảnh Báo (Alarm Debounce) & Bảng Hiển Thị Lịch Sử DWIN HMI
+- **Chuẩn hóa bộ lọc trễ sụt áp AC lưới đầu vào (`ALARM_MOD_AC_UNDER_VOLT` - W011):**
+  - Tối ưu thời gian kích hoạt lỗi `ALARM_DB_AC_UNDERVOLT_SET_MS` về mức 1.0 giây (1000ms), đảm bảo cảnh báo sụt áp AC được xác lập trước khi tụ điện nguồn DC-link trong module sạc xả hết (1.5s - 2.5s).
+  - Khóa chặn hoàn toàn chuỗi lỗi dây chuyền ảo `W010 Module comms fail` khi nguồn AC bị cắt đột ngột.
+  - Thiết lập thời gian trễ ổn định lưới điện phục hồi `ALARM_DB_AC_UNDERVOLT_CLEAR_MS = 3000ms`, triệt tiêu hoàn toàn hiện tượng chập chờn lưới (AC grid chattering/flapping), ngăn ngừa spam log và nhấp nháy màn hình HMI.
+- **Tối ưu hiển thị bảng cảnh báo DWIN HMI theo thứ tự thời gian mới nhất (Chronological Latest-First):**
+  - Bổ sung hàm API `DWIN_Alarm_SyncTable` bảo toàn trật tự hiển thị các sự kiện lỗi mới nhất lên các dòng đầu tiên (trang 1) của bảng Alarm DWIN HMI.
+  - Khắc phục lỗi đọc dữ liệu rác trên stack do biến uninitialized `s_last_log_sequence`.
+  - Triển khai cơ chế lọc dữ liệu vi sai theo từng dòng (`s_alarm_row_cached`), giảm 100% lưu lượng UART không cần thiết ở trạng thái tĩnh.
+  - Lập lịch công bằng vòng tròn (Round-Robin Fair Scheduling) với biến `s_alarm_emit_rr`, loại bỏ hoàn toàn hiện tượng nghẽn hiển thị trang 2 (dòng 4..7) và trang 3 (dòng 8..11).
+  - Tăng chu kỳ heartbeat đồng bộ cài đặt DWIN lên 10.000ms để tối ưu băng thông đường truyền RS485.
+- **Hoàn thiện bộ kiểm thử tự động (Unit & E2E Tests):**
+  - 100% vượt qua 23 test cases của bộ kiểm thử giao thức DWIN (`test_dwin_protocol_e2e.c`).
+  - 100% vượt qua 35 test cases của bộ mô phỏng hệ thống cảnh báo E2E (`test_alarm_e2e.c`).
+
 ---
 
 ## [V2.0.11] - 2026-09-28
