@@ -8,6 +8,7 @@
  */
 
 #include "ota_service.h"
+#include "app_version.h"
 #include "main.h"
 #include "bms_core.h"
 #include "charge_controller.h"
@@ -22,6 +23,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define CURRENT_FW_VERSION_CODE  ((FW_VERSION_MAJOR << 16) | (FW_VERSION_MINOR << 8) | FW_VERSION_PATCH)
 #define OTA_URL_MAX_LENGTH       ((uint32_t)127U)
 #define OTA_STREAM_CHUNK_SIZE    256U
 #define OTA_ERASE_TIMEOUT_MS     10000U
@@ -30,6 +32,7 @@
 #define OTA_BODY_TIMEOUT_MS      45000U  /* Stream chunk timeout tolerating 4G cellular jitter */
 #define OTA_CURRENT_SAFE_A       0.5f
 #define OTA_DEFAULT_CHECK_INTERVAL_MS (6UL * 60UL * 60UL * 1000UL)
+#define OTA_AUTO_APPLY_IDLE_DELAY_MS  (3UL * 60UL * 1000UL)  /* 3 continuous IDLE minutes (180s) */
 
 static OtaDescriptor_t s_desc;
 static char s_url[OTA_URL_MAX_LENGTH + 1U];
@@ -46,6 +49,7 @@ static bool s_policy_enabled;
 static uint32_t s_policy_interval_ms;
 static uint32_t s_next_policy_tick;
 static char s_policy_manifest_url[OTA_URL_MAX_LENGTH + 1U];
+static uint32_t s_idle_continuous_start_tick;
 
 typedef enum {
     OTA_STEP_IDLE = 0,
@@ -101,6 +105,7 @@ static void reset_descriptor(void)
     s_desc.status = OTA_STATUS_IDLE;
     s_desc.target_mcu = OTA_TARGET_STM32G0B1;
     s_desc.health_marker = OTA_HEALTH_MARKER_PENDING;
+    s_idle_continuous_start_tick = 0U;
 }
 
 static bool valid_descriptor(const OtaDescriptor_t *desc)
@@ -175,10 +180,8 @@ static bool ota_is_safe(void)
         controller.faulted || controller.emergency_stop) {
         return false;
     }
-    if (controller.state == CHARGE_CTRL_STATE_RUNNING ||
-        controller.state == CHARGE_CTRL_STATE_PRECHARGE ||
-        controller.state == CHARGE_CTRL_STATE_STOPPING ||
-        controller.state == CHARGE_CTRL_STATE_FAULT) {
+    /* Strictly require IDLE state only (reject READY, RUNNING, PRECHARGE, STOPPING, FAULT, DELAY) */
+    if (controller.state != CHARGE_CTRL_STATE_IDLE) {
         return false;
     }
     if (!isfinite(summary.total_current) || fabsf(summary.total_current) > OTA_CURRENT_SAFE_A) {
@@ -199,6 +202,7 @@ static void fail_ota(OtaStatusCode_t status)
     QuectelEngine_SetOtaExclusive(false);
     s_desc.status = status;
     s_desc.boot_request = OTA_BOOT_FLAG_CLEARED;
+    s_idle_continuous_start_tick = 0U;
     (void)save_descriptor();
     s_step = OTA_STEP_ERROR;
 }
@@ -305,6 +309,7 @@ void OTAService_Init(void)
         s_policy_enabled = false;
         s_policy_manifest_url[0] = '\0';
     }
+    s_idle_continuous_start_tick = 0U;
     LOG("OTA_Service: Initialized (Status=%lu, BootReq=0x%08lX)\r\n",
         (unsigned long)s_desc.status, (unsigned long)s_desc.boot_request);
 }
@@ -380,6 +385,7 @@ bool OTAService_StartManifestCheck(const char *manifest_url)
     s_manifest_mode = true;
     s_manifest_received = 0U;
     s_read_expected_bytes = 0U;
+    s_idle_continuous_start_tick = 0U;
     s_desc.status = OTA_STATUS_DOWNLOADING;
     s_step = OTA_STEP_CHECK_PDP;   /* Verify PDP context before QHTTP */
     s_step_tick = HAL_GetTick();
@@ -530,6 +536,38 @@ void OTAService_Process(uint32_t now_tick)
         (uint32_t)(now_tick - s_next_policy_tick) >= s_policy_interval_ms) {
         s_next_policy_tick = now_tick;
         (void)OTAService_RequestCheckNow();
+    }
+
+    /* Auto-Apply Check: If firmware is VERIFIED and auto-policy is enabled,
+     * wait for the system to remain continuously IDLE for 3 minutes before rebooting. */
+    if (s_step == OTA_STEP_IDLE && s_desc.status == OTA_STATUS_VERIFIED &&
+        s_policy_enabled && s_desc.boot_request != OTA_BOOT_FLAG_REQUEST) {
+        if (!ota_is_safe()) {
+            /* System became busy (charging, contactor closed, fault, current > 0.5A).
+             * Reset the 3-minute continuous idle timer immediately. */
+            if (s_idle_continuous_start_tick != 0U) {
+                LOG("OTA: System busy/charging. Resetting 3-minute continuous idle timer.\r\n");
+                s_idle_continuous_start_tick = 0U;
+            }
+        } else {
+            /* System is IDLE and safe */
+            if (s_idle_continuous_start_tick == 0U) {
+                s_idle_continuous_start_tick = now_tick;
+                LOG("OTA: Verified FW ready. Starting 3-minute continuous idle stabilization timer...\r\n");
+            } else if ((uint32_t)(now_tick - s_idle_continuous_start_tick) >= OTA_AUTO_APPLY_IDLE_DELAY_MS) {
+                LOG("OTA: System continuously IDLE for 3 minutes! Executing Auto-Apply & Rebooting into Bootloader...\r\n");
+                if (OTAService_RequestApply()) {
+                    BSP_Quectel_SendCmd("AT+QHTTPSTOP");
+                    QuectelEngine_SetOtaExclusive(false);
+                    HAL_Delay(500);
+                    NVIC_SystemReset();
+                    return;
+                } else {
+                    LOG("OTA: RequestApply failed! Retrying in next cycle.\r\n");
+                    s_idle_continuous_start_tick = now_tick;
+                }
+            }
+        }
     }
 
     switch (s_step) {
@@ -902,7 +940,20 @@ void OTAService_Process(uint32_t now_tick)
                                         &version, &size, &crc32, sha256) ||
                         !make_firmware_url(s_url, firmware_url, sizeof(firmware_url))) {
                         fail_ota(OTA_STATUS_ERROR_NETWORK);
+                    } else if (version <= CURRENT_FW_VERSION_CODE) {
+                        LOG("OTA: Current FW (v%u.%u.%u) is already up-to-date with manifest (v%u.%u.%u). No update needed.\r\n",
+                            (unsigned)FW_VERSION_MAJOR, (unsigned)FW_VERSION_MINOR, (unsigned)FW_VERSION_PATCH,
+                            (unsigned)((version >> 16) & 0xFF), (unsigned)((version >> 8) & 0xFF), (unsigned)(version & 0xFF));
+                        BSP_Quectel_SendCmd("AT+QHTTPSTOP");
+                        BSP_Quectel_ClearRx();
+                        QuectelEngine_SetOtaExclusive(false);
+                        s_desc.status = OTA_STATUS_IDLE;
+                        s_step = OTA_STEP_IDLE;
                     } else {
+                        LOG("OTA: New version detected! Cloud: v%u.%u.%u > Current: v%u.%u.%u. Starting download (%lu bytes)...\r\n",
+                            (unsigned)((version >> 16) & 0xFF), (unsigned)((version >> 8) & 0xFF), (unsigned)(version & 0xFF),
+                            (unsigned)FW_VERSION_MAJOR, (unsigned)FW_VERSION_MINOR, (unsigned)FW_VERSION_PATCH,
+                            (unsigned long)size);
                         if (!OTAService_StartDownload(firmware_url, version, size, crc32, sha256)) {
                             fail_ota(OTA_STATUS_ERROR_NETWORK);
                         }
@@ -944,6 +995,7 @@ void OTAService_Process(uint32_t now_tick)
         } else {
             s_desc.status = OTA_STATUS_VERIFIED;
             s_desc.boot_request = OTA_BOOT_FLAG_CLEARED;
+            s_idle_continuous_start_tick = 0U;
             if (!save_descriptor()) fail_ota(OTA_STATUS_ERROR_FLASH);
             else {
                 BSP_Quectel_SendCmd("AT+QHTTPSTOP");
@@ -952,6 +1004,9 @@ void OTAService_Process(uint32_t now_tick)
                 s_step = OTA_STEP_IDLE;
                 LOG("OTA: VERIFY SUCCESS! Image valid (size=%lu, crc32=0x%08lX)\r\n",
                     (unsigned long)s_desc.image_size, (unsigned long)s_desc.calc_crc32);
+                if (s_policy_enabled) {
+                    LOG("OTA: Auto-OTA policy active. Waiting for 3 minutes of continuous IDLE before auto-apply & reboot.\r\n");
+                }
             }
         }
         break;
