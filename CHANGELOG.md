@@ -2,6 +2,17 @@
 
 Tất cả các thay đổi quan trọng theo từng phiên bản phát hành của hệ thống Charger Firmware và Tool điều khiển.
 
+## [V2.0.14] - 2026-09-28
+
+### 🚀 Phân Tầng Debounce Động (Dynamic State-Dependent Debounce) Cho Lỗi Phần Cứng (E010)
+- **Tối ưu thời gian lọc trễ theo trạng thái vận hành (`ALARM_MOD_HW_FAULT`):**
+  - **Khi ở chế độ chờ IDLE:** Thiết lập debounce **10.0 giây** (`ALARM_DB_HW_FAULT_IDLE_SET_MS = 10000U`). Bao trọn toàn bộ chu trình xả nạp tụ 3-8s của module LianMing/TonHe khi người dùng bật/tắt Aptomat, loại bỏ 100% hiện tượng báo lỗi phần cứng ảo `E010` lúc tắt máy. Đồng thời, nếu module thật sự bị hỏng hóc phần cứng trong lúc cắm điện chờ ở IDLE (lỗi duy trì liên tục $> 10\text{s}$), hệ thống vẫn ghi nhận và cảnh báo `E010` chuẩn xác, không bỏ sót lỗi.
+  - **Khi đang trong chu trình sạc (RUNNING / PRECHARGE / STARTING):** Duy trì debounce **1.0 giây** (`ALARM_DB_HW_FAULT_ACTIVE_SET_MS = 1000U`), bảo đảm phản ứng khẩn trương dừng sạc (`ALARM_ACT_STOP`), ngắt dòng điện và mở contactor DC bảo vệ khối pin và thiết bị kịp thời.
+- **Hoàn thiện bộ test tự động E2E:**
+  - Bổ sung test case kiểm chứng phân tầng: Phản ứng ngắt sạc nhanh sau 1.0s khi đang RUNNING, và lọc trễ 10.0s chống nhiễu xả nạp tụ khi ở IDLE.
+
+---
+
 ## [V2.0.13] - 2026-09-28
 
 ### 🚀 Triệt Tiêu Lỗi Ảo Phần Cứng (E010) Khi Ngắt Nguồn AC Ở Chế Độ IDLE

@@ -1693,10 +1693,10 @@ static bool test_cascade_suppression_comprehensive(void)
     ASSERT(setup(NULL), "setup genuine HW fault in IDLE");
     healthy_bms(400.0f);
     g_sim_module.tonhe_fault_bits = (1U << 7); /* HW fault only, AC is healthy (bit 0 = 0) */
-    drive_ms(500U);
-    ASSERT(!alarm_active(ALARM_MOD_HW_FAULT), "Transient HW fault < 1000ms must not trip E010 yet");
-    drive_ms(600U); /* Total 1100ms > 1000ms */
-    ASSERT(alarm_active(ALARM_MOD_HW_FAULT), "Genuine HW fault in IDLE must trip E010 (zero false negatives)");
+    drive_ms(5000U);
+    ASSERT(!alarm_active(ALARM_MOD_HW_FAULT), "Transient HW fault < 10s must not trip E010 yet");
+    drive_ms(5500U); /* Total 10500ms > 10000ms */
+    ASSERT(alarm_active(ALARM_MOD_HW_FAULT), "Genuine HW fault in IDLE must trip E010 after 10s (zero false negatives)");
 
     /* ===================================================================
      * 3. Specific Module Fault suppresses Generic E010
@@ -1709,7 +1709,15 @@ static bool test_cascade_suppression_comprehensive(void)
     g_sim_module.tonhe_fault_bits = (1U << 15) | (1U << 7); /* Short-circuit + HW fault */
     drive_ms(200U);
     ASSERT(alarm_active(ALARM_MOD_SHORT_CIRCUIT), "Short circuit must trip E013");
-    ASSERT(!alarm_active(ALARM_MOD_HW_FAULT), "Specific short circuit must suppress generic E010");
+    /* Genuine HW fault in RUNNING trips within 1s */
+    ASSERT(setup(NULL), "setup genuine HW fault in RUNNING");
+    healthy_bms(400.0f);
+    ASSERT(start_running(), "start running");
+    g_sim_module.tonhe_fault_bits = (1U << 7); /* HW fault only */
+    drive_ms(500U);
+    ASSERT(!alarm_active(ALARM_MOD_HW_FAULT), "HW fault < 1s must not trip E010 in RUNNING");
+    drive_ms(600U); /* total 1100ms > 1000ms */
+    ASSERT(alarm_active(ALARM_MOD_HW_FAULT), "Genuine HW fault in RUNNING must trip E010 after 1s");
 
     /* ===================================================================
      * 4. AC Loss during RUNNING suppresses secondary HW/PFC faults

@@ -61,7 +61,8 @@
 #define ALARM_DB_AC_UNDERVOLT_SET_MS 1000U   /* 1s filter: prompt AC drop detection during active charge */
 #define ALARM_DB_AC_UNDERVOLT_CLEAR_MS 3000U /* 3s filter: grid stabilization recovery hysteresis */
 #define ALARM_DB_VOLT_MISMATCH_SET_MS 1000U   /* 1s filter: charger voltage vs BMS target mismatch (E032) */
-#define ALARM_DB_HW_FAULT_SET_MS      1000U  /* 1s filter: filter out transient dying frames on power-down */
+#define ALARM_DB_HW_FAULT_ACTIVE_SET_MS 1000U /* 1s filter during active charge: prompt shutdown */
+#define ALARM_DB_HW_FAULT_IDLE_SET_MS  10000U /* 10s filter in IDLE: swallow LianMing/TonHe cap drain/charge */
 #define ALARM_DB_LOAD_LOST_CLEAR_MS   3000U  /* Keep code visible 3s after stop before returning to 0000 */
 
 /* Console (LOG) breadcrumb rate-limit. LOG() blocks up to 50 ms
@@ -219,7 +220,7 @@ static const AlarmSpec_t k_specs[] = {
     { ALARM_BMS_OVER_DCHG_CURR,  ALARM_ACT_INFO,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms, BMS_ALARM_OVER_DCHG_CURR,  "BMS over discharge current" },
 
     /* --- module-reported --- */
-    { ALARM_MOD_HW_FAULT,        ALARM_ACT_STOP,  false, ALARM_DB_HW_FAULT_SET_MS, ALARM_DB_MIRROR_CLEAR_MS, ev_mod_hw_fault, 0,                      "Module hardware fault" },
+    { ALARM_MOD_HW_FAULT,        ALARM_ACT_STOP,  false, ALARM_DB_HW_FAULT_ACTIVE_SET_MS, ALARM_DB_MIRROR_CLEAR_MS, ev_mod_hw_fault, 0,                      "Module hardware fault" },
     { ALARM_MOD_COMM_FAIL,       ALARM_ACT_INFO,  false, 0, ALARM_DB_MODULE_COMM_CLEAR_MS, ev_mod_comm_lost, 0,                "Module comms fail" },
     { ALARM_MOD_OVER_TEMP,       ALARM_ACT_STOP,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_OVER_TEMP,        "Module over-temp" },
     { ALARM_MOD_OVER_VOLT_OUT,   ALARM_ACT_ESTOP, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_OVER_VOLTAGE_OUT, "Module output over-voltage" },
@@ -546,9 +547,19 @@ static void run_debounce(uint32_t now, const AlarmInputs_t *in, AlarmEdgeTally_t
         }
         uint32_t held = now - rt->edge_tick;
 
+        /* Dynamic state-dependent debounce: ALARM_MOD_HW_FAULT uses 10s in IDLE
+         * to swallow power-down capacitor discharge / precharge, but 1s during
+         * active charge for prompt safety shutdown. */
+        uint32_t set_ms = sp->set_ms;
+        if (sp->code == ALARM_MOD_HW_FAULT) {
+            set_ms = (in->cc.state == CHARGE_CTRL_STATE_IDLE)
+                         ? ALARM_DB_HW_FAULT_IDLE_SET_MS
+                         : ALARM_DB_HW_FAULT_ACTIVE_SET_MS;
+        }
+
         if (raw) {
             if (rt->latched) rt->latched = false; /* condition returned -- genuinely active */
-            if (!rt->active && held >= sp->set_ms) {
+            if (!rt->active && held >= set_ms) {
                 rt->active = true;
                 log_edge(now, sp->code, sp->action, true);
                 if (tally->raised++ == 0U) tally->first_raised_desc = sp->desc;
