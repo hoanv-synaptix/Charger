@@ -256,6 +256,25 @@ static bool validate_config_struct(const ChargeCycleConfig_t *config)
     return true;
 }
 
+static void sync_station_hardware(const ChargeCycleConfig_t *src, ChargeCycleConfig_t *dst)
+{
+    if (src == NULL || dst == NULL) {
+        return;
+    }
+    dst->module_type = src->module_type;
+    dst->module_address = src->module_address;
+    dst->source_module_count = src->source_module_count;
+    dst->module_u_min_v = src->module_u_min_v;
+    dst->module_u_max_v = src->module_u_max_v;
+    dst->module_i_min_a = src->module_i_min_a;
+    dst->module_i_max_a = src->module_i_max_a;
+    dst->charge_source_mode = src->charge_source_mode;
+    dst->can_battery_id = src->can_battery_id;
+    dst->admin_pin = src->admin_pin;
+    memcpy(dst->device_id, src->device_id, sizeof(dst->device_id));
+    memcpy(dst->hw_rev, src->hw_rev, sizeof(dst->hw_rev));
+}
+
 static void apply_hardware_config(const ChargeCycleConfig_t *config)
 {
     if (config == NULL) {
@@ -331,6 +350,8 @@ bool ChargeCycleConfig_SetProfile(uint8_t mode, const ChargeCycleConfig_t *confi
     }
 
     ChargeCycleConfig_t *dest = (mode == CHARGE_MODE_NORMAL) ? &s_normal_config : &s_fast_config;
+    ChargeCycleConfig_t *other = (mode == CHARGE_MODE_NORMAL) ? &s_fast_config : &s_normal_config;
+
     *dest = *config;
     dest->version = CHARGE_CYCLE_CONFIG_VERSION;
     dest->charge_mode = (mode == CHARGE_MODE_NORMAL) ? CHARGE_MODE_NORMAL : CHARGE_MODE_FAST;
@@ -343,6 +364,9 @@ bool ChargeCycleConfig_SetProfile(uint8_t mode, const ChargeCycleConfig_t *confi
     if (dest->hw_rev[0] == '\0') {
         strncpy(dest->hw_rev, DEFAULT_HW_REV, sizeof(dest->hw_rev) - 1U);
     }
+
+    /* Synchronize Station Hardware & System Mapping across dual profiles */
+    sync_station_hardware(dest, other);
 
     if (mode == s_active_mode) {
         g_charge_cycle_config = *dest;
@@ -380,9 +404,31 @@ bool ChargeCycleConfig_SetActiveMode(uint8_t mode)
     }
     s_active_mode = mode;
     g_charge_cycle_config = (s_active_mode == CHARGE_MODE_NORMAL) ? s_normal_config : s_fast_config;
-    for (uint8_t i = 0; i < g_charge_cycle_config.source_module_count; i++) {
-        if (g_charge_cycle_config.module_i_max_a > 0.0f) {
-            CHG_LIB_SetModuleConfig(i, g_charge_cycle_config.module_i_max_a);
+
+    CHG_LIB_DriverId_t drv_id = CHG_LIB_DRV_NONE;
+    switch (g_charge_cycle_config.module_type) {
+        case CHARGE_MODULE_TYPE_MAXWELL:
+            drv_id = CHG_LIB_DRV_MAXWELL;
+            break;
+        case CHARGE_MODULE_TYPE_LIANMING:
+            drv_id = CHG_LIB_DRV_LIANMING;
+            break;
+        case CHARGE_MODULE_TYPE_TONHE:
+        case CHARGE_MODULE_TYPE_EVR_10KW_100A_100V:
+            drv_id = CHG_LIB_DRV_TONHE;
+            break;
+        default:
+            drv_id = CHG_LIB_DRV_NONE;
+            break;
+    }
+
+    if (drv_id != CHG_LIB_DRV_NONE && drv_id != CHG_LIB_GetActiveDriverId()) {
+        apply_hardware_config(&g_charge_cycle_config);
+    } else {
+        for (uint8_t i = 0; i < g_charge_cycle_config.source_module_count; i++) {
+            if (g_charge_cycle_config.module_i_max_a > 0.0f) {
+                CHG_LIB_SetModuleConfig(i, g_charge_cycle_config.module_i_max_a);
+            }
         }
     }
     return true;
@@ -396,9 +442,31 @@ void ChargeCycleConfig_ResetSessionDefaults(void)
     s_fast_config.delay_enabled = 0U;
     s_active_mode = CHARGE_MODE_NORMAL;
     g_charge_cycle_config = s_normal_config;
-    for (uint8_t i = 0; i < g_charge_cycle_config.source_module_count; i++) {
-        if (g_charge_cycle_config.module_i_max_a > 0.0f) {
-            CHG_LIB_SetModuleConfig(i, g_charge_cycle_config.module_i_max_a);
+
+    CHG_LIB_DriverId_t drv_id = CHG_LIB_DRV_NONE;
+    switch (g_charge_cycle_config.module_type) {
+        case CHARGE_MODULE_TYPE_MAXWELL:
+            drv_id = CHG_LIB_DRV_MAXWELL;
+            break;
+        case CHARGE_MODULE_TYPE_LIANMING:
+            drv_id = CHG_LIB_DRV_LIANMING;
+            break;
+        case CHARGE_MODULE_TYPE_TONHE:
+        case CHARGE_MODULE_TYPE_EVR_10KW_100A_100V:
+            drv_id = CHG_LIB_DRV_TONHE;
+            break;
+        default:
+            drv_id = CHG_LIB_DRV_NONE;
+            break;
+    }
+
+    if (drv_id != CHG_LIB_DRV_NONE && drv_id != CHG_LIB_GetActiveDriverId()) {
+        apply_hardware_config(&g_charge_cycle_config);
+    } else {
+        for (uint8_t i = 0; i < g_charge_cycle_config.source_module_count; i++) {
+            if (g_charge_cycle_config.module_i_max_a > 0.0f) {
+                CHG_LIB_SetModuleConfig(i, g_charge_cycle_config.module_i_max_a);
+            }
         }
     }
 }

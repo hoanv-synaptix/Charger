@@ -9,6 +9,7 @@ build/
 *.su
 *.exe
 !ui/DWIN_SET/*.bin
+Testing/
 
 # Python
 __pycache__/

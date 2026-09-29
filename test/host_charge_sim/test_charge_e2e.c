@@ -2483,10 +2483,13 @@ static bool test_charge_mode_fast_vs_normal_current_limits(void)
     ASSERT(ChargeCycleConfig_SetActiveMode(CHARGE_MODE_NORMAL), "SetActiveMode NORMAL failed");
     ASSERT(ChargeCycleConfig_GetActiveMode() == CHARGE_MODE_NORMAL, "active mode must be NORMAL");
 
-    /* Verify Fast profile was NOT overwritten by Normal profile */
+    /* Verify Fast profile was NOT overwritten by Normal profile for charging limits,
+     * but station hardware fields ARE synchronized */
     ChargeCycleConfig_t check_fast;
     ChargeCycleConfig_GetProfile(CHARGE_MODE_FAST, &check_fast);
     ASSERT(check_fast.imax_c == 1.0f, "Fast profile imax_c must remain 1.0C");
+    ASSERT(check_fast.module_type == norm_cfg.module_type, "Station hardware module_type must be synchronized");
+    ASSERT(check_fast.module_address == norm_cfg.module_address, "Station hardware module_address must be synchronized");
 
     ASSERT(warmup_and_start(500U, 4000U), "module never reached RUNNING in NORMAL");
 
