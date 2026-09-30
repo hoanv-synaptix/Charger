@@ -49,14 +49,44 @@ static uint16_t g_last_event_vp = 0xFFFF;
 static uint16_t g_last_event_key = 0xFFFF;
 static int      g_key_event_count = 0;
 
+static bool     g_enable_wakeup_filter = false;
+static bool     g_sim_sleeping = false;
+static uint32_t g_sim_wake_guard_tick = 0U;
+static bool     g_sim_wake_guard_active = false;
+static uint32_t g_sim_current_tick = 0U;
+
+static bool sim_handle_touch_wakeup(uint32_t now)
+{
+    if (g_sim_sleeping) {
+        g_sim_sleeping = false;
+        g_sim_wake_guard_active = true;
+        g_sim_wake_guard_tick = now;
+        DWIN_SetBrightness(100U);
+        return true; /* Event swallowed */
+    }
+    if (g_sim_wake_guard_active) {
+        if ((uint32_t)(now - g_sim_wake_guard_tick) < 300U) {
+            return true; /* Event swallowed */
+        }
+        g_sim_wake_guard_active = false;
+    }
+    return false; /* Process normally */
+}
+
 void DWIN_OnActionButton(uint16_t keyval)
 {
+    if (g_enable_wakeup_filter && sim_handle_touch_wakeup(g_sim_current_tick)) {
+        return;
+    }
     g_last_keyval = keyval;
     g_action_count++;
 }
 
 void DWIN_OnKeyEvent(uint16_t vp, uint16_t keyval)
 {
+    if (g_enable_wakeup_filter && sim_handle_touch_wakeup(g_sim_current_tick)) {
+        return;
+    }
     g_last_event_vp = vp;
     g_last_event_key = keyval;
     g_key_event_count++;
@@ -243,6 +273,146 @@ static bool test_dwin_beep(void)
     ASSERT((((uint16_t)g_tx[0][6] << 8) | g_tx[0][7]) == 0, "beep duration value 0");
 
     printf("[PASS] test_dwin_beep\n");
+    return true;
+}
+
+static bool test_dwin_brightness(void)
+{
+    printf("Running test_dwin_brightness...\n");
+    reset_capture();
+
+    /* Invalidate sync to ensure clean initial state */
+    DWIN_InvalidateSyncState();
+    reset_capture();
+
+    /* Set brightness to 0% (sleep) */
+    DWIN_SetBrightness(0U);
+    ASSERT(g_tx_count == 1, "DWIN_SetBrightness(0) emits 1 frame");
+    ASSERT(g_tx_len[0] == 8, "frame length is 8 bytes");
+    ASSERT(g_tx[0][0] == DWIN_HEADER_1 && g_tx[0][1] == DWIN_HEADER_2, "header");
+    ASSERT(g_tx[0][2] == 0x05, "LEN = 5");
+    ASSERT(g_tx[0][3] == DWIN_CMD_WRITE, "write");
+    ASSERT((((uint16_t)g_tx[0][4] << 8) | g_tx[0][5]) == VP_SYS_BRIGHTNESS, "VP_SYS_BRIGHTNESS (0x0082)");
+    ASSERT((((uint16_t)g_tx[0][6] << 8) | g_tx[0][7]) == 0x0000U, "brightness value 0%");
+    ASSERT(DWIN_GetBrightness() == 0U, "DWIN_GetBrightness returns 0");
+
+    /* Repeating 0% must be diff-suppressed */
+    reset_capture();
+    DWIN_SetBrightness(0U);
+    ASSERT(g_tx_count == 0, "Repeated 0% is diff-suppressed");
+
+    /* Set brightness to 100% (awake) */
+    reset_capture();
+    DWIN_SetBrightness(100U);
+    ASSERT(g_tx_count == 1, "DWIN_SetBrightness(100) emits 1 frame");
+    ASSERT((((uint16_t)g_tx[0][6] << 8) | g_tx[0][7]) == 0x6400U, "brightness value 100% (0x6400)");
+    ASSERT(DWIN_GetBrightness() == 100U, "DWIN_GetBrightness returns 100");
+
+    /* Invalidate sync state -> allows resending 100% */
+    DWIN_InvalidateSyncState();
+    reset_capture();
+    DWIN_SetBrightness(100U);
+    ASSERT(g_tx_count == 1, "After sync invalidate, 100% is emitted again");
+
+    printf("[PASS] test_dwin_brightness\n");
+    return true;
+}
+
+static bool test_dwin_sleep_and_first_touch_wakeup_behavior(void)
+{
+    printf("Running test_dwin_sleep_and_first_touch_wakeup_behavior...\n");
+    reset_capture();
+    DWIN_InvalidateSyncState();
+
+    g_enable_wakeup_filter = true;
+    g_sim_sleeping = false;
+    g_sim_wake_guard_active = false;
+    g_sim_current_tick = 1000U;
+
+    uint8_t f_action[9];
+    build_touch_frame(f_action, VP_SYS_BTN_KEY, 1);
+
+    uint8_t f_key[9];
+    build_touch_frame(f_key, VP_LOGIN_KEY, DWIN_LOGIN_KEY_DIGIT_0);
+
+    /* Case 1: Normal awake mode -> touch events pass through */
+    DWIN_SetBrightness(100U);
+    reset_capture();
+    DWIN_ParseRX(f_action, sizeof(f_action));
+    ASSERT(g_action_count == 1, "Awake: Action button dispatched");
+    ASSERT(DWIN_GetBrightness() == 100U, "Brightness is 100%");
+
+    /* Case 2: System goes to sleep (screen dark) */
+    g_sim_sleeping = true;
+    DWIN_SetBrightness(0U);
+    ASSERT(DWIN_GetBrightness() == 0U, "Brightness is 0%");
+    reset_capture();
+
+    /* Case 3: First touch while sleeping -> Screen wakes up, event is SWALLOWED */
+    g_sim_current_tick = 50000U;
+    DWIN_ParseRX(f_action, sizeof(f_action));
+    ASSERT(!g_sim_sleeping, "Screen is no longer marked sleeping");
+    ASSERT(DWIN_GetBrightness() == 100U, "Brightness automatically restored to 100%");
+    ASSERT(g_action_count == 0, "First touch swallowed! Action count is 0");
+    ASSERT(g_tx_count == 1, "Brightness command 100% sent to panel");
+    ASSERT((((uint16_t)g_tx[0][6] << 8) | g_tx[0][7]) == 0x6400U, "Brightness frame payload is 100%");
+
+    /* Case 4: Subsequent bouncing touches within 300ms guard window -> DROPPED */
+    reset_capture();
+    g_sim_current_tick = 50000U + 50U; /* +50ms */
+    DWIN_ParseRX(f_action, sizeof(f_action));
+    ASSERT(g_action_count == 0, "Touch at +50ms dropped");
+
+    g_sim_current_tick = 50000U + 250U; /* +250ms */
+    DWIN_ParseRX(f_action, sizeof(f_action));
+    ASSERT(g_action_count == 0, "Touch at +250ms dropped");
+    ASSERT(g_tx_count == 0, "No unnecessary frames during guard window");
+
+    /* Case 5: Touch AFTER 300ms guard window has elapsed -> PROCESSED normally */
+    g_sim_current_tick = 50000U + 301U; /* +301ms */
+    DWIN_ParseRX(f_action, sizeof(f_action));
+    ASSERT(g_action_count == 1, "Touch at +301ms processed normally");
+
+    /* Case 6: Key event (e.g. keypad) while sleeping -> also swallowed on wake */
+    g_sim_sleeping = true;
+    DWIN_SetBrightness(0U);
+    reset_capture();
+
+    g_sim_current_tick = 100000U;
+    DWIN_ParseRX(f_key, sizeof(f_key));
+    ASSERT(!g_sim_sleeping, "Key event woke display");
+    ASSERT(DWIN_GetBrightness() == 100U, "Brightness restored to 100%");
+    ASSERT(g_key_event_count == 0, "Key event swallowed on first touch");
+
+    /* Case 7: 32-bit tick rollover edge case (now wraps past 0xFFFFFFFF) */
+    g_sim_sleeping = true;
+    DWIN_SetBrightness(0U);
+    reset_capture();
+
+    g_sim_current_tick = 0xFFFFFFF0U; /* 16ms before overflow */
+    DWIN_ParseRX(f_action, sizeof(f_action));
+    ASSERT(!g_sim_sleeping, "Woke up at rollover tick");
+    ASSERT(g_action_count == 0, "Action swallowed at rollover boundary");
+
+    /* Tick wraps around to 0x00000050U (delta = 96ms < 300ms) */
+    g_sim_current_tick = 0x00000050U;
+    DWIN_ParseRX(f_action, sizeof(f_action));
+    ASSERT(g_action_count == 0, "Rollover delta < 300ms: still guarded and dropped");
+
+    /* Tick advances to 0x00000200U (delta = 528ms > 300ms) */
+    g_sim_current_tick = 0x00000200U;
+    DWIN_ParseRX(f_action, sizeof(f_action));
+    ASSERT(g_action_count == 1, "Rollover delta > 300ms: processed normally");
+
+    /* Case 8: Long-term running (49.7 days later) does NOT falsely trigger guard */
+    reset_capture();
+    /* 49.7 days later, tick reaches 0xFFFFFFF0 again: guard was inactive */
+    g_sim_current_tick = 0xFFFFFFF0U;
+    DWIN_ParseRX(f_action, sizeof(f_action));
+    ASSERT(g_action_count == 1, "49.7 days rollover with inactive guard processes immediately");
+
+    g_enable_wakeup_filter = false;
+    printf("[PASS] test_dwin_sleep_and_first_touch_wakeup_behavior\n");
     return true;
 }
 
@@ -1072,6 +1242,8 @@ int main(void)
     pass &= test_set_page_diff_suppressed();
     pass &= test_software_reset_and_sync_invalidation();
     pass &= test_dwin_beep();
+    pass &= test_dwin_brightness();
+    pass &= test_dwin_sleep_and_first_touch_wakeup_behavior();
     pass &= test_parse_rx_dispatches();
     pass &= test_parse_rx_byte_by_byte();
     pass &= test_parse_rx_ignores_zero_and_other_vp();

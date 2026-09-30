@@ -175,7 +175,17 @@ static uint32_t dwin_replay_count = 0U;
 static uint32_t dwin_rx_suppressed_bytes = 0U;
 static float    s_total_charged_ah;
 static float    s_total_energy_kwh;
+static float    s_total_charge_time_s;
 static uint32_t s_last_energy_tick;
+
+/* DWIN Sleep & Wakeup management */
+#define DWIN_IDLE_SLEEP_TIMEOUT_MS  300000U /* 5 minutes idle in IDLE state to enter sleep */
+#define DWIN_WAKEUP_GUARD_MS        300U    /* Ignore subsequent touches for 300ms after waking */
+
+static bool     s_dwin_screen_sleeping     = false;
+static uint32_t s_dwin_last_activity_tick  = 0U;
+static uint32_t s_dwin_wakeup_guard_tick   = 0U;
+static bool     s_dwin_wakeup_guard_active = false;
 
 /* Keep the last charge duration visible briefly after a session ends. This
  * gives the operator time to read the result before the footer returns to the
@@ -524,6 +534,28 @@ static uint16_t dwin_current_status(void)
     return dwin_status_from_state(&v, &s);
 }
 
+static bool dwin_handle_touch_wakeup(uint32_t now)
+{
+    s_dwin_last_activity_tick = now;
+    if (s_dwin_screen_sleeping) {
+        s_dwin_screen_sleeping = false;
+        s_dwin_wakeup_guard_active = true;
+        s_dwin_wakeup_guard_tick = now;
+        DWIN_SetBrightness(100U);
+        LOG("DWIN: First-touch wakeup triggered - event swallowed\r\n");
+        return true; /* Event swallowed */
+    }
+    if (s_dwin_wakeup_guard_active) {
+        if ((uint32_t)(now - s_dwin_wakeup_guard_tick) < DWIN_WAKEUP_GUARD_MS) {
+            LOG("DWIN: Touch event within wakeup guard window (%lums) - dropped\r\n",
+                (unsigned long)(now - s_dwin_wakeup_guard_tick));
+            return true; /* Event swallowed */
+        }
+        s_dwin_wakeup_guard_active = false;
+    }
+    return false; /* Process normally */
+}
+
 /* Shared by the physical BUTTON_1/PA15 handler and the DWIN screen button:
  * one press starts / stops / resets-if-safe, decided by the state the button
  * is currently showing -- NOT by which surface the press came from. */
@@ -644,9 +676,18 @@ void App_Init(void)
      * this function and silently missed the RAM-default module_type on a
      * blank-flash first boot -- fixed at the source in
      * ChargeCycleStorage_Init() instead of duplicating the mapping here). */
+    uint32_t saved_charge_seconds = 0U;
     ChargeCycleStorage_Init();
     ChargeEnergyStorage_Init();
-    ChargeEnergyStorage_Get(&s_total_charged_ah, &s_total_energy_kwh);
+    ChargeEnergyStorage_Get(&s_total_charged_ah, &s_total_energy_kwh, &saved_charge_seconds);
+    s_total_charge_time_s = (float)saved_charge_seconds;
+
+    /* Initialize DWIN sleep tracking & ensure display active */
+    s_dwin_screen_sleeping = false;
+    s_dwin_last_activity_tick = BSP_GetTick();
+    s_dwin_wakeup_guard_tick = 0U;
+    s_dwin_wakeup_guard_active = false;
+    DWIN_SetBrightness(100U);
     LOG("App_Init: Driver selected: id=%u\r\n", (unsigned)CHG_LIB_GetActiveDriverId());
 
     /* Initialize charge controller */
@@ -812,7 +853,11 @@ void App_Loop(void)
             if (btn_start_db != btn_start_prev) {
                 btn_start_prev = btn_start_db;
                 if (btn_start_prev) {
-                    app_action_button(dwin_current_status(), now);
+                    if (dwin_handle_touch_wakeup(now)) {
+                        /* First press while sleeping wakes up display; suppress action */
+                    } else {
+                        app_action_button(dwin_current_status(), now);
+                    }
                 }
             }
         }
@@ -868,6 +913,34 @@ void App_Loop(void)
         ChargeController_GetView(&cc_view);
         AlarmView_t av;
         Alarm_GetView(&av);
+        BMS_View_t bms;
+        BMS_GetView(&bms);
+
+        /* Screen sleep management in IDLE */
+        bool system_is_idle = (cc_view.state == CHARGE_CTRL_STATE_IDLE) &&
+                              (av.active_count == 0U) &&
+                              (av.latched_mask == 0U) &&
+                              !bms.online &&
+                              !dwin_precharge_session &&
+                              !DebugProtocol_IsActive();
+
+        if (system_is_idle) {
+            if (!s_dwin_screen_sleeping &&
+                (uint32_t)(now - s_dwin_last_activity_tick) >= DWIN_IDLE_SLEEP_TIMEOUT_MS) {
+                s_dwin_screen_sleeping = true;
+                DWIN_SetBrightness(0U);
+                LOG("DWIN: Entering sleep mode (idle >= %lums)\r\n", (unsigned long)DWIN_IDLE_SLEEP_TIMEOUT_MS);
+            }
+        } else {
+            /* Any active charging state, alarm, BMS connection, or precharge forces screen to be awake */
+            s_dwin_last_activity_tick = now;
+            if (s_dwin_screen_sleeping) {
+                s_dwin_screen_sleeping = false;
+                DWIN_SetBrightness(100U);
+                LOG("DWIN: Auto-wakeup due to active state/alarm (state=%u alarms=%u bms=%d)\r\n",
+                    (unsigned)cc_view.state, (unsigned)av.active_count, (int)bms.online);
+            }
+        }
 
         bool controller_fault = (cc_view.state == CHARGE_CTRL_STATE_FAULT) ||
                                 (cc_view.fault_flags != CHARGE_CTRL_FAULT_NONE);
@@ -917,9 +990,6 @@ void App_Loop(void)
 
         CHG_LIB_SystemSummary_t sum;
         CHG_LIB_GetSystemSummary(&sum);
-
-        BMS_View_t bms;
-        BMS_GetView(&bms);
 
         /* One-shot once the panel has booted: identity strings + land on the
          * dashboard page (DWIN_SetPage self-suppresses, so this never fights
@@ -1147,6 +1217,7 @@ void App_Loop(void)
         if (ChargeEnergyStorage_TakeResetRequest()) {
             s_total_charged_ah = 0.0f;
             s_total_energy_kwh = 0.0f;
+            s_total_charge_time_s = 0.0f;
             s_last_energy_tick = now;
         }
         if (s_last_energy_tick == 0U) {
@@ -1162,11 +1233,13 @@ void App_Loop(void)
                               ? sum.voltage : 0.0f;
             s_total_charged_ah += cur_f * hours;
             s_total_energy_kwh += (cur_f * volt_f * 0.001f) * hours;
+            s_total_charge_time_s += (float)dt_ms * 0.001f;
         }
         dd.total_charged_ah = (uint32_t)roundf(s_total_charged_ah);
         dd.total_energy_kwh = (uint32_t)roundf(s_total_energy_kwh);
+        dd.total_charge_seconds = (uint32_t)roundf(s_total_charge_time_s);
         ChargeEnergyStorage_Process(now, is_charging, s_total_charged_ah,
-                                    s_total_energy_kwh);
+                                    s_total_energy_kwh, dd.total_charge_seconds);
 
         /* Topbar fault code: "0000" if normal, worst code (e.g. "E006") if fault active */
         if (raw_status == DWIN_STATUS_ERROR && !blink_on) {
@@ -1257,6 +1330,9 @@ uint32_t DWIN_RTC_GetEpoch(void)
 void DWIN_OnActionButton(uint16_t keyval)
 {
     uint32_t now = BSP_GetTick();
+    if (dwin_handle_touch_wakeup(now)) {
+        return;
+    }
     uint16_t status = dwin_current_status();
 
     LOG("DWIN: button press (keyval=%u status=%u)\r\n",
@@ -1272,6 +1348,9 @@ void DWIN_OnActionButton(uint16_t keyval)
 void DWIN_OnKeyEvent(uint16_t vp, uint16_t keyval)
 {
     uint32_t now = BSP_GetTick();
+    if (dwin_handle_touch_wakeup(now)) {
+        return;
+    }
     static uint16_t s_cfg_hours = 2U;
     static uint16_t s_cfg_minutes = 30U;
 

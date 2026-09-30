@@ -141,6 +141,27 @@ void DWIN_Beep(uint8_t duration_x8ms)
     DWIN_SendWords(VP_SYS_BUZZER, &val, 1U);
 }
 
+static int16_t s_last_brightness = -1;
+
+void DWIN_SetBrightness(uint8_t brightness_pct)
+{
+    if (brightness_pct > 100U) {
+        brightness_pct = 100U;
+    }
+    if ((int16_t)brightness_pct == s_last_brightness) {
+        return;
+    }
+    s_last_brightness = (int16_t)brightness_pct;
+    /* High byte: active brightness %, Low byte: standby brightness % (0) */
+    uint16_t val = (uint16_t)(((uint16_t)brightness_pct << 8U) & 0xFF00U);
+    DWIN_SendWords(VP_SYS_BRIGHTNESS, &val, 1U);
+}
+
+uint8_t DWIN_GetBrightness(void)
+{
+    return (s_last_brightness < 0) ? 100U : (uint8_t)s_last_brightness;
+}
+
 void DWIN_SendSettingStrings(const char *hw_ver, const char *fw_ver,
                              const char *device_id)
 {
@@ -471,6 +492,7 @@ void DWIN_InvalidateSyncState(void)
      * still contain the pre-reboot values. Make the next restore replay all
      * state and force the page command even if the page number is unchanged. */
     s_last_page = -1;
+    s_last_brightness = -1;
     s_update_step = 0U;
     s_have_prev_data = false;
     memset(&s_prev_data, 0, sizeof(s_prev_data));
@@ -608,8 +630,11 @@ void DWIN_UpdateData(const DWIN_SystemData_t *d)
         break;
     }
 
-    case STEP_SETTING_STATS:
-        if (first || s_prev_data.uptime_s != d->uptime_s ||
+    case STEP_SETTING_STATS: {
+        uint32_t prev_h = s_prev_data.total_charge_seconds / 3600U;
+        uint32_t cur_h = d->total_charge_seconds / 3600U;
+
+        if (first || prev_h != cur_h ||
             s_prev_data.total_charged_ah != d->total_charged_ah ||
             s_prev_data.total_energy_kwh != d->total_energy_kwh) {
             char str[16];
@@ -621,19 +646,15 @@ void DWIN_UpdateData(const DWIN_SystemData_t *d)
                            (unsigned long)d->total_energy_kwh);
             DWIN_SendString(VP_SET_TOTAL_ENERGY, str, 8);
 
-            uint32_t u = d->uptime_s;
-            uint32_t uh = u / 3600U;
-            uint32_t um = (u % 3600U) / 60U;
-            uint32_t us = u % 60U;
-            (void)snprintf(str, sizeof(str), "%02u:%02u:%02u",
-                           (unsigned)uh, (unsigned)um, (unsigned)us);
+            (void)snprintf(str, sizeof(str), "%luh", (unsigned long)cur_h);
             DWIN_SendString(VP_SET_UPTIME, str, 8);
 
-            s_prev_data.uptime_s = d->uptime_s;
+            s_prev_data.total_charge_seconds = d->total_charge_seconds;
             s_prev_data.total_charged_ah = d->total_charged_ah;
             s_prev_data.total_energy_kwh = d->total_energy_kwh;
         }
         break;
+    }
 
     case STEP_PRECHARGE:
         if (first || strncmp(s_prev_data.precharge_voltage_text, d->precharge_voltage_text,

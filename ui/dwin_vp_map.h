@@ -83,7 +83,7 @@ typedef enum {
 #define VP_SET_DEVICE_ID     0x1110U  /* ASCII/GBK, 4 VP / 8 chars */
 #define VP_SET_TOTAL_CHARGED 0x1118U  /* ASCII/GBK, 8 VP / 16 chars: "12500 Ah" */
 #define VP_SET_TOTAL_ENERGY  0x1120U  /* ASCII/GBK, 8 VP / 16 chars: "685 kWh" */
-#define VP_SET_UPTIME        0x1128U  /* ASCII/GBK, 8 VP / 16 chars: "125:32:18" (HHH:MM:SS) */
+#define VP_SET_UPTIME        0x1128U  /* ASCII/GBK, 8 VP / 16 chars: "1000h" (total charge hours) */
 #define VP_SET_LOGIN_KEY     0x1130U  /* panel->MCU: Return Key -> admin Login page */
 
 #define VP_SET_ID_WORDS      4U       /* 4 VP = 8 bytes max for HW, FW, Device ID */

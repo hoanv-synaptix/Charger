@@ -18,6 +18,7 @@
  */
 
 /* --- System VPs (guide sec 5.1) --- */
+#define VP_SYS_BRIGHTNESS    0x0082U  /* Backlight: high byte = active %, low byte = standby % */
 #define VP_SYS_PIC_SET       0x0084U  /* page switch: write word 0x5A01 then the page id */
 #define VP_SYS_RESET         0x0004U  /* T5L software reset: write 0x55AA, 0x5AA5 */
 #define VP_SYS_RTC_SET       0x009CU  /* RTC set (needs a panel RTC IC) -- see DWIN_SetRTC() */
@@ -83,7 +84,7 @@ typedef enum {
 #define VP_SET_DEVICE_ID     0x1110U  /* ASCII/GBK, 4 VP / 8 chars */
 #define VP_SET_TOTAL_CHARGED 0x1118U  /* ASCII/GBK, 8 VP / 16 chars: "12500.5 Ah" */
 #define VP_SET_TOTAL_ENERGY  0x1120U  /* ASCII/GBK, 8 VP / 16 chars: "685.2 kWh" */
-#define VP_SET_UPTIME        0x1128U  /* ASCII/GBK, 8 VP / 16 chars: "125:32:18" (HHH:MM:SS) */
+#define VP_SET_UPTIME        0x1128U  /* ASCII/GBK, 8 VP / 16 chars: "1000h" (total charge hours) */
 #define VP_SET_LOGIN_KEY     0x1130U  /* panel->MCU: Return Key -> admin Login page */
 
 #define VP_SET_ID_WORDS      4U       /* 4 VP = 8 bytes max for HW, FW, Device ID */

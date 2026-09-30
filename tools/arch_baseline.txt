@@ -58,6 +58,7 @@ App/Charge/charge_energy_storage.c:bsp_flash.h
 # persistence exceptions (plus Alarm's RTC timestamp dependency).
 App/Alarm/alarm_storage.c:bsp_spi_flash.h
 App/Alarm/alarm_storage.c:bsp_rtc.h
+App/Alarm/alarm.c:bsp_rtc.h
 App/Charge/charge_cycle_storage.c:bsp_spi_flash.h
 App/Charge/charge_energy_storage.c:bsp_spi_flash.h
 App/Protocol/pc_debug_protocol.c:bsp_can.h

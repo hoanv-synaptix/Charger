@@ -169,14 +169,29 @@ if %errorlevel% neq 0 (
     exit /b %errorlevel%
 )
 
-echo [8/9] Building Firmware (Release preset)...
+echo [8/10] Running Energy & Duration Storage Test: v1 to v2 migration...
+gcc -Wall -DCHARGE_ENERGY_STORAGE_HOST_TEST -I"BSP" -I"Utils/Log" -I"App/Charge" ^
+    test/host_charge_sim/test_energy_storage.c ^
+    App/Charge/charge_energy_storage.c ^
+    -o test_energy_storage.exe
+if %errorlevel% neq 0 (
+    echo [FAIL] Compilation of test_energy_storage.c Failed!
+    exit /b %errorlevel%
+)
+.\test_energy_storage.exe
+if %errorlevel% neq 0 (
+    echo [FAIL] Energy & Duration Storage Test Failed!
+    exit /b %errorlevel%
+)
+
+echo [9/10] Building Firmware (Release preset)...
 call build.bat
 if %errorlevel% neq 0 (
     echo [FAIL] Firmware Build Failed!
     exit /b %errorlevel%
 )
 
-echo [9/9] Firmware built successfully.
+echo [10/10] Firmware built successfully.
 echo Note: Hardware-In-The-Loop tests (integration_sync_test.py) must be run manually when hardware is connected.
 echo ==================================================
 echo   LOCAL CI PASSED

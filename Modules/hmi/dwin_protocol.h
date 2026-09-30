@@ -63,6 +63,7 @@ typedef struct {
 
     /* --- setting --- */
     uint32_t uptime_s;
+    uint32_t total_charge_seconds;/* Accumulated charging time in seconds */
     uint32_t total_charged_ah;   /* Integer standard (Ah) */
     uint32_t total_energy_kwh;   /* Integer standard (kWh) */
 } DWIN_SystemData_t;
@@ -107,6 +108,17 @@ void DWIN_SendSettingStrings(const char *hw_ver, const char *fw_ver,
  * @brief Trigger the panel's onboard buzzer for a duration of duration_x8ms * 8 ms.
  */
 void DWIN_Beep(uint8_t duration_x8ms);
+
+/**
+ * @brief Set panel backlight brightness (0..100%).
+ *        Diff-suppressed: only transmits if value changed.
+ */
+void DWIN_SetBrightness(uint8_t brightness_pct);
+
+/**
+ * @brief Get currently commanded panel backlight brightness (0..100%).
+ */
+uint8_t DWIN_GetBrightness(void);
 
 /** Total scatter steps in one full round-robin dashboard update cycle. */
 #define DWIN_SCATTER_STEP_COUNT  11U

@@ -2,7 +2,31 @@
 
 Tất cả các thay đổi quan trọng theo từng phiên bản phát hành của hệ thống Charger Firmware và Tool điều khiển.
 
-## [V2.0.14] - 2026-09-28
+## [V2.0.15] - 2026-09-30
+
+### 🚀 DWIN Sleep Mode & First-Touch Wakeup Nuốt Lệnh (Anti-Misoperation)
+- **Cơ chế ngủ tiết kiệm năng lượng và bảo vệ màn hình (`DWIN_SetBrightness`):**
+  - Khi hệ thống ở trạng thái `IDLE` (chờ sạc) không có lỗi cảnh báo, sau **5 phút** nhàn rỗi (`DWIN_IDLE_SLEEP_TIMEOUT_MS = 300000U`), MCU tự động gửi lệnh ghi thanh ghi DGUS `VP 0x0082` tắt đèn nền màn hình (độ sáng 0%).
+  - Khi đang sạc (`RUNNING`, `STARTING`, `STOPPING`, `PRECHARGE`) hoặc khi có cảnh báo lỗi (`FAULT`, `ERROR`), màn hình luôn sáng 100%, tuyệt đối không ngủ.
+- **Cơ chế đánh thức giống điện thoại thông minh (First-Touch Event Swallowed):**
+  - Khi màn hình đang tối, nếu người dùng chạm tay vào màn hình DWIN hoặc ấn nút cứng PA15:
+    - MCU lập tức đánh thức màn hình bật sáng 100%.
+    - Kích hoạt cửa sổ bảo vệ chống dội cảm ứng 300ms (`DWIN_WAKEUP_GUARD_MS = 300U`).
+    - **Nuốt lệnh / Drop hoàn toàn** gói tin chạm đầu tiên này, không kích hoạt Start/Stop hay bất kỳ phím chức năng nào bên dưới.
+  - Khi có sự cố lỗi hệ thống, cắm pin nhận diện BMS online, hoặc nhận lệnh từ PC App: màn hình tự động thức dậy sáng 100% tức thì.
+
+### 🚀 Tích Lũy Tổng Thời Gian Sạc Vào Flash & Hiển Thị HMI (`VP_SET_UPTIME 0x1128`)
+- **Nâng cấp cấu trúc lưu trữ Flash Version 2 (`EnergyRecord_t` 40 bytes):**
+  - Mở rộng cấu trúc bản ghi journal 4 sector SPI Flash ngoại lên Version 2, bổ sung trường `uint32_t total_charge_seconds` và bảo toàn căn chỉnh 8-byte, CRC32 độc lập.
+  - **Tương thích ngược tuyệt đối (Backward Compatibility):** Tự động nhận diện bản ghi V1 cũ (32 bytes) trên các trạm ngoài thực địa, migrate số Ah và kWh sẵn có mà không làm mất dữ liệu lịch sử.
+- **Tích lũy chính xác theo trạng thái sạc thực tế:**
+  - Đồng hồ thời gian sạc chỉ tích lũy khi thực sự có dòng nạp (`is_charging == true`). Dừng sạc hoặc tạm dừng do quá nhiệt thì đồng hồ đứng yên.
+- **Đồng bộ cơ chế Reset toàn diện:**
+  - Lệnh PC App `PC_CMD_ERASE_FLASH` (0x28) xóa sạch cả 3 thông số: `Ah`, `kWh`, `Total Charge Time`.
+- **Hiển thị tối ưu trên HMI:**
+  - Định dạng hiển thị giờ `"%luh"` (ví dụ: `1000h`, `125h`, `0h`) truyền vào `VP_SET_UPTIME (0x1128)` theo yêu cầu, tích hợp bộ lọc vi sai diff-suppression theo giờ (`cur_h != prev_h`) giúp tiết kiệm triệt để băng thông bus RS485 và xử lý mượt mà khi tích lũy hàng nghìn giờ sạc.
+
+---
 
 ### 🚀 Phân Tầng Debounce Động (Dynamic State-Dependent Debounce) Cho Lỗi Phần Cứng (E010)
 - **Tối ưu thời gian lọc trễ theo trạng thái vận hành (`ALARM_MOD_HW_FAULT`):**

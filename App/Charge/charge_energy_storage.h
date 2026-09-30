@@ -16,11 +16,14 @@ extern "C" {
 void ChargeEnergyStorage_Init(void);
 void ChargeEnergyStorage_Process(uint32_t now_tick, bool charging,
                                  float total_charged_ah,
-                                 float total_energy_kwh);
+                                 float total_energy_kwh,
+                                 uint32_t total_charge_seconds);
 void ChargeEnergyStorage_SaveNow(float total_charged_ah,
-                                 float total_energy_kwh);
+                                 float total_energy_kwh,
+                                 uint32_t total_charge_seconds);
 void ChargeEnergyStorage_Get(float *total_charged_ah,
-                             float *total_energy_kwh);
+                             float *total_energy_kwh,
+                             uint32_t *total_charge_seconds);
 bool ChargeEnergyStorage_Reset(void);
 bool ChargeEnergyStorage_TakeResetRequest(void);
 
