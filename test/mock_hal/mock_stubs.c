@@ -327,14 +327,5 @@ void QuectelEngine_GetStatus(QuectelNetStatus_t *out_status)
     if (out_status != NULL) memset(out_status, 0, sizeof(*out_status));
 }
 
-bool SDStorage_RunSelfTest(SDStorageTestResult_t *result)
-{
-    if (result != NULL) {
-        memset(result, 0, sizeof(*result));
-        result->last_result = FR_NOT_READY;
-    }
-    return false;
-}
-
 void HAL_Delay(uint32_t ms) { (void)ms; }
 void NVIC_SystemReset(void) {}

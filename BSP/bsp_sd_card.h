@@ -34,6 +34,7 @@ typedef enum {
     SD_IO_STAGE_CRC
 } SD_IoStage_t;
 
+#if defined(CHG_ENABLE_SD_CARD) && (CHG_ENABLE_SD_CARD != 0)
 /**
  * @brief  Initialize SD card over SPI1.
  *         Runs at 250 kHz during handshake, then switches to 16 MHz.
@@ -108,6 +109,20 @@ bool BSP_SDCard_WriteBlocks(uint32_t block, const uint8_t *buf, uint32_t count);
  * @return true if all steps pass
  */
 bool BSP_SDCard_SelfTest(void);
+#else
+static inline bool BSP_SDCard_Init(void) { return false; }
+static inline bool BSP_SDCard_IsPresent(void) { return false; }
+static inline bool BSP_SDCard_IsReady(void) { return false; }
+static inline SD_CardType_t BSP_SDCard_GetType(void) { return SD_TYPE_NONE; }
+static inline uint32_t BSP_SDCard_GetBlockCount(void) { return 0U; }
+static inline SD_IoStage_t BSP_SDCard_GetLastReadStage(void) { return SD_IO_STAGE_NONE; }
+static inline uint8_t BSP_SDCard_GetLastReadResponse(void) { return 0xFFU; }
+static inline bool BSP_SDCard_ReadBlock(uint32_t block, uint8_t *buf) { (void)block; (void)buf; return false; }
+static inline bool BSP_SDCard_WriteBlock(uint32_t block, const uint8_t *buf) { (void)block; (void)buf; return false; }
+static inline bool BSP_SDCard_ReadBlocks(uint32_t block, uint8_t *buf, uint32_t count) { (void)block; (void)buf; (void)count; return false; }
+static inline bool BSP_SDCard_WriteBlocks(uint32_t block, const uint8_t *buf, uint32_t count) { (void)block; (void)buf; (void)count; return false; }
+static inline bool BSP_SDCard_SelfTest(void) { return false; }
+#endif
 
 #ifdef __cplusplus
 }

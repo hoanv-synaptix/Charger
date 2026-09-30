@@ -17,6 +17,7 @@ set(CMAKE_C_EXTENSIONS ON)
 option(CHG_DEBUG_DWIN "Enable the USB->RS485 DWIN relay debug command (bench only)" OFF)
 option(CHG_DEBUG_CAN_TX_TRACE "Trace MCU CAN1 control frames to UART1 (bench only)" OFF)
 option(CHG_ENABLE_LOG "Enable UART1 debug logging (bench only)" OFF)
+option(CHG_ENABLE_SD_CARD "Enable SD card and FatFS file system (bench/factory test only)" OFF)
 
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE "Release")
@@ -40,7 +41,9 @@ add_executable(${CMAKE_PROJECT_NAME})
 
 # Add STM32CubeMX generated sources
 add_subdirectory(cmake/stm32cubemx)
-add_subdirectory(Middlewares/FatFS)
+if(CHG_ENABLE_SD_CARD)
+    add_subdirectory(Middlewares/FatFS)
+endif()
 add_subdirectory(BSP)
 add_subdirectory(Modules)
 add_subdirectory(App)
@@ -82,6 +85,9 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     # CHG_ENABLE_LOG: enables UART1 LOG() output for bench debugging.
     # OFF by default in production/Release to save ~8-9 KB Flash and eliminate UART blocking.
     $<$<BOOL:${CHG_ENABLE_LOG}>:CHG_ENABLE_LOG>
+    # CHG_ENABLE_SD_CARD: enables SD card and FatFS file system (bench/factory test only).
+    # OFF by default in production/Release to save ~3.5 KB Flash.
+    $<$<BOOL:${CHG_ENABLE_SD_CARD}>:CHG_ENABLE_SD_CARD>
     # Relocate vector table for Bootloader (offset 8KB)
     USER_VECT_TAB_ADDRESS
     VECT_TAB_OFFSET=0x00002000U
@@ -93,7 +99,7 @@ list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)
 # Add linked libraries
 target_link_libraries(${CMAKE_PROJECT_NAME}
     stm32cubemx
-    FatFS
+    $<$<BOOL:${CHG_ENABLE_SD_CARD}>:FatFS>
 
     # Add user defined libraries
 )
