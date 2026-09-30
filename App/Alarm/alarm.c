@@ -113,6 +113,12 @@ typedef struct {
  * interpreter/eval of any kind; the table is fully static (k_specs below). */
 typedef bool (*AlarmEvalFn)(const AlarmInputs_t *in, uint32_t param);
 
+#if defined(CHG_ENABLE_LOG) && (CHG_ENABLE_LOG != 0)
+#define ALARM_SPEC_DESC(d) , d
+#else
+#define ALARM_SPEC_DESC(d)
+#endif
+
 typedef struct {
     AlarmCode_t   code;
     AlarmAction_t action;
@@ -121,7 +127,9 @@ typedef struct {
     uint16_t      clear_ms;
     AlarmEvalFn   eval;
     uint32_t      param;
+#if defined(CHG_ENABLE_LOG) && (CHG_ENABLE_LOG != 0)
     const char   *desc;
+#endif
 } AlarmSpec_t;
 
 /* ---- generic mirror evals ---- */
@@ -183,48 +191,48 @@ static const AlarmSpec_t k_specs[] = {
     /* code, action, latch, set_ms, clear_ms, eval, param, desc */
 
     /* --- BMS-reported --- */
-    { ALARM_BMS_LOW_PACK_VOLT,   ALARM_ACT_STOP,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms_low_pack_volt, BMS_ALARM_LOW_PACK_VOLT,   "BMS low pack voltage" },
-    { ALARM_BMS_LOW_CELL_VOLT,   ALARM_ACT_INFO,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms, BMS_ALARM_LOW_CELL_VOLT,   "BMS low cell voltage" },
-    { ALARM_BMS_HIGH_PACK_VOLT,  ALARM_ACT_STOP,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms, BMS_ALARM_HIGH_PACK_VOLT,  "BMS high pack voltage" },
-    { ALARM_BMS_HIGH_CELL_VOLT,  ALARM_ACT_STOP,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms, BMS_ALARM_HIGH_CELL_VOLT,  "BMS high cell voltage" },
+    { ALARM_BMS_LOW_PACK_VOLT,   ALARM_ACT_STOP,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms_low_pack_volt, BMS_ALARM_LOW_PACK_VOLT   ALARM_SPEC_DESC("BMS low pack voltage") },
+    { ALARM_BMS_LOW_CELL_VOLT,   ALARM_ACT_INFO,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms, BMS_ALARM_LOW_CELL_VOLT                 ALARM_SPEC_DESC("BMS low cell voltage") },
+    { ALARM_BMS_HIGH_PACK_VOLT,  ALARM_ACT_STOP,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms, BMS_ALARM_HIGH_PACK_VOLT                ALARM_SPEC_DESC("BMS high pack voltage") },
+    { ALARM_BMS_HIGH_CELL_VOLT,  ALARM_ACT_STOP,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms, BMS_ALARM_HIGH_CELL_VOLT                ALARM_SPEC_DESC("BMS high cell voltage") },
     /* The charge controller owns the safe response for BMS charge
      * over-temperature: it clamps current through CC_INHIBIT and can resume
      * after fresh, stable BMS recovery. Do not dispatch a second generic
      * ChargeController_Stop() here, because that would erase the session and
      * make automatic thermal recovery impossible. */
-    { ALARM_BMS_TEMP_HIGH_CHG,   ALARM_ACT_INFO,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms_temp_high, BMS_ALARM_TEMP_HIGH_CHG,   "BMS charge over-temp" },
-    { ALARM_BMS_TEMP_HIGH_DCHG,  ALARM_ACT_INFO,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms, BMS_ALARM_TEMP_HIGH_DCHG,  "BMS discharge over-temp" },
-    { ALARM_BMS_TEMP_LOW_CHG,    ALARM_ACT_STOP,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms, BMS_ALARM_TEMP_LOW_CHG,    "BMS charge under-temp" },
-    { ALARM_BMS_TEMP_LOW_DCHG,   ALARM_ACT_INFO,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms, BMS_ALARM_TEMP_LOW_DCHG,   "BMS discharge under-temp" },
-    { ALARM_BMS_TEMP_RELAY_HIGH, ALARM_ACT_INFO,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms, BMS_ALARM_TEMP_RELAY_HIGH, "BMS relay over-temp" },
-    { ALARM_BMS_OVER_CHG_CURR,   ALARM_ACT_STOP,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms, BMS_ALARM_OVER_CHG_CURR,   "BMS over charge current" },
-    { ALARM_BMS_OVER_DCHG_CURR,  ALARM_ACT_INFO,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms, BMS_ALARM_OVER_DCHG_CURR,  "BMS over discharge current" },
+    { ALARM_BMS_TEMP_HIGH_CHG,   ALARM_ACT_INFO,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms_temp_high, BMS_ALARM_TEMP_HIGH_CHG         ALARM_SPEC_DESC("BMS charge over-temp") },
+    { ALARM_BMS_TEMP_HIGH_DCHG,  ALARM_ACT_INFO,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms, BMS_ALARM_TEMP_HIGH_DCHG                ALARM_SPEC_DESC("BMS discharge over-temp") },
+    { ALARM_BMS_TEMP_LOW_CHG,    ALARM_ACT_STOP,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms, BMS_ALARM_TEMP_LOW_CHG                  ALARM_SPEC_DESC("BMS charge under-temp") },
+    { ALARM_BMS_TEMP_LOW_DCHG,   ALARM_ACT_INFO,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms, BMS_ALARM_TEMP_LOW_DCHG                 ALARM_SPEC_DESC("BMS discharge under-temp") },
+    { ALARM_BMS_TEMP_RELAY_HIGH, ALARM_ACT_INFO,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms, BMS_ALARM_TEMP_RELAY_HIGH               ALARM_SPEC_DESC("BMS relay over-temp") },
+    { ALARM_BMS_OVER_CHG_CURR,   ALARM_ACT_STOP,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms, BMS_ALARM_OVER_CHG_CURR                 ALARM_SPEC_DESC("BMS over charge current") },
+    { ALARM_BMS_OVER_DCHG_CURR,  ALARM_ACT_INFO,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms, BMS_ALARM_OVER_DCHG_CURR                ALARM_SPEC_DESC("BMS over discharge current") },
 
     /* --- module-reported --- */
-    { ALARM_MOD_HW_FAULT,        ALARM_ACT_STOP,  false, ALARM_DB_HW_FAULT_ACTIVE_SET_MS, ALARM_DB_MIRROR_CLEAR_MS, ev_mod_hw_fault, 0,                      "Module hardware fault" },
-    { ALARM_MOD_COMM_FAIL,       ALARM_ACT_INFO,  false, 0, ALARM_DB_MODULE_COMM_CLEAR_MS, ev_mod_comm_lost, 0,                "Module comms fail" },
-    { ALARM_MOD_OVER_TEMP,       ALARM_ACT_STOP,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_OVER_TEMP,        "Module over-temp" },
-    { ALARM_MOD_OVER_VOLT_OUT,   ALARM_ACT_ESTOP, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_OVER_VOLTAGE_OUT, "Module output over-voltage" },
-    { ALARM_MOD_SHORT_CIRCUIT,   ALARM_ACT_ESTOP, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_SHORT_CIRCUIT,    "Module output short circuit" },
-    { ALARM_MOD_AC_UNDER_VOLT,   ALARM_ACT_INFO,  false, ALARM_DB_AC_UNDERVOLT_SET_MS, ALARM_DB_AC_UNDERVOLT_CLEAR_MS, ev_mod_ac_undervolt, CHG_LIB_ALARM_AC_UNDER_VOLT, "Module AC under-voltage" },
-    { ALARM_MOD_OVER_CURR_OUT,   ALARM_ACT_STOP,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_OVER_CURR_OUT,    "Module output over-current" },
-    { ALARM_MOD_PFC_FAULT,       ALARM_ACT_STOP,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod_pfc, 0,                          "Module PFC fault" },
+    { ALARM_MOD_HW_FAULT,        ALARM_ACT_STOP,  false, ALARM_DB_HW_FAULT_ACTIVE_SET_MS, ALARM_DB_MIRROR_CLEAR_MS, ev_mod_hw_fault, 0 ALARM_SPEC_DESC("Module hardware fault") },
+    { ALARM_MOD_COMM_FAIL,       ALARM_ACT_INFO,  false, 0, ALARM_DB_MODULE_COMM_CLEAR_MS, ev_mod_comm_lost, 0                         ALARM_SPEC_DESC("Module comms fail") },
+    { ALARM_MOD_OVER_TEMP,       ALARM_ACT_STOP,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_OVER_TEMP                  ALARM_SPEC_DESC("Module over-temp") },
+    { ALARM_MOD_OVER_VOLT_OUT,   ALARM_ACT_ESTOP, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_OVER_VOLTAGE_OUT           ALARM_SPEC_DESC("Module output over-voltage") },
+    { ALARM_MOD_SHORT_CIRCUIT,   ALARM_ACT_ESTOP, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_SHORT_CIRCUIT             ALARM_SPEC_DESC("Module output short circuit") },
+    { ALARM_MOD_AC_UNDER_VOLT,   ALARM_ACT_INFO,  false, ALARM_DB_AC_UNDERVOLT_SET_MS, ALARM_DB_AC_UNDERVOLT_CLEAR_MS, ev_mod_ac_undervolt, CHG_LIB_ALARM_AC_UNDER_VOLT ALARM_SPEC_DESC("Module AC under-voltage") },
+    { ALARM_MOD_OVER_CURR_OUT,   ALARM_ACT_STOP,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_OVER_CURR_OUT             ALARM_SPEC_DESC("Module output over-current") },
+    { ALARM_MOD_PFC_FAULT,       ALARM_ACT_STOP,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod_pfc, 0                                   ALARM_SPEC_DESC("Module PFC fault") },
 
     /* --- controller faults (mirror, report/log only -- controller already acts) --- */
-    { ALARM_CTRL_NO_MODULE,       ALARM_ACT_INFO, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_ctrl, CHARGE_CTRL_FAULT_NO_MODULE,             "No charger module" },
-    { ALARM_CTRL_MODULE_MISMATCH, ALARM_ACT_INFO, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_ctrl_module_mismatch, CHARGE_CTRL_FAULT_MODULE_COUNT_MISMATCH, "Module count mismatch" },
-    { ALARM_CTRL_INVALID_CONFIG,  ALARM_ACT_INFO, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_ctrl, CHARGE_CTRL_FAULT_INVALID_CONFIG,        "Invalid charge config" },
-    { ALARM_CTRL_JACK_OVER_V,     ALARM_ACT_STOP, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_ctrl, CHARGE_CTRL_FAULT_PROTECT_JACK_V,        "Connector over-voltage protect" },
-    { ALARM_CTRL_JACK_OVER_TEMP,  ALARM_ACT_STOP, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_ctrl, CHARGE_CTRL_FAULT_PROTECT_JACK_TEMP,     "Connector over-temp protect" },
+    { ALARM_CTRL_NO_MODULE,       ALARM_ACT_INFO, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_ctrl, CHARGE_CTRL_FAULT_NO_MODULE              ALARM_SPEC_DESC("No charger module") },
+    { ALARM_CTRL_MODULE_MISMATCH, ALARM_ACT_INFO, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_ctrl_module_mismatch, CHARGE_CTRL_FAULT_MODULE_COUNT_MISMATCH ALARM_SPEC_DESC("Module count mismatch") },
+    { ALARM_CTRL_INVALID_CONFIG,  ALARM_ACT_INFO, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_ctrl, CHARGE_CTRL_FAULT_INVALID_CONFIG         ALARM_SPEC_DESC("Invalid charge config") },
+    { ALARM_CTRL_JACK_OVER_V,     ALARM_ACT_STOP, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_ctrl, CHARGE_CTRL_FAULT_PROTECT_JACK_V         ALARM_SPEC_DESC("Connector over-voltage protect") },
+    { ALARM_CTRL_JACK_OVER_TEMP,  ALARM_ACT_STOP, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_ctrl, CHARGE_CTRL_FAULT_PROTECT_JACK_TEMP      ALARM_SPEC_DESC("Connector over-temp protect") },
 
     /* --- derived / station-level --- */
-    { ALARM_BMS_COMM_LOST,          ALARM_ACT_INFO, false, ALARM_DB_COMM_SET_MS,    ALARM_DB_COMM_CLEAR_MS,    ev_bms_comm_lost,          0, "BMS link lost during charge" },
-    { ALARM_BMS_NO_PACK_VOLTAGE,    ALARM_ACT_STOP, false, ALARM_DB_NO_PACK_SET_MS, ALARM_DB_NO_PACK_CLEAR_MS, ev_bms_no_pack_voltage,    0, "No pack voltage" },
-    { ALARM_DC_LOAD_LOST,           ALARM_ACT_STOP, false, ALARM_LOAD_LOST_MS,      ALARM_DB_LOAD_LOST_CLEAR_MS, ev_dc_load_lost,           0, "DC load lost" },
-    { ALARM_DC_OUT_NOT_ESTABLISHED, ALARM_ACT_STOP, false, 0,                       ALARM_DB_LOAD_LOST_CLEAR_MS, ev_dc_out_not_established, 0, "DC output not established" },
-    { ALARM_MOD_FAN_FAULT,          ALARM_ACT_STOP, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_FAN_FAULT,    "Module fan fault" },
-    { ALARM_MOD_AC_OVER_VOLT,       ALARM_ACT_STOP, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_AC_OVER_VOLT, "Module AC input over-voltage" },
-    { ALARM_BMS_VOLT_MISMATCH,      ALARM_ACT_STOP, false, ALARM_DB_VOLT_MISMATCH_SET_MS, ALARM_DB_COMM_CLEAR_MS, ev_bms_volt_mismatch, 0, "Charger voltage mismatch" },
+    { ALARM_BMS_COMM_LOST,          ALARM_ACT_INFO, false, ALARM_DB_COMM_SET_MS,    ALARM_DB_COMM_CLEAR_MS,    ev_bms_comm_lost,          0 ALARM_SPEC_DESC("BMS link lost during charge") },
+    { ALARM_BMS_NO_PACK_VOLTAGE,    ALARM_ACT_STOP, false, ALARM_DB_NO_PACK_SET_MS, ALARM_DB_NO_PACK_CLEAR_MS, ev_bms_no_pack_voltage,    0 ALARM_SPEC_DESC("No pack voltage") },
+    { ALARM_DC_LOAD_LOST,           ALARM_ACT_STOP, false, ALARM_LOAD_LOST_MS,      ALARM_DB_LOAD_LOST_CLEAR_MS, ev_dc_load_lost,           0 ALARM_SPEC_DESC("DC load lost") },
+    { ALARM_DC_OUT_NOT_ESTABLISHED, ALARM_ACT_STOP, false, 0,                       ALARM_DB_LOAD_LOST_CLEAR_MS, ev_dc_out_not_established, 0 ALARM_SPEC_DESC("DC output not established") },
+    { ALARM_MOD_FAN_FAULT,          ALARM_ACT_STOP, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_FAN_FAULT,     ALARM_SPEC_DESC("Module fan fault") },
+    { ALARM_MOD_AC_OVER_VOLT,       ALARM_ACT_STOP, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_AC_OVER_VOLT,  ALARM_SPEC_DESC("Module AC input over-voltage") },
+    { ALARM_BMS_VOLT_MISMATCH,      ALARM_ACT_STOP, false, ALARM_DB_VOLT_MISMATCH_SET_MS, ALARM_DB_COMM_CLEAR_MS, ev_bms_volt_mismatch, 0 ALARM_SPEC_DESC("Charger voltage mismatch") },
 };
 
 #define ALARM_SPEC_COUNT ((uint8_t)(sizeof(k_specs) / sizeof(k_specs[0])))
@@ -259,8 +267,10 @@ static struct {
 typedef struct {
     uint8_t      raised;
     uint8_t      cleared;
+#if defined(CHG_ENABLE_LOG) && (CHG_ENABLE_LOG != 0)
     const char  *first_raised_desc;
     const char  *first_cleared_desc;
+#endif
 } AlarmEdgeTally_t;
 
 /* Helper: Check if an alarm code is currently active or latched */
@@ -670,7 +680,11 @@ static void run_debounce(uint32_t now, const AlarmInputs_t *in, AlarmEdgeTally_t
             if (!rt->active && held >= set_ms) {
                 rt->active = true;
                 log_edge(now, sp->code, get_effective_action(sp, in), true);
+#if defined(CHG_ENABLE_LOG) && (CHG_ENABLE_LOG != 0)
                 if (tally->raised++ == 0U) tally->first_raised_desc = sp->desc;
+#else
+                tally->raised++;
+#endif
             }
         } else {
             if (rt->active && held >= sp->clear_ms) {
@@ -679,7 +693,11 @@ static void run_debounce(uint32_t now, const AlarmInputs_t *in, AlarmEdgeTally_t
                 } else {
                     rt->active = false;
                     log_edge(now, sp->code, get_effective_action(sp, in), false);
+#if defined(CHG_ENABLE_LOG) && (CHG_ENABLE_LOG != 0)
                     if (tally->cleared++ == 0U) tally->first_cleared_desc = sp->desc;
+#else
+                    tally->cleared++;
+#endif
                 }
             }
         }
@@ -688,6 +706,7 @@ static void run_debounce(uint32_t now, const AlarmInputs_t *in, AlarmEdgeTally_t
 
 /* One consolidated, rate-limited console line for a tick that had edges. */
 static void log_tally(uint32_t now, const AlarmEdgeTally_t *t) {
+#if defined(CHG_ENABLE_LOG) && (CHG_ENABLE_LOG != 0)
     if ((t->raised == 0U) && (t->cleared == 0U)) return;
     if ((now - g_alarm.last_console_log_tick) < ALARM_LOG_MIN_INTERVAL_MS &&
         g_alarm.last_console_log_tick != 0U) {
@@ -699,6 +718,10 @@ static void log_tally(uint32_t now, const AlarmEdgeTally_t *t) {
         t->first_raised_desc ? t->first_raised_desc
                              : (t->first_cleared_desc ? t->first_cleared_desc : ""),
         (t->raised + t->cleared > 1U) ? " (+more)" : "");
+#else
+    (void)now;
+    (void)t;
+#endif
 }
 
 static uint8_t alarm_severity(AlarmCode_t code, AlarmAction_t action) {
