@@ -2893,6 +2893,130 @@ static bool test_module_base_address_configured(void)
     return true;
 }
 
+static bool test_multi_module_degraded_charging_dynamic_rebalance(void)
+{
+    printf("Running test_multi_module_degraded_charging_dynamic_rebalance...\n");
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_MAXWELL, NULL), "setup failed");
+    ChargeCycleConfig_t cfg;
+    build_default_cfg(&cfg, CHARGE_MODULE_TYPE_MAXWELL);
+    cfg.source_module_count = 3U;
+    cfg.module_i_max_a = 50.0f;
+    cfg.battery_capacity_ah = 100.0f;
+    cfg.imax_c = 0.9f; /* 90A total demand */
+    ASSERT(ChargeCycleConfig_Set(&cfg), "config set failed");
+
+    sim_module_reset_n(3, 1, 0);
+    set_healthy_bms(400.0f, 50);
+
+    drive_ms(1500U);
+    ASSERT(ChargeController_Start(CHARGE_CTRL_OWNER_PC, false, mock_tick), "start refused");
+    drive_ms(4000U);
+
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "must reach RUNNING with 3 modules");
+    ASSERT(cv.actual_module_count == 3U, "all 3 modules must be active");
+    /* 90A / 3 = 30A/module */
+    ASSERT(fabsf(cv.target_current_per_module_a - 30.0f) < 0.1f, "target must be 30A/mod for 3 modules");
+
+    /* Now module 2 experiences an internal fault (short circuit / overvoltage bit) */
+    g_sim_modules[2].maxwell_alarm_raw = (1U << 28);
+    drive_ms(1000U);
+
+    ChargeController_GetView(&cv);
+    /* In degraded mode, the station must NOT trip to FAULT */
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "station must stay RUNNING in degraded mode");
+    ASSERT(cv.actual_module_count == 2U, "active module count must drop from 3 to 2");
+    ASSERT(cv.derating == 1U, "derating flag must be set when running with fewer modules");
+    /* 90A / 2 = 45A/module */
+    ASSERT(fabsf(cv.target_current_per_module_a - 45.0f) < 0.1f, "target must rebalance to 45A/mod for 2 modules");
+
+    ChargeController_Stop(mock_tick);
+    drive_ms(100U);
+    printf("[PASS] test_multi_module_degraded_charging_dynamic_rebalance\n");
+    return true;
+}
+
+static bool test_multi_module_degraded_power_clamp(void)
+{
+    printf("Running test_multi_module_degraded_power_clamp...\n");
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_MAXWELL, NULL), "setup failed");
+    ChargeCycleConfig_t cfg;
+    build_default_cfg(&cfg, CHARGE_MODULE_TYPE_MAXWELL);
+    cfg.source_module_count = 2U;
+    cfg.module_i_max_a = 50.0f;
+    cfg.battery_capacity_ah = 100.0f;
+    cfg.imax_c = 0.9f; /* 90A total demand */
+    ASSERT(ChargeCycleConfig_Set(&cfg), "config set failed");
+
+    sim_module_reset_n(2, 1, 0);
+    set_healthy_bms(400.0f, 50);
+
+    drive_ms(1500U);
+    ASSERT(ChargeController_Start(CHARGE_CTRL_OWNER_PC, false, mock_tick), "start refused");
+    drive_ms(4000U);
+
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "must reach RUNNING with 2 modules");
+    ASSERT(cv.actual_module_count == 2U, "both modules must be active");
+    /* 90A / 2 = 45A/module */
+    ASSERT(fabsf(cv.target_current_per_module_a - 45.0f) < 0.1f, "target must be 45A/mod for 2 modules");
+
+    /* Module 1 disconnects / loses comms (timeout 10s) */
+    g_sim_modules[1].silent = true;
+    drive_ms(12000U);
+
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "station must stay RUNNING with 1 active module");
+    ASSERT(cv.actual_module_count == 1U, "active module count must drop to 1");
+    ASSERT(cv.derating == 1U, "derating flag must be set when power is clamped");
+    /* 1 module * 50A = 50A clamp (cannot supply 90A) */
+    ASSERT(fabsf(cv.target_current_total_a - 50.0f) < 0.1f, "total current must be clamped to 50A (1x module_i_max)");
+    ASSERT(fabsf(cv.target_current_per_module_a - 50.0f) < 0.1f, "per module target must be clamped to 50A");
+
+    ChargeController_Stop(mock_tick);
+    drive_ms(100U);
+    printf("[PASS] test_multi_module_degraded_power_clamp\n");
+    return true;
+}
+
+static bool test_multi_module_all_modules_lost_trips_no_module(void)
+{
+    printf("Running test_multi_module_all_modules_lost_trips_no_module...\n");
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_MAXWELL, NULL), "setup failed");
+    ChargeCycleConfig_t cfg;
+    build_default_cfg(&cfg, CHARGE_MODULE_TYPE_MAXWELL);
+    cfg.source_module_count = 2U;
+    ASSERT(ChargeCycleConfig_Set(&cfg), "config set failed");
+
+    sim_module_reset_n(2, 1, 0);
+    set_healthy_bms(400.0f, 50);
+
+    drive_ms(1500U);
+    ASSERT(ChargeController_Start(CHARGE_CTRL_OWNER_PC, false, mock_tick), "start refused");
+    drive_ms(4000U);
+
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "must reach RUNNING");
+
+    /* Both modules disconnect */
+    g_sim_modules[0].silent = true;
+    g_sim_modules[1].silent = true;
+    /* Exceed module offline timeout (10s) + controller debounce (10s) */
+    drive_ms(24000U);
+
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_FAULT, "all modules lost must trip to FAULT");
+    ASSERT((cv.fault_flags & CHARGE_CTRL_FAULT_NO_MODULE) != 0U, "fault_flags must include NO_MODULE");
+
+    ChargeController_Stop(mock_tick);
+    drive_ms(100U);
+    printf("[PASS] test_multi_module_all_modules_lost_trips_no_module\n");
+    return true;
+}
+
 int main(void)
 {
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -2965,6 +3089,9 @@ int main(void)
     pass &= test_jack_v_protection_ignored_during_bms_thermal_inhibit();
     pass &= test_jack_v_fault_clear_safe_with_residual_voltage();
     pass &= test_module_base_address_configured();
+    pass &= test_multi_module_degraded_charging_dynamic_rebalance();
+    pass &= test_multi_module_degraded_power_clamp();
+    pass &= test_multi_module_all_modules_lost_trips_no_module();
 
     if (pass) {
         printf("ALL TESTS PASSED.\n");

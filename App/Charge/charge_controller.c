@@ -708,9 +708,11 @@ static uint32_t check_preconditions_faults(void) {
     } else {
         ChargeCycleConfig_Get(&cfg);
         if (actual_count != cfg.source_module_count) {
-            LOG("ChargeController_Check: Module count mismatch: expected %u, got %u\r\n",
-                (unsigned)cfg.source_module_count, (unsigned)actual_count);
-            faults |= CHARGE_CTRL_FAULT_MODULE_COUNT_MISMATCH;
+            LOG("ChargeController_Check: Degraded mode - active modules: %u/%u\r\n",
+                (unsigned)actual_count, (unsigned)cfg.source_module_count);
+            /* Fault-tolerant degraded mode: If at least 1 module is active,
+             * allow charging to start. The mismatch warning is reported via E028.
+             * Do NOT set CHARGE_CTRL_FAULT_MODULE_COUNT_MISMATCH as a blocking start fault. */
         }
     }
 
@@ -1702,9 +1704,27 @@ static void run_standalone_mode(uint32_t now_tick) {
         }
     }
 
-    /* Per-module split */
-    if (g_ctrl.actual_module_count > 0) {
-        g_ctrl.target_current_per_module_a = g_ctrl.target_current_total_a / (float)g_ctrl.actual_module_count;
+    /* Per-module split across active modules (dynamic rebalancing & derating) */
+    if (g_ctrl.actual_module_count > 0U) {
+        float station_cap_a = (float)g_ctrl.actual_module_count * cfg.module_i_max_a;
+        if (g_ctrl.target_current_total_a > station_cap_a) {
+            g_ctrl.target_current_total_a = station_cap_a;
+            g_ctrl.derating = 1U;
+        }
+        g_ctrl.target_current_per_module_a =
+            g_ctrl.target_current_total_a / (float)g_ctrl.actual_module_count;
+        if (g_ctrl.target_current_per_module_a > cfg.module_i_max_a) {
+            g_ctrl.target_current_per_module_a = cfg.module_i_max_a;
+            g_ctrl.target_current_total_a =
+                g_ctrl.target_current_per_module_a * (float)g_ctrl.actual_module_count;
+            g_ctrl.derating = 1U;
+        }
+        if (g_ctrl.actual_module_count < g_ctrl.source_module_count) {
+            g_ctrl.derating = 1U;
+        }
+    } else if (isfinite(g_ctrl.last_valid_target_current_per_module_a) &&
+               g_ctrl.last_valid_target_current_per_module_a > CHARGE_CTRL_CURRENT_TARGET_EPSILON_A) {
+        g_ctrl.target_current_per_module_a = g_ctrl.last_valid_target_current_per_module_a;
     } else {
         g_ctrl.target_current_per_module_a = 0.0f;
     }
@@ -1712,12 +1732,6 @@ static void run_standalone_mode(uint32_t now_tick) {
     /* Clamp to hardware limits */
     if (g_ctrl.target_voltage_v > cfg.module_u_max_v) {
         g_ctrl.target_voltage_v = cfg.module_u_max_v;
-    }
-    if (g_ctrl.target_current_per_module_a > cfg.module_i_max_a) {
-        g_ctrl.target_current_per_module_a = cfg.module_i_max_a;
-        /* Recalculate total current */
-        g_ctrl.target_current_total_a = g_ctrl.target_current_per_module_a * (float)g_ctrl.actual_module_count;
-        g_ctrl.derating = 1;
     }
 
     /* No-BMS completion: one fresh module at effective Vmax stops all. */
@@ -1909,55 +1923,37 @@ static void run_bms_controlled_mode(uint32_t now_tick) {
         }
     }
 
-    /* Per-module split. A module-count mismatch is debounced separately in
-     * ChargeController_Process(). Keep the last valid per-module target
-     * during that window; dividing by a transient count (especially zero)
-     * would manufacture a lower command and desynchronise the controller
-     * from the driver's retained setpoint. An inhibit remains an explicit
-     * zero-current condition and is therefore never held here. */
-    bool module_count_mismatch =
-        (g_ctrl.source_module_count > 0U &&
-         g_ctrl.actual_module_count != g_ctrl.source_module_count);
+    /* Dynamic load rebalancing across active modules */
     if (g_ctrl.target_current_total_a <= CHARGE_CTRL_CURRENT_TARGET_EPSILON_A) {
         g_ctrl.target_current_per_module_a = 0.0f;
         g_ctrl.module_target_hold_active = false;
-    } else if (module_count_mismatch &&
-               isfinite(g_ctrl.last_valid_target_current_per_module_a) &&
-               g_ctrl.last_valid_target_current_per_module_a >
-                   CHARGE_CTRL_CURRENT_TARGET_EPSILON_A) {
-        g_ctrl.target_current_per_module_a =
-            g_ctrl.last_valid_target_current_per_module_a;
-        if (!g_ctrl.module_target_hold_active) {
-            LOG("CC: HOLD_TARGET_MODULE_MISMATCH src=%u act=%u keep=%.3fA/mod\r\n",
-                (unsigned)g_ctrl.source_module_count,
-                (unsigned)g_ctrl.actual_module_count,
-                g_ctrl.target_current_per_module_a);
-            g_ctrl.module_target_hold_active = true;
-        }
     } else if (g_ctrl.actual_module_count > 0U) {
+        float station_cap_a = (float)g_ctrl.actual_module_count * cfg.module_i_max_a;
+        if (g_ctrl.target_current_total_a > station_cap_a) {
+            g_ctrl.target_current_total_a = station_cap_a;
+            g_ctrl.derating = 1U;
+        }
         g_ctrl.target_current_per_module_a =
             g_ctrl.target_current_total_a / (float)g_ctrl.actual_module_count;
-        g_ctrl.module_target_hold_active = false;
+        if (g_ctrl.target_current_per_module_a > cfg.module_i_max_a) {
+            g_ctrl.target_current_per_module_a = cfg.module_i_max_a;
+            g_ctrl.target_current_total_a =
+                g_ctrl.target_current_per_module_a * (float)g_ctrl.actual_module_count;
+            g_ctrl.derating = 1U;
+        }
+        if (g_ctrl.actual_module_count < g_ctrl.source_module_count) {
+            g_ctrl.derating = 1U;
+        }
+    } else if (isfinite(g_ctrl.last_valid_target_current_per_module_a) &&
+               g_ctrl.last_valid_target_current_per_module_a > CHARGE_CTRL_CURRENT_TARGET_EPSILON_A) {
+        g_ctrl.target_current_per_module_a = g_ctrl.last_valid_target_current_per_module_a;
+        g_ctrl.module_target_hold_active = true;
     } else {
         g_ctrl.target_current_per_module_a = 0.0f;
         g_ctrl.module_target_hold_active = false;
     }
 
-    /* Clamp to module_i_max_a (downward only) */
-    if (g_ctrl.target_current_per_module_a > cfg.module_i_max_a) {
-        g_ctrl.target_current_per_module_a = cfg.module_i_max_a;
-        /* Recalculate only with a valid module count. During a mismatch,
-         * target_current_total_a must remain positive so the controller does
-         * not enter its stop path merely because actual count is transiently
-         * zero. */
-        if (g_ctrl.actual_module_count > 0U) {
-            g_ctrl.target_current_total_a =
-                g_ctrl.target_current_per_module_a * (float)g_ctrl.actual_module_count;
-        }
-        g_ctrl.derating = 1;
-    }
-
-    if (!module_count_mismatch &&
+    if (g_ctrl.actual_module_count > 0U &&
         g_ctrl.target_current_per_module_a > CHARGE_CTRL_CURRENT_TARGET_EPSILON_A) {
         g_ctrl.last_valid_target_current_per_module_a =
             g_ctrl.target_current_per_module_a;
@@ -2025,10 +2021,21 @@ static void run_precharge_mode(uint32_t now_tick)
 
     g_ctrl.target_voltage_v = cfg.vlow_v;
     g_ctrl.target_current_total_a = cfg.ilow_c * compute_charge_capacity_ah(&cfg, &bms);
-    g_ctrl.target_current_per_module_a =
-        g_ctrl.target_current_total_a / (float)g_ctrl.actual_module_count;
+    if (g_ctrl.actual_module_count > 0U) {
+        float station_cap_a = (float)g_ctrl.actual_module_count * cfg.module_i_max_a;
+        if (g_ctrl.target_current_total_a > station_cap_a) {
+            g_ctrl.target_current_total_a = station_cap_a;
+            g_ctrl.derating = 1U;
+        } else {
+            g_ctrl.derating = (g_ctrl.actual_module_count < g_ctrl.source_module_count) ? 1U : 0U;
+        }
+        g_ctrl.target_current_per_module_a =
+            g_ctrl.target_current_total_a / (float)g_ctrl.actual_module_count;
+    } else {
+        g_ctrl.target_current_per_module_a = 0.0f;
+        g_ctrl.derating = 0U;
+    }
     g_ctrl.inhibit = 0U;
-    g_ctrl.derating = 0U;
     g_ctrl.active_limit_source = CHARGE_LIMIT_SOURCE_NONE;
     g_ctrl.active_stage_band = CHARGE_STAGE_BAND_NONE;
     g_ctrl.active_limit_current_c = cfg.ilow_c;
@@ -2094,20 +2101,24 @@ void ChargeController_Process(uint32_t now_tick) {
     /* Update actual module count */
     g_ctrl.actual_module_count = get_active_module_count();
 
-    /* Check for module count mismatch during running */
-    if ((g_ctrl.state == CHARGE_CTRL_STATE_RUNNING ||
-         g_ctrl.state == CHARGE_CTRL_STATE_PRECHARGE) &&
-        g_ctrl.actual_module_count != g_ctrl.source_module_count) {
-        
-        if (g_ctrl.module_mismatch_timer_tick == 0) {
-            g_ctrl.module_mismatch_timer_tick = now_tick;
-        } else if (now_tick - g_ctrl.module_mismatch_timer_tick >= 10000) {
-            LOG("CC: Module mismatch %u->%u\r\n",
-                (unsigned)g_ctrl.source_module_count, (unsigned)g_ctrl.actual_module_count);
-            set_fault(CHARGE_CTRL_FAULT_MODULE_COUNT_MISMATCH, now_tick);
+    /* Check for complete module loss during running (10s debounce) */
+    if (g_ctrl.state == CHARGE_CTRL_STATE_RUNNING ||
+        g_ctrl.state == CHARGE_CTRL_STATE_PRECHARGE) {
+        if (g_ctrl.actual_module_count == 0U) {
+            if (g_ctrl.module_mismatch_timer_tick == 0U) {
+                g_ctrl.module_mismatch_timer_tick = now_tick;
+            } else if ((now_tick - g_ctrl.module_mismatch_timer_tick) >= 10000U) {
+                LOG("CC: All modules lost (timeout 10s)\r\n");
+                set_fault(CHARGE_CTRL_FAULT_NO_MODULE, now_tick);
+            }
+        } else {
+            g_ctrl.module_mismatch_timer_tick = 0U;
+            if (g_ctrl.actual_module_count < g_ctrl.source_module_count) {
+                g_ctrl.derating = 1U;
+            }
         }
     } else {
-        g_ctrl.module_mismatch_timer_tick = 0;
+        g_ctrl.module_mismatch_timer_tick = 0U;
     }
 
     switch (g_ctrl.state) {

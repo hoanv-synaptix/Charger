@@ -367,8 +367,10 @@ stateDiagram-v2
 | **`E003`** | **Điện áp pin cao** | `ALARM_ACT_STOP` | BMS gửi cờ quá áp pack pin `high_pack_volt`. | Ngắt sạc dừng module ngay lập tức. |
 | **`E004`** | **Điện áp cell pin cao** | `ALARM_ACT_STOP` | BMS gửi cờ quá áp cell đơn lẻ `high_cell_volt`. | Ngắt sạc bảo vệ cell pin tránh nổ/phồng. |
 | **`E023`** | **Mất tải DC** | `ALARM_ACT_STOP` | Dòng sạc thực tế sụt bất thường về $\approx 0\text{A}$ trong khi module đang phát áp cao. | Tự động vô hiệu hóa khi hệ thống đang chủ động kẹp dòng do quá nhiệt E005 (`inhibit = 1`), tránh báo lỗi ảo. |
-| **`E010`** | **Lỗi phần cứng module** | `ALARM_ACT_STOP` | Module gửi cờ `HW_FAULT` qua CAN. | **Debounce động theo trạng thái**: IDLE = 10 giây (lọc 100% xung xả tụ khi tắt Aptomat AC), ACTIVE = 1 giây (ngắt khẩn cấp). Chế áp hoàn toàn khi có sụt áp AC, lỗi PFC hoặc module offline trong IDLE. |
+| **`E010`..`E017`** | **Lỗi nội bộ module** | `ALARM_ACT_INFO` (khi $N_{\text{act}} \ge 1$)<br>$\rightarrow$ `ALARM_ACT_STOP` (khi $N_{\text{act}} = 0$) | Module gửi cờ lỗi HW, quá nhiệt, quá dòng, PFC, quạt, quá áp AC. | Trong hệ thống đa module, khi còn ít nhất 1 module lành, hệ thống tự động loại module lỗi, giáng cấp hành vi về INFO và tiếp tục sạc. Chỉ ngắt STOP khi toàn bộ module đều hỏng. |
 | **`W011`** | **Điện lưới AC bị yếu** | `ALARM_ACT_INFO` | Module gửi cờ sụt áp AC `AC_UNDER_VOLT`. | Tự động **BYPASS** trong IDLE (Clean Shutdown); chỉ giám sát trong phiên sạc hoạt động (debounce set 1s, clear 3s). |
+| **`E027`** | **Lỗi bộ sạc (0 module)** | `ALARM_ACT_STOP` / Inhibit | Không phát hiện module online lúc khởi động, hoặc mất toàn bộ module > 10s khi đang sạc. | Debounce 10.000ms khi mất toàn bộ module trước khi ngắt an toàn STOP. |
+| **`E028`** | **Số bộ sạc không khớp** | `ALARM_ACT_INFO` | Số module online thực tế nhỏ hơn cấu hình ($N_{\text{actual}} < N_{\text{source}}$). | Kích hoạt chế độ sạc suy giảm (Degraded Mode), tự động chia lại tải và kẹp trần công suất, không ngắt sạc. Chế áp khi có W010 hoặc W011. |
 | **`E030`** | **Sụt áp jack sạc** | `ALARM_ACT_STOP` | Chênh lệch điện áp đầu cắm $\Delta V = V_{\text{cap}} - V_{\text{batt}} > 2.0\text{V}$ khi đang có tải $\ge 2.0\text{A}$. | Chỉ đánh giá khi có dòng sạc thật; bỏ qua khi ngắt nhiệt E005 hoặc relay mở. |
 | **`E031`** | **Quá nhiệt jack sạc** | `ALARM_ACT_STOP` | Nhiệt độ tại 4 kênh NTC giắc cắm vượt ngưỡng tới hạn `protect_jack_temp_trip_c`. | Dừng sạc khẩn cấp bảo vệ chống cháy nổ tiếp điểm đầu cắm. |
 
@@ -387,11 +389,41 @@ stateDiagram-v2
    * Khi ngắt nguồn AC: Chế áp hoàn toàn `E010`, `E015`, `W010`, chống hiện tượng "bão log domino".
    * Khi rút giắc đột ngột (Hot Unplug): Bắt duy nhất lỗi gốc `E023`, chế áp hoàn toàn `E021` và `E022`.
 
+---
+
+## 8. CƠ CHẾ SẠC SONG SONG ĐA MODULE CHỊU LỖI & PHÂN BỔ TẢI ĐỘNG (FAULT-TOLERANT PARALLEL CHARGING)
+
+Hệ thống cho phép cấu hình ghép song song từ 1 đến 8 module nguồn trên một thanh cái DC bus chung. Cơ chế chịu lỗi (Fault-Tolerant Degraded Charging) đảm bảo trạm sạc hoạt động liên tục khi có sự cố cục bộ:
+
+### 8.1 Thuật toán Tái phân bổ Dòng và Kẹp Công suất Thực tế
+Khi số lượng module hoạt động thực tế $N_{\text{actual}}$ thay đổi trong phiên sạc:
+1. **Trần công suất thực tế trạm:**
+   $$I_{\text{station\_cap}} = N_{\text{actual}} \times I_{\max\_\text{mod}}$$
+2. **Kẹp dòng mục tiêu tổng:**
+   $$I_{\text{target\_total}} = \min(I_{\text{req\_bms}}, I_{\text{station\_cap}})$$
+   - Nếu $N_{\text{actual}} < N_{\text{source}}$ hoặc dòng BMS yêu cầu bị kẹp, hệ thống kích hoạt cờ `derating = 1`.
+3. **Phân bổ đều dòng cho từng module online:**
+   $$I_{\text{per\_mod}} = \frac{I_{\text{target\_total}}}{N_{\text{actual}}}$$
+4. **Bảo vệ chống mất toàn bộ nguồn ($N_{\text{actual}} = 0$):**
+   - Áp dụng bộ lọc debounce **10.000ms (10 giây)** để lọc sạch các trường hợp đứt truyền thông thoáng qua. Sau 10s vẫn là 0 module $\rightarrow$ Ngắt an toàn `E027`.
+
+### 8.2 Quy chuẩn Phần cứng Bắt buộc (Single-Vendor Policy)
+
+> [!CAUTION] **QUY CHUẨN LẮP ĐẶT PHẦN CỨNG BẮT BUỘC:**
+> Các module ghép song song trong cùng một tủ trạm sạc **BẮT BUỘC PHẢI CÙNG MỘT HÃNG SẢN XUẤT** (Toàn bộ là TonHe, hoặc toàn bộ là LianMing, hoặc toàn bộ là Maxwell), và khuyến nghị cùng model/công suất. **TUYỆT ĐỐI KHÔNG CẮM LẪN CÁC HÃNG KHÁC NHAU (VÍ DỤ 1 TONHE + 1 LIANMING).**
+
+#### Phân tích Kỹ thuật Chuyên sâu:
+- **Tầng CAN Bus:** Dù TonHe và LianMing chạy cùng tốc độ 125 kbps và có CAN ID phân biệt không xung đột ID, firmware điều khiển sử dụng kiến trúc Single Active Driver. Nếu trạm chọn driver TonHe, module LianMing sẽ không phản hồi frame TonHe $\rightarrow$ bị xem là mất kết nối `W010` (Offline).
+- **Tầng Điện tử Công suất DC Bus:**
+  1. *Lệch áp ngõ ra DC:* Với trở kháng ra siêu nhỏ ($R \approx 0.02\,\Omega$), sai số cảm biến áp giữa 2 hãng dù chỉ $0.3\text{V} - 0.5\text{V}$ sẽ khiến module có áp cao hơn gánh $100\%$ tải, module áp thấp bị bóp dòng về 0A, dẫn đến quá nhiệt và ngắt quá dòng `E014`/`E015`.
+  2. *Dòng điện vòng ngược (Circulating Current):* Sự chênh áp quá độ lúc đóng ngắt có thể gây dòng xả ngược vào tụ đầu ra của module áp thấp.
+  3. *Không đồng nhất Dốc áp Soft-Start & Vòng điều khiển PI:* LianMing dùng bộ tạo dốc áp nội bộ, TonHe chạy dốc áp từ MCU. Tốc độ đáp ứng PI khác nhau gây dao động cộng hưởng dòng điện (Current Hunting), làm méo dạng sóng dòng sạc và khiến BMS xe ngắt bảo vệ.
 
 ---
 
-## 8. KẾT LUẬN & KIẾN NGHỊ BÀN GIAO
+## 9. KẾT LUẬN & KIẾN NGHỊ BÀN GIAO
 
 1. **Tính hoàn thiện**: Toàn bộ **49 trường thông số** cấu hình trong tài liệu này phản ánh chính xác 100% cấu trúc nhị phân 254 bytes (Version 9) của Firmware MCU STM32 và giao diện ứng dụng C# PC (`ChargerDebugApp` .NET 8).
 2. **Tính thân thiện & Tinh gọn**: Giao diện người dùng PC đã đồng bộ hiển thị thẳng hàng BMS CAN ID và Charge Source, tự động disable BMS CAN ID khi sạc không BMS, bổ sung trường I Max (A) trực quan.
-3. **Tính an toàn tuyệt đối**: Hệ thống bao phủ toàn diện từ bảo vệ pin (3 vùng điện áp, trần dòng kép min(Imax_C, Imax_A), ngắt bão hòa $I_{\min}$, quá nhiệt tự phục hồi 3 lần, cứu pin cạn kiệt qua Pre-charge bypass E021) đến bảo vệ hạ tầng trạm sạc (sụt áp giắc sạc, quá nhiệt đầu cắm 4 kênh NTC, hẹn giờ sạc thấp điểm, cơ chế khôi phục sau dừng khẩn cấp E-Stop).
+3. **Tính an toàn tuyệt đối**: Hệ thống bao phủ toàn diện từ bảo vệ pin (3 vùng điện áp, trần dòng kép min(Imax_C, Imax_A), ngắt bão hòa $I_{\min}$, quá nhiệt tự phục hồi 3 lần, cứu pin cạn kiệt qua Pre-charge bypass E021) đến bảo vệ hạ tầng trạm sạc (sụt áp giắc sạc, quá nhiệt đầu cắm 4 kênh NTC, hẹn giờ sạc thấp điểm, cơ chế khôi phục sau dừng khẩn cấp E-Stop, sạc suy giảm dự phòng đa module).
+

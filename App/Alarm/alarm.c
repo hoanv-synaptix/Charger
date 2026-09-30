@@ -84,6 +84,8 @@ typedef struct {
      * alarm bits are only taken from online modules; offline modules expose
      * communication loss separately so stale telemetry cannot be reused. */
     uint8_t  mod_offline_count;
+    uint8_t  mod_active_count;
+    uint8_t  mod_total_count;
     float    mod_current_max;   /* -1 if none reporting */
     float    mod_voltage_min;   /* -1 if none reporting */
     uint32_t mod_alarm_or;
@@ -297,13 +299,19 @@ static bool ev_bms_low_pack_volt(const AlarmInputs_t *in, uint32_t bit) {
 }
 
 static bool ev_ctrl_module_mismatch(const AlarmInputs_t *in, uint32_t bit) {
+    (void)bit;
     /* Root cause suppression: if module communication failed completely or AC under-voltage, suppress E028 mismatch */
     if (is_alarm_active_or_latched(ALARM_MOD_COMM_FAIL) ||
         is_alarm_active_or_latched(ALARM_MOD_AC_UNDER_VOLT) ||
-        (in->mod_alarm_or & (CHG_LIB_ALARM_COMM_FAIL | CHG_LIB_ALARM_AC_UNDER_VOLT)) != 0U) {
+        (in != NULL && in->mod_offline_count > 0U) ||
+        (in != NULL && (in->mod_alarm_or & (CHG_LIB_ALARM_COMM_FAIL | CHG_LIB_ALARM_AC_UNDER_VOLT)) != 0U)) {
         return false;
     }
-    return ev_ctrl(in, bit);
+    /* Mismatch condition: actual active modules differs from configured source modules */
+    if (in != NULL && in->cc.source_module_count > 0U && in->cc.actual_module_count < in->cc.source_module_count) {
+        return true;
+    }
+    return (in != NULL) && ((in->cc.fault_flags & CHARGE_CTRL_FAULT_MODULE_COUNT_MISMATCH) != 0U);
 }
 
 static bool ev_mod_hw_fault(const AlarmInputs_t *in, uint32_t param) {
@@ -564,6 +572,7 @@ static void gather_inputs(uint32_t now, AlarmInputs_t *in) {
         CHG_LIB_ModuleView_t mv;
         if (!CHG_LIB_GetModuleView(i, &mv)) continue;
         if (!mv.enabled) continue;
+        in->mod_total_count++;
         if (!mv.online) {
             in->mod_offline_count++;
             continue;
@@ -575,6 +584,7 @@ static void gather_inputs(uint32_t now, AlarmInputs_t *in) {
             continue;
         }
 
+        in->mod_active_count++;
         in->mod_alarm_or |= (uint32_t)mv.alarm_flags;
         in->mod_pfc_fault_or |= mv.pfc_fault;
 
@@ -609,6 +619,29 @@ static void log_edge(uint32_t now, AlarmCode_t code, AlarmAction_t action, bool 
 
 /* ============== Debounce + aggregate ============== */
 
+/* Dynamic action resolution: Demote local module faults to INFO if >=1 module remains active */
+static AlarmAction_t get_effective_action(const AlarmSpec_t *sp, const AlarmInputs_t *in) {
+    if (sp == NULL) return ALARM_ACT_INFO;
+    AlarmAction_t action = sp->action;
+    if (in != NULL && in->mod_active_count >= 1U) {
+        /* When at least 1 module is healthy and active, local module faults
+         * degrade power and report warnings/alarms on UI instead of stopping the station. */
+        switch (sp->code) {
+            case ALARM_MOD_HW_FAULT:
+            case ALARM_MOD_OVER_TEMP:
+            case ALARM_MOD_OVER_CURR_OUT:
+            case ALARM_MOD_PFC_FAULT:
+            case ALARM_MOD_FAN_FAULT:
+            case ALARM_MOD_AC_OVER_VOLT:
+                action = ALARM_ACT_INFO;
+                break;
+            default:
+                break;
+        }
+    }
+    return action;
+}
+
 static void run_debounce(uint32_t now, const AlarmInputs_t *in, AlarmEdgeTally_t *tally) {
     for (uint8_t i = 0; i < ALARM_SPEC_COUNT; i++) {
         const AlarmSpec_t *sp = &k_specs[i];
@@ -636,7 +669,7 @@ static void run_debounce(uint32_t now, const AlarmInputs_t *in, AlarmEdgeTally_t
             if (rt->latched) rt->latched = false; /* condition returned -- genuinely active */
             if (!rt->active && held >= set_ms) {
                 rt->active = true;
-                log_edge(now, sp->code, sp->action, true);
+                log_edge(now, sp->code, get_effective_action(sp, in), true);
                 if (tally->raised++ == 0U) tally->first_raised_desc = sp->desc;
             }
         } else {
@@ -645,7 +678,7 @@ static void run_debounce(uint32_t now, const AlarmInputs_t *in, AlarmEdgeTally_t
                     rt->latched = true;    /* keep active until Alarm_Acknowledge */
                 } else {
                     rt->active = false;
-                    log_edge(now, sp->code, sp->action, false);
+                    log_edge(now, sp->code, get_effective_action(sp, in), false);
                     if (tally->cleared++ == 0U) tally->first_cleared_desc = sp->desc;
                 }
             }
@@ -705,7 +738,7 @@ static void aggregate_view(const AlarmInputs_t *in) {
         v.active_count++;
         if (rt->latched) v.latched_mask |= (1ULL << sp->code);
 
-        AlarmAction_t action = sp->action;
+        AlarmAction_t action = get_effective_action(sp, in);
         if (action > v.highest_action) {
             v.highest_action = action;
         }

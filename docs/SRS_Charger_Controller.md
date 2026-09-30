@@ -235,7 +235,7 @@ online; chỉ frame BMS hợp lệ mới refresh watchdog. Queue overflow/FIFO l
 |---|---|---|
 | FR-CTRL-01 | FSM normal: IDLE → READY → RUNNING → STOPPING → IDLE; thêm PRECHARGE cho battery-recovery; FAULT từ mọi state đang cấp sạc; DERATING là cờ trong RUNNING | M |
 | FR-CTRL-20 | PRECHARGE dùng `vlow_v` + `ilow_c × battery_capacity_ah`, chia đều module active. Cho phép BMS offline lúc Start; relay chỉ latch khi mọi module active/online có V nằm trong `Vlow ±1.0V`. Khi `BATT_ST1` và `CELL_VOLT` đều fresh cùng module condition trong 60 s thì controlled stop; chỉ sau khi current-settle/relay-open hoàn tất mới về IDLE và Home. Mất một điều kiện reset hold; không có BMS-wake timeout. Low-voltage BMS alarm là INFO; critical BMS alarm sau recovery, lỗi module, jack protection và E-stop vẫn stop/fault theo đường chung. | M |
-| FR-CTRL-02 | START qua tiền tố: driver đã chọn, module active > 0 và == `source_module_count`, config version hợp lệ | M |
+| FR-CTRL-02 | START qua tiền tố: driver đã chọn, module active ≥ 1 (cho phép khởi động sạc ở chế độ suy giảm Degraded Mode nếu có ít nhất 1 module online), config version hợp lệ | M |
 | FR-CTRL-03 | Ghi nhận owner (PC/DWIN) mỗi chu kỳ | S |
 | FR-CTRL-04 | **Manual**: target V/I từ PC, clamp `module_u_max_v`/`module_i_max_a` | M |
 | FR-CTRL-05 | **Standalone No-BMS**: V=`vmax_v`, I=`imax_c × capacity`; hoàn tất khi 1 module online đo được ≥ target trong 1000ms (telemetry < 2s tuổi) | M |
@@ -247,12 +247,13 @@ online; chỉ frame BMS hợp lệ mới refresh watchdog. Queue overflow/FIFO l
 | FR-CTRL-11 | Inhibit → I=0 nhưng không kết thúc chu kỳ (recoverable) | M |
 | FR-CTRL-12 | Hard protection jack-V: chênh áp > delta kéo dài delay_s → FAULT + stop | M |
 | FR-CTRL-13 | Jack temp: derating % (soft), hysteresis + delay; ADC nhiệt thực tế tích hợp sau | S |
-| FR-CTRL-14 | Module mismatch kéo dài 10s khi chạy → FAULT | M |
+| FR-CTRL-14 | Mất toàn bộ module (0 module online) kéo dài 10s khi đang sạc → FAULT (`E027`). Khi số lượng module giảm ($N_{\text{actual}} < N_{\text{source}}$ nhưng $\ge 1$), hệ thống tiếp tục sạc ở chế độ suy giảm (Degraded Mode), tự động chia đều tải cho các module còn lại và kẹp trần công suất theo $N_{\text{actual}} \times I_{\max\_\text{mod}}$, hiển thị cảnh báo `E028`. | M |
 | FR-CTRL-15 | STOP có kiểm; STOP khi FAULT → xóa fault về IDLE | M |
 | FR-CTRL-16 | EMERGENCY_STOP → EmergencyStop driver ngay + FAULT. Sau khi sự cố đã giải tỏa, cho phép khôi phục về IDLE an toàn qua lệnh Reset Fault (PC CMD 0x0A / DWIN Reset button) gọi `ChargeController_ResetEmergencyStop()` mà không cần khởi động lại nguồn. | M |
 | FR-CTRL-17 | Chỉ gửi Start/Stop khi should_run thay đổi (chống spam bus) | S |
 | FR-CTRL-18 | BMS stale → giữ target cũ, cảnh báo 1 lần | S |
 | FR-CTRL-19 | Ramp-up setpoint (chỉ giới hạn chiều **tăng**; giảm/derating/clamp tức thì; EMERGENCY/FAULT không ramp; bước 100ms; cả 3 mode): **Dòng** 0 → target ở `CHARGE_CTRL_CURRENT_RAMP_A_PER_S` (5 A/s), giới hạn trần dòng nạp an toàn kép $\min(imax\_c \times \text{Capacity}, imax\_a)$. **Áp** ramp từ 0 — 2 tốc độ: pre-relay-close `CHARGE_CTRL_VOLTAGE_PRECLOSE_RAMP_V_PER_S` (10 V/s, đưa module lên áp pack nhanh; relay arm khi module ≥ `CHARGE_CTRL_RELAY_ARM_VOLT_PCT` (95%) của ref → delay ≈ 0.95·pack_V / 10), post-close `CHARGE_CTRL_VOLTAGE_RAMP_V_PER_S` (2 V/s, đoạn Stage-1 → vmax). *Tốc độ là giá trị khởi điểm, chờ đo scope trên DC bus.* | S |
+| FR-CTRL-21 | Quy chuẩn ghép song song đa module: Tất cả module trong một trạm sạc phải cùng một hãng sản xuất (Single-vendor policy), cấm cắm lẫn khác hãng (như TonHe và LianMing). Khi có sự cố rớt module, lỗi nội bộ của module bị hỏng hạ cấp về `ALARM_ACT_INFO` để duy trì sạc liên tục bằng các module lành. | M |
 
 ### 3.5 Cấu hình (Config/Storage) — FR-CFG
 

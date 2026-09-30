@@ -2096,6 +2096,37 @@ static bool test_bms_isolation_and_cascade(void)
     return true;
 }
 
+static bool test_multi_module_degraded_alarm_action_is_info(void)
+{
+    printf("Running test_multi_module_degraded_alarm_action_is_info...\n");
+    ASSERT(setup_variant(CHARGE_MODULE_TYPE_MAXWELL, 2U, NULL), "setup 2-module scenario");
+    sim_module_reset_n(2, 1, 0);
+    healthy_bms(400.0f);
+    ASSERT(start_running(), "start running with 2 modules");
+
+    /* Module 1 experiences overtemperature (bit 30 for Maxwell) */
+    g_sim_modules[1].maxwell_alarm_raw = (1U << 30);
+    drive_ms(800U);
+
+    ASSERT(alarm_active(ALARM_MOD_OVER_TEMP), "E011 must be active for module 1");
+    AlarmView_t av;
+    Alarm_GetView(&av);
+    /* Since module 0 is still active and healthy, the action must be INFO (not STOP) */
+    ASSERT(av.highest_action == ALARM_ACT_INFO, "E011 action must be demoted to INFO in degraded mode");
+
+    /* Also verify E028 is active because actual_count (1) < source_count (2) */
+    ASSERT(alarm_active(ALARM_CTRL_MODULE_MISMATCH), "E028 must be active when running with fewer modules");
+
+    /* Now module 0 also experiences an alarm -> 0 active modules left */
+    g_sim_modules[0].maxwell_alarm_raw = (1U << 30);
+    drive_ms(800U);
+    Alarm_GetView(&av);
+    ASSERT(av.highest_action == ALARM_ACT_STOP, "E011 action must elevate to STOP when all modules fail");
+
+    printf("[PASS] test_multi_module_degraded_alarm_action_is_info\n");
+    return true;
+}
+
 int main(void)
 {
     bool ok = true;
@@ -2134,6 +2165,7 @@ int main(void)
     ok &= test_bms_volt_mismatch_e032();
     ok &= test_alarm_time_format_smart();
     ok &= test_cascade_suppression_comprehensive();
+    ok &= test_multi_module_degraded_alarm_action_is_info();
 
     if (ok) { printf("\nALL TESTS PASSED.\n"); return 0; }
     printf("\nSOME TESTS FAILED.\n");
