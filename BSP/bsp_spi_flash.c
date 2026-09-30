@@ -124,7 +124,8 @@ static bool spi_transmit(const uint8_t *data, uint16_t len)
         return bb_transmit(data, len);
     }
 
-    while (__HAL_SPI_GET_FLAG(&hspi2, SPI_FLAG_RXNE)) {
+    uint8_t drain_cnt = 0U;
+    while (__HAL_SPI_GET_FLAG(&hspi2, SPI_FLAG_RXNE) && (++drain_cnt < 32U)) {
         __IO uint8_t dummy = *((__IO uint8_t *)&hspi2.Instance->DR);
         (void)dummy;
     }
@@ -133,9 +134,16 @@ static bool spi_transmit(const uint8_t *data, uint16_t len)
     if (HAL_SPI_Transmit(&hspi2, (uint8_t *)data, len, SPI_TIMEOUT_MS) != HAL_OK) {
         return false;
     }
-    while (__HAL_SPI_GET_FLAG(&hspi2, SPI_FLAG_BSY)) {}
 
-    while (__HAL_SPI_GET_FLAG(&hspi2, SPI_FLAG_RXNE)) {
+    uint32_t bsy_start = HAL_GetTick();
+    while (__HAL_SPI_GET_FLAG(&hspi2, SPI_FLAG_BSY)) {
+        if ((HAL_GetTick() - bsy_start) > SPI_TIMEOUT_MS) {
+            return false;
+        }
+    }
+
+    drain_cnt = 0U;
+    while (__HAL_SPI_GET_FLAG(&hspi2, SPI_FLAG_RXNE) && (++drain_cnt < 32U)) {
         __IO uint8_t dummy = *((__IO uint8_t *)&hspi2.Instance->DR);
         (void)dummy;
     }
@@ -151,7 +159,8 @@ static bool spi_receive(uint8_t *buf, uint16_t len)
         return bb_receive(buf, len);
     }
 
-    while (__HAL_SPI_GET_FLAG(&hspi2, SPI_FLAG_RXNE)) {
+    uint8_t drain_cnt = 0U;
+    while (__HAL_SPI_GET_FLAG(&hspi2, SPI_FLAG_RXNE) && (++drain_cnt < 32U)) {
         __IO uint8_t dummy = *((__IO uint8_t *)&hspi2.Instance->DR);
         (void)dummy;
     }
