@@ -1765,6 +1765,75 @@ static bool test_cascade_suppression_comprehensive(void)
     ASSERT(!alarm_logged_raise(ALARM_BMS_COMM_LOST), "Subsequent BMS comm lost must not be logged");
     ASSERT(!alarm_logged_raise(ALARM_BMS_NO_PACK_VOLTAGE), "Subsequent No Pack Voltage must not be logged");
 
+    /* ===================================================================
+     * 6. BMS High Cell Voltage (E004) opens contactor -> current drops to 0A.
+     * Must NOT trigger E023 (DC load lost); root cause E004 must be logged alone.
+     * =================================================================== */
+    ASSERT(setup(NULL), "setup BMS E004 cascade test");
+    healthy_bms(400.0f);
+    ASSERT(start_running(), "start running for E004");
+    establish_load(400.0f, 40.0f);
+
+    /* BMS reports cell over-voltage E004 and cuts contactor */
+    g_sim_bms.high_cell_volt = 1;
+    g_sim_bms.pack_current_a = 0.0f;
+    g_sim_module.current = 0.0f;
+    drive_ms(1500U); /* Past 800ms load lost debounce */
+    ASSERT(alarm_active(ALARM_BMS_HIGH_CELL_VOLT), "E004 must be active");
+    ASSERT(!alarm_active(ALARM_DC_LOAD_LOST), "E023 must be suppressed when BMS has stop alarm");
+    ASSERT(!alarm_logged_raise(ALARM_DC_LOAD_LOST), "E023 must NOT be logged when E004 active");
+
+    /* ===================================================================
+     * 7. Voltage Mismatch (E032) suppresses Low Pack Voltage (E001)
+     * When plugging 48V battery into 72V station, pack voltage is below
+     * station Vmin, but it is NOT an undervoltage fault of the battery.
+     * =================================================================== */
+    ASSERT(setup(NULL), "setup E032 mismatch cascade test");
+    /* Station Vmax=420.0V, Vmin=300.0V. BMS requests 48V pack (e.g. 54.6V) */
+    healthy_bms(48.0f);
+    g_sim_bms.chg_volt_request_v = 54.6f;
+    feed_chg_request(54.6f, 50.0f);
+    drive_ms(1500U); /* Past 1000ms E032 debounce */
+    ASSERT(alarm_active(ALARM_BMS_VOLT_MISMATCH), "E032 must be active on voltage mismatch");
+    ASSERT(!alarm_active(ALARM_BMS_LOW_PACK_VOLT), "E001 must be suppressed by E032");
+    ASSERT(!alarm_logged_raise(ALARM_BMS_LOW_PACK_VOLT), "E001 must NOT be logged when E032 active");
+
+    /* ===================================================================
+     * 8. Module Communication Loss (W010) suppresses Module Mismatch (E028)
+     * and DC Output Not Established (E024).
+     * =================================================================== */
+    ASSERT(setup(NULL), "setup W010 comm loss cascade test");
+    healthy_bms(400.0f);
+    ASSERT(start_running(), "start running for W010");
+    establish_load(400.0f, 40.0f);
+
+    /* Module communication lost */
+    g_sim_module.silent = true;
+    drive_ms(13000U); /* Past 2000ms comm timeout and 12000ms E024 confirm timer */
+    ASSERT(alarm_active(ALARM_MOD_COMM_FAIL), "W010 must be active on comm loss");
+    ASSERT(!alarm_active(ALARM_CTRL_MODULE_MISMATCH), "E028 must be suppressed by W010");
+    ASSERT(!alarm_active(ALARM_DC_OUT_NOT_ESTABLISHED), "E024 must be suppressed by W010");
+    ASSERT(!alarm_logged_raise(ALARM_CTRL_MODULE_MISMATCH), "E028 must NOT be logged when W010 active");
+    ASSERT(!alarm_logged_raise(ALARM_DC_OUT_NOT_ESTABLISHED), "E024 must NOT be logged when W010 active");
+
+    /* ===================================================================
+     * 9. Module Over-Temp (E011) cuts PWM -> current drops to 0A.
+     * Must NOT trigger E023 (DC load lost).
+     * =================================================================== */
+    ASSERT(setup(NULL), "setup module E011 cascade test");
+    healthy_bms(400.0f);
+    ASSERT(start_running(), "start running for E011");
+    establish_load(400.0f, 40.0f);
+
+    /* Module reports over-temp E011 and cuts current */
+    g_sim_module.tonhe_fault_bits = (1U << 5); /* Tonhe over-temp bit */
+    g_sim_module.current = 0.0f;
+    g_sim_bms.pack_current_a = 0.0f;
+    drive_ms(1500U);
+    ASSERT(alarm_active(ALARM_MOD_OVER_TEMP), "E011 must be active");
+    ASSERT(!alarm_active(ALARM_DC_LOAD_LOST), "E023 must be suppressed by E011");
+    ASSERT(!alarm_logged_raise(ALARM_DC_LOAD_LOST), "E023 must NOT be logged when E011 active");
+
     printf("[PASS] test_cascade_suppression_comprehensive\n");
     return true;
 }

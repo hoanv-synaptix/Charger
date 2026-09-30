@@ -1103,9 +1103,18 @@ static void update_hard_protection(const ChargeCycleConfig_t *cfg,
                                      ((bms->alarm_flags & BMS_ALARM_TEMP_HIGH_CHG) != 0U) ||
                                      (cfg->temp_enabled != 0U && ((float)bms->max_cell_temp >= cfg->temp_5_c));
 
+        /* Suppress jack V protect if voltage mismatch (E032) is detected */
+        bool volt_mismatch = false;
+        if (bms->online && bms->chg_volt_request > 10.0f && cfg->vmax_v > 10.0f) {
+            if (fabsf(bms->chg_volt_request - cfg->vmax_v) > 2.0f) {
+                volt_mismatch = true;
+            }
+        }
+
         if (cfg->protect_jack_charge_enabled &&
             g_ctrl.relay_latched_closed &&
-            !bms_temp_paused) {
+            !bms_temp_paused &&
+            !volt_mismatch) {
             CHG_LIB_SystemSummary_t sys_summary;
             CHG_LIB_GetSystemSummary(&sys_summary);
             if (sys_summary.total_current >= CHARGE_CTRL_JACK_V_MIN_CURRENT_A) {

@@ -136,29 +136,6 @@ static bool ev_bms(const AlarmInputs_t *in, uint32_t bit) {
     return (in->bms.alarm_flags & bit) != 0U;
 }
 
-static bool ev_bms_low_pack_volt(const AlarmInputs_t *in, uint32_t bit) {
-    if (in->cfg_source_mode != CHARGE_SOURCE_BMS_CONTROLLED) return false;
-    /* During PRECHARGE, low-voltage recovery is expected and allowed */
-    if (in->cc.state == CHARGE_CTRL_STATE_PRECHARGE) return false;
-
-    /* 1. BMS self-reported low pack voltage alarm bit */
-    if ((in->bms.alarm_flags & bit) != 0U) {
-        return true;
-    }
-
-    /* 2. Controller-derived: in RUNNING or READY session, pack voltage in [0.5*Vmax, Vmin) */
-    if ((in->cc.state == CHARGE_CTRL_STATE_RUNNING ||
-         in->cc.state == CHARGE_CTRL_STATE_READY) &&
-        in->bms.online && in->cfg_vmax_v > 0.0f && in->cfg_vmin_v > 0.0f) {
-        float floor_v = in->cfg_vmax_v * ALARM_V_PACK_FLOOR_FRAC;
-        if (in->bms.batt_voltage >= floor_v && in->bms.batt_voltage < in->cfg_vmin_v) {
-            return true;
-        }
-    }
-
-    return false;
-}
-
 static bool ev_bms_temp_high(const AlarmInputs_t *in, uint32_t bit) {
     if (ev_bms(in, bit)) return true;
     if (in->cc.bms_temp_trip_count >= 4U &&
@@ -184,6 +161,7 @@ static bool ev_ctrl(const AlarmInputs_t *in, uint32_t bit) {
 }
 
 /* ---- derived and cascade-suppressed evals (forward decl; defined after g_alarm) ---- */
+static bool ev_bms_low_pack_volt(const AlarmInputs_t *in, uint32_t param);
 static bool ev_mod_hw_fault(const AlarmInputs_t *in, uint32_t param);
 static bool ev_mod_ac_undervolt(const AlarmInputs_t *in, uint32_t param);
 static bool ev_mod_pfc(const AlarmInputs_t *in, uint32_t param);
@@ -193,6 +171,7 @@ static bool ev_bms_no_pack_voltage(const AlarmInputs_t *in, uint32_t param);
 static bool ev_dc_load_lost(const AlarmInputs_t *in, uint32_t param);
 static bool ev_dc_out_not_established(const AlarmInputs_t *in, uint32_t param);
 static bool ev_bms_volt_mismatch(const AlarmInputs_t *in, uint32_t param);
+static bool ev_ctrl_module_mismatch(const AlarmInputs_t *in, uint32_t param);
 
 /* BMS severity: bits that gate the charge relay in bms_core.c
  * (bms_critical_alarm_mask). Keep this list in sync with that function --
@@ -231,7 +210,7 @@ static const AlarmSpec_t k_specs[] = {
 
     /* --- controller faults (mirror, report/log only -- controller already acts) --- */
     { ALARM_CTRL_NO_MODULE,       ALARM_ACT_INFO, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_ctrl, CHARGE_CTRL_FAULT_NO_MODULE,             "No charger module" },
-    { ALARM_CTRL_MODULE_MISMATCH, ALARM_ACT_INFO, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_ctrl, CHARGE_CTRL_FAULT_MODULE_COUNT_MISMATCH, "Module count mismatch" },
+    { ALARM_CTRL_MODULE_MISMATCH, ALARM_ACT_INFO, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_ctrl_module_mismatch, CHARGE_CTRL_FAULT_MODULE_COUNT_MISMATCH, "Module count mismatch" },
     { ALARM_CTRL_INVALID_CONFIG,  ALARM_ACT_INFO, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_ctrl, CHARGE_CTRL_FAULT_INVALID_CONFIG,        "Invalid charge config" },
     { ALARM_CTRL_JACK_OVER_V,     ALARM_ACT_STOP, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_ctrl, CHARGE_CTRL_FAULT_PROTECT_JACK_V,        "Connector over-voltage protect" },
     { ALARM_CTRL_JACK_OVER_TEMP,  ALARM_ACT_STOP, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_ctrl, CHARGE_CTRL_FAULT_PROTECT_JACK_TEMP,     "Connector over-temp protect" },
@@ -288,6 +267,44 @@ static inline bool is_alarm_active_or_latched(AlarmCode_t code) {
 }
 
 /* ============== Cascade-suppressed & Derived Evals ============== */
+
+static bool ev_bms_low_pack_volt(const AlarmInputs_t *in, uint32_t bit) {
+    if (in->cfg_source_mode != CHARGE_SOURCE_BMS_CONTROLLED) return false;
+    /* During PRECHARGE, low-voltage recovery is expected and allowed */
+    if (in->cc.state == CHARGE_CTRL_STATE_PRECHARGE) return false;
+
+    /* Root cause suppression: if voltage mismatch (E032) is active or detected, suppress E001 */
+    if (is_alarm_active_or_latched(ALARM_BMS_VOLT_MISMATCH) || ev_bms_volt_mismatch(in, 0)) {
+        return false;
+    }
+
+    /* 1. BMS self-reported low pack voltage alarm bit */
+    if ((in->bms.alarm_flags & bit) != 0U) {
+        return true;
+    }
+
+    /* 2. Controller-derived: in RUNNING or READY session, pack voltage in [0.5*Vmax, Vmin) */
+    if ((in->cc.state == CHARGE_CTRL_STATE_RUNNING ||
+         in->cc.state == CHARGE_CTRL_STATE_READY) &&
+        in->bms.online && in->cfg_vmax_v > 0.0f && in->cfg_vmin_v > 0.0f) {
+        float floor_v = in->cfg_vmax_v * ALARM_V_PACK_FLOOR_FRAC;
+        if (in->bms.batt_voltage >= floor_v && in->bms.batt_voltage < in->cfg_vmin_v) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static bool ev_ctrl_module_mismatch(const AlarmInputs_t *in, uint32_t bit) {
+    /* Root cause suppression: if module communication failed completely or AC under-voltage, suppress E028 mismatch */
+    if (is_alarm_active_or_latched(ALARM_MOD_COMM_FAIL) ||
+        is_alarm_active_or_latched(ALARM_MOD_AC_UNDER_VOLT) ||
+        (in->mod_alarm_or & (CHG_LIB_ALARM_COMM_FAIL | CHG_LIB_ALARM_AC_UNDER_VOLT)) != 0U) {
+        return false;
+    }
+    return ev_ctrl(in, bit);
+}
 
 static bool ev_mod_hw_fault(const AlarmInputs_t *in, uint32_t param) {
     (void)param;
@@ -423,12 +440,54 @@ static bool ev_dc_load_lost(const AlarmInputs_t *in, uint32_t param) {
      * cell/SOC below min, etc.), current is commanded to 0A by design -- not DC load lost. */
     if (in->cc.inhibit != 0U) return false;
 
-    bool bms_thermal_alarm =
-        in->bms.online &&
-        ((in->bms.alarm_flags &
-          (BMS_ALARM_TEMP_HIGH_CHG | BMS_ALARM_TEMP_HIGH_DCHG)) != 0U);
+    /* Root cause suppression:
+     * When BMS reports critical protection alarms (voltage, current, temperature),
+     * BMS intentionally opens its internal charge contactor/MOSFET.
+     * The resulting current drop to 0A is expected protection behavior -- NOT DC load lost. */
+    uint32_t bms_stop_mask = BMS_ALARM_LOW_PACK_VOLT |
+                             BMS_ALARM_HIGH_PACK_VOLT |
+                             BMS_ALARM_HIGH_CELL_VOLT |
+                             BMS_ALARM_TEMP_HIGH_CHG |
+                             BMS_ALARM_TEMP_HIGH_DCHG |
+                             BMS_ALARM_TEMP_LOW_CHG |
+                             BMS_ALARM_OVER_CHG_CURR;
+    if (in->bms.online && (in->bms.alarm_flags & bms_stop_mask) != 0U) {
+        return false;
+    }
+    if (is_alarm_active_or_latched(ALARM_BMS_LOW_PACK_VOLT) ||
+        is_alarm_active_or_latched(ALARM_BMS_HIGH_PACK_VOLT) ||
+        is_alarm_active_or_latched(ALARM_BMS_HIGH_CELL_VOLT) ||
+        is_alarm_active_or_latched(ALARM_BMS_TEMP_HIGH_CHG) ||
+        is_alarm_active_or_latched(ALARM_BMS_TEMP_LOW_CHG) ||
+        is_alarm_active_or_latched(ALARM_BMS_OVER_CHG_CURR)) {
+        return false;
+    }
 
-    if (bms_thermal_alarm) return false;
+    /* Root cause suppression:
+     * When charger module trips its own output (hardware fault, over-temp, over-current,
+     * AC under-volt, fan fault, PFC fault, AC over-volt), output current drops to 0A by module protection -- NOT DC load lost. */
+    if (in->mod_alarm_or != 0U || in->mod_pfc_fault_or != 0U) {
+        return false;
+    }
+    if (is_alarm_active_or_latched(ALARM_MOD_HW_FAULT) ||
+        is_alarm_active_or_latched(ALARM_MOD_OVER_TEMP) ||
+        is_alarm_active_or_latched(ALARM_MOD_OVER_VOLT_OUT) ||
+        is_alarm_active_or_latched(ALARM_MOD_SHORT_CIRCUIT) ||
+        is_alarm_active_or_latched(ALARM_MOD_AC_UNDER_VOLT) ||
+        is_alarm_active_or_latched(ALARM_MOD_OVER_CURR_OUT) ||
+        is_alarm_active_or_latched(ALARM_MOD_PFC_FAULT) ||
+        is_alarm_active_or_latched(ALARM_MOD_FAN_FAULT) ||
+        is_alarm_active_or_latched(ALARM_MOD_AC_OVER_VOLT) ||
+        is_alarm_active_or_latched(ALARM_MOD_COMM_FAIL)) {
+        return false;
+    }
+
+    /* Root cause suppression: station-level connector / mismatch protections */
+    if (is_alarm_active_or_latched(ALARM_CTRL_JACK_OVER_V) ||
+        is_alarm_active_or_latched(ALARM_CTRL_JACK_OVER_TEMP) ||
+        is_alarm_active_or_latched(ALARM_BMS_VOLT_MISMATCH)) {
+        return false;
+    }
 
     if (in->cc.state != CHARGE_CTRL_STATE_RUNNING) return false;
     if (!g_alarm.load_established) return false;
@@ -450,6 +509,22 @@ static bool ev_dc_out_not_established(const AlarmInputs_t *in, uint32_t param) {
     if (!in->cc.relay_should_close) return false;
     if (g_alarm.load_established) return false;
     if (g_alarm.relay_close_since == 0U) return false;
+
+    /* Root cause suppression: suppress E024 if there are known comm / hardware / config / mismatch causes preventing current */
+    if (is_alarm_active_or_latched(ALARM_MOD_COMM_FAIL) ||
+        is_alarm_active_or_latched(ALARM_BMS_COMM_LOST) ||
+        is_alarm_active_or_latched(ALARM_BMS_NO_PACK_VOLTAGE) ||
+        is_alarm_active_or_latched(ALARM_BMS_VOLT_MISMATCH) ||
+        is_alarm_active_or_latched(ALARM_CTRL_NO_MODULE) ||
+        is_alarm_active_or_latched(ALARM_CTRL_MODULE_MISMATCH) ||
+        is_alarm_active_or_latched(ALARM_CTRL_INVALID_CONFIG) ||
+        is_alarm_active_or_latched(ALARM_MOD_HW_FAULT) ||
+        is_alarm_active_or_latched(ALARM_MOD_PFC_FAULT) ||
+        is_alarm_active_or_latched(ALARM_MOD_AC_UNDER_VOLT) ||
+        (in->mod_alarm_or != 0U)) {
+        return false;
+    }
+
     if ((in->now - g_alarm.relay_close_since) < ALARM_DC_OUT_CONFIRM_MS) return false;
     if (in->cc.applied_current_per_module_a <= ALARM_I_LOAD_MIN_A) return false;
     return isfinite(in->mod_summary.total_current) &&
