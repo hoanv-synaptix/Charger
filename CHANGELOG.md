@@ -2,6 +2,18 @@
 
 Tất cả các thay đổi quan trọng theo từng phiên bản phát hành của hệ thống Charger Firmware và Tool điều khiển.
 
+## [V2.0.21] - 2026-09-30
+
+### 🚀 Tối Ưu Hóa Giao Diện Màn Hình & Phản Hồi Cảm Ứng (Resistive Touchscreen Optimization)
+- **Gỡ bỏ hoàn toàn chế độ Sleep Mode:**
+  - Loại bỏ hoàn toàn tính năng tắt đèn nền sau 5 phút nhàn rỗi để tối ưu hóa tuyệt đối cho màn hình cảm ứng điện trở (Resistive Touchscreen) của DWIN DGUS.
+  - Cố định độ sáng đèn nền màn hình ở mức **100%** ngay từ lúc khởi động (`DWIN_SetBrightness(100U)`).
+- **Phản hồi cảm ứng & phím bấm không độ trễ (Zero-latency touch response):**
+  - Loại bỏ cơ chế nuốt chạm và cửa sổ chặn 300ms. Mọi thao tác chạm của người dùng (nút Start/Stop, bàn phím đăng nhập, phím chuyển trang) và nút bấm vật lý PA15 đều được nhận và xử lý tức thì ngay ở lần chạm đầu tiên, không bị mất nhịp hay trễ lệnh.
+- **Duy trì ổn định các tính năng cốt lõi:**
+  - Lưu trữ tổng thời gian sạc tích lũy vào Flash V2 (40 bytes) và hiển thị định dạng giờ nguyên (`%luh`) trên trang Setting.
+  - Phân bổ dòng song song chuẩn xác cho module Lianming với khả năng tự động thích ứng bảo vệ giảm tải (Derating).
+
 ## [V2.0.20] - 2026-09-30
 
 ### 🚀 DWIN Sleep Mode & First-Touch Wakeup Nuốt Lệnh (Anti-Misoperation)
