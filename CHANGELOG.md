@@ -2,7 +2,7 @@
 
 Tất cả các thay đổi quan trọng theo từng phiên bản phát hành của hệ thống Charger Firmware và Tool điều khiển.
 
-## [V2.0.15] - 2026-09-30
+## [V2.0.20] - 2026-09-30
 
 ### 🚀 DWIN Sleep Mode & First-Touch Wakeup Nuốt Lệnh (Anti-Misoperation)
 - **Cơ chế ngủ tiết kiệm năng lượng và bảo vệ màn hình (`DWIN_SetBrightness`):**
