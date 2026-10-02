@@ -2,10 +2,10 @@
 
 ## 1. Tổng Quan
 
-**Tên dự án:** Firmware điều khiển sạc pin lithium
-**MCU:** STM32F407 (Cortex-M4, 168MHz)
-**Giao diện:** CAN1 (module sạc), CAN2 (BMS), USB/TTL (PC Debug App)
-**Mục tiêu:** Hỗ trợ nhiều loại module sạc (Maxwell, Lianming, TonHe) với smart charging theo BMS
+**Tên dự án:** Firmware điều khiển sạc pin lithium (Charger Controller)  
+**MCU:** STM32G0B1RE / STM32G0B1CBT6 (ARM Cortex-M0+, 64MHz)  
+**Giao diện:** FDCAN1 (module sạc, 125Kbps), FDCAN2 (BMS pin, 250Kbps), USB CDC / UART (PC Debug App), UART RS485 (DWIN HMI DGUS)  
+**Mục tiêu:** Hỗ trợ nhiều loại module sạc (Maxwell, Lianming, TonHe) với smart charging theo BMS, vận hành song song đa module tự cân bằng dòng, cơ chế bảo vệ 31 mã lỗi toàn diện và tự động chạy giảm tải (Degraded Mode).
 
 ---
 
@@ -13,13 +13,13 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                         STM32F407VG                                  │
+│                         STM32G0B1RE                                 │
 ├─────────────────────────────────────────────────────────────────────┤
 │                                                                     │
-│  CAN1 (125Kbps)         CAN2 (250Kbps)         UART/USB           │
+│  FDCAN1 (125Kbps)       FDCAN2 (250Kbps)       USB CDC / UART4      │
 │  ┌───────────┐           ┌───────────┐           ┌───────────┐       │
 │  │ Charger   │           │    BMS    │           │ PC Debug  │       │
-│  │ Modules   │           │    Pin    │           │   App    │       │
+│  │ Modules   │           │    Pin    │           │    App    │       │
 │  └─────┬─────┘           └─────┬─────┘           └─────┬─────┘       │
 │        │                        │                        │             │
 │        ▼                        ▼                        ▼             │
@@ -29,19 +29,24 @@
 │  │ Module N │           │ 0x05F4   │           │           │       │
 │  └─────────┘           │ 0x18F0F4 │           └───────────┘       │
 │                        └───────────┘                                 │
+│                                                                     │
+│  USART2 (RS485) ──────────────────────────────► [ DWIN HMI DGUS ]   │
+│  ADC1 (PA0..PA3) ─────────────────────────────► [ 4x NTC Giắc sạc]  │
+│  GPIO Out ────────────────────────────────────► [ Relay Sạc Chính ] │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-### 2.1 CAN1 - Module Sạc (125Kbps)
+### 2.1 FDCAN1 - Module Sạc (125Kbps)
 - **Baudrate:** 125 Kbps
 - **Frame:** Extended 29-bit
-- **Protocol:** Maxwell / Lianming / TonHe (selectable at runtime)
+- **Protocol:** Maxwell / Lianming / TonHe (chọn runtime hoặc qua cấu hình)
 - **Địa chỉ module:** 0x01 - 0xFF
+- **Song song:** Hỗ trợ ghép song song 1..8 module cùng hãng, tự động cân bằng dòng.
 
-### 2.2 CAN2 - BMS Pin (250Kbps)
+### 2.2 FDCAN2 - BMS Pin (250Kbps)
 - **Baudrate:** 250 Kbps
 - **Frame:** Standard 11-bit + Extended 29-bit
-- **GPIO:** PB12 (RX), PB13 (TX)
+- **Protocol:** Jikong BMS, BB PKG, Standard BMS
 
 ### 2.3 UART - PC Debug
 - **Baudrate:** 115200 (configurable)
@@ -397,17 +402,28 @@ python main.py
 ---
 
 ## 10. File Reference
-
+ 
 | File | Purpose |
 |------|---------|
-| `charger/App/Src/charge_controller.c` | Main charging logic |
-| `charger/App/Src/bms_core.c` | BMS driver |
-| `charger/App/Src/charge_cycle_config.c` | Config management |
-| `charger/lib/chg_lib/Src/chg_lib_*.c` | Module drivers |
-| `debug_app/main.py` | PC App UI |
-| `debug_app/protocol/debug_protocol.py` | Protocol parser |
-| `debug_app/config_samples/*.json` | Config templates |
+| `App/Charge/charge_controller.c` | Main charging FSM logic, multi-stage CC/CV, current ramp |
+| `App/Charge/charge_cycle_config.c` | Config management (254B packed, Version 9) |
+| `App/Bms/bms_core.c` | BMS driver & telemetry parsing |
+| `App/Alarm/alarm.c` | Alarm subsystem (31 codes, Dynamic Action Resolution, Degraded Mode) |
+| `App/Dwin/dwin_alarm_text.c` | DWIN HMI Vietnamese alarm text mapping |
+| `App/System/app_main.c` | Main application loop & task coordination |
+| `lib/chg_lib/Src/chg_lib_*.c` | Module drivers (Maxwell, Lianming, TonHe) |
+| `ChargerDebugApp/` | C# .NET 8 WPF PC Debug App |
 
 ---
 
-*Last updated: 2026-07-11*
+## 11. System Documentation & Specifications
+
+1. **Vận hành song song & Cảnh báo:** `Charger/docs/docs/MULTI_MODULE_PARALLEL_AND_ALARM_SPEC.md`
+2. **Bảng chỉ tiêu kỹ thuật phần mềm:** `CHI_TIEU_KY_THUAT_PHAN_MEM_SAC.xlsx` (Sheet 3: 31 Alarm Codes, Sheet 4: Multi-Module Parallel & ZCAN)
+3. **Danh mục mã lỗi & Chống xung đột:** `Charger/docs/BANG_MA_LOI_HE_THONG_.md`
+4. **Thông số & Logic điều khiển:** `Charger/docs/TAI_LIEU_KY_THUAT_THONG_SO_VA_LOGIC_SAC.md`
+5. **Software Requirements Specification:** `Charger/docs/SRS_Charger_Controller.md`
+
+---
+
+*Last updated: 2026-10-02 (Firmware V2.0.21)*

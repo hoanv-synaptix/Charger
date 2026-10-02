@@ -5,10 +5,11 @@
 **Mục tiêu:** Thiết kế firmware điều khiển sạc pin theo chu trình, hỗ trợ nhiều loại module sạc khác nhau (Maxwell, Lianming, TonHe).
 
 **Phần cứng:**
-- MCU: STM32F407 (Cortex-M4)
-- CAN: 2x CAN bus cách ly (<1Mbps)
-- HMI: DWIN RS485
-- Điều khiển: Relay, Nút nhấn, LED
+- MCU: STM32G0B1RE / STM32G0B1CBT6 (Cortex-M0+, 64MHz)
+- CAN: 2x FDCAN cách ly (FDCAN1 125Kbps cho module sạc, FDCAN2 250Kbps cho BMS)
+- HMI: DWIN DGUS HMI qua RS485
+- Giao tiếp PC: USB CDC / UART PC Debug Protocol
+- Điều khiển: Relay tiếp điểm chính, NTC giám sát nhiệt độ giắc sạc, LED chỉ thị, Nút nhấn
 
 ---
 
@@ -429,18 +430,28 @@ make
 - `TonHeCANcommunicationbetweenchargingmoduleandmonitor TONHE V1.3.pdf`
 
 ### 9.2 Hardware
-- `stm32f407vet6_black_sch.pdf` - Board schematic
+- `CHARGER_CTRL_Ver1.0_Schematic_2026-08-23.PDF` - Schematic trạm sạc STM32G0B1RE
 
-### 9.3 Code Files
+### 9.3 System & Architecture Specifications
+- `MULTI_MODULE_PARALLEL_AND_ALARM_SPEC.md` - Đặc tả vận hành song song đa module, tự cân bằng dòng, cơ chế giảm tải (Degraded Mode) và danh mục 31 mã cảnh báo toàn hệ thống.
+- `CHI_TIEU_KY_THUAT_PHAN_MEM_SAC.xlsx` - Bảng chỉ tiêu kỹ thuật phần mềm, 31 mã lỗi E001..E032/W001..W011, bảng tra cứu ZCAN test nhanh song song.
+- `BANG_MA_LOI_HE_THONG_.md` - Ma trận phân định chống xung đột mã lỗi, cascade suppression và logic ghi nhật ký lỗi (RAM ring buffer 16 bản ghi + External SPI Flash W25Qxx).
+- `TAI_LIEU_KY_THUAT_THONG_SO_VA_LOGIC_SAC.md` - Tổng hợp toàn bộ 49 thông số cấu hình nhị phân 254 bytes (Version 9) và logic điều khiển sạc.
+- `SRS_Charger_Controller.md` - Software Requirements Specification cho Charger Controller.
+
+### 9.4 Code Files
 | File | Mô tả |
 |------|-------|
-| `driver_maxwell.c/h` | Maxwell driver |
-| `driver_lianming.c/h` | Lianming driver |
-| `driver_tonhe.c/h` | TonHe driver |
-| `charger_core.c/h` | Abstract interface |
-| `charger_protocol.h` | Helper functions |
-| `bsp_can.c/h` | CAN HAL |
-| `app_charger.c/h` | Application layer |
+| `driver_maxwell.c/h` | Maxwell driver (FDCAN1, Protocol V1.50) |
+| `driver_lianming.c/h` | Lianming driver (FDCAN1, Protocol V2.0) |
+| `driver_tonhe.c/h` | TonHe driver (FDCAN1, J1939 Protocol V1.3) |
+| `charger_core.c/h` | Abstract interface & Multi-module registry |
+| `bms_core.c/h` | BMS driver (FDCAN2, Jikong / Standard BMS) |
+| `charge_controller.c/h` | FSM điều khiển chu trình sạc đa giai đoạn |
+| `alarm.c/h` | Phân hệ giám sát bảo vệ 31 mã lỗi & Degraded Mode |
+| `dwin_alarm_text.c/h` | Ánh xạ mã lỗi hiển thị text tiếng Việt lên DWIN |
+| `bsp_fdcan.c/h` | STM32G0B1 Dual FDCAN HAL abstraction |
+| `app_main.c` | Điểm vào chính ứng dụng, vòng lặp điều phối |
 
 ---
 
@@ -468,16 +479,20 @@ Register constants (CHG_REG_*) cũng được giữ làm canonical map.
 
 Upper layer (app_charger, HMI, PC) cần một data model thống nhất để đọc trạng thái mà không cần biết đang dùng driver nào.
 
+### 10.4 Vận hành song song: Tại sao cấm ghép module khác hãng?
+
+Trở kháng ngõ ra của module cực thấp ($R \approx 0.02\,\Omega$), sai số cảm biến áp dù chỉ $0.3\text{V}$ giữa 2 hãng sản xuất sẽ khiến một module gánh 100% dòng và module kia bị ép về 0A. Ngoài ra, tốc độ đáp ứng PI và dốc áp soft-start khác nhau sẽ gây dao động cộng hưởng dòng điện (Current Hunting). Do đó bắt buộc cùng hãng (Single-Vendor Policy).
+
 ---
 
 ## 11. Lịch Sử Thay Đổi
 
-| Ngày | Thay đổi |
-|------|-----------|
-| 2026-06-24 | Tách riêng CAN ID builders cho từng driver |
-| 2026-06-24 | Thêm comments chi tiết cho từng driver |
-| 2026-06-24 | Sửa Magic Numbers thành defines |
-| 2026-06-24 | Verify protocol với tài liệu PDF |
+| Ngày | Phiên bản | Thay đổi |
+|------|-----------|-----------|
+| 2026-10-02 | V2.0.21 | Bỏ chế độ sleep mode DWIN (giữ 100% độ sáng, chạm tức thì không trễ); Audit và chuẩn hóa 31 mã alarm toàn hệ thống; Cập nhật tài liệu kỹ thuật & bảng tính `CHI_TIEU_KY_THUAT_PHAN_MEM_SAC.xlsx` (Sheet 3: 31 alarm codes, Sheet 4: Vận hành song song & tra cứu ZCAN). |
+| 2026-09-30 | V2.0.20 | Tích hợp tính năng hẹn giờ sạc thấp điểm, profile sạc kép Fast/Normal; Cập nhật cấu hình Version 9. |
+| 2026-08-30 | V2.0.0 | Chuyển đổi kiến trúc sang STM32G0B1RE Dual FDCAN, hỗ trợ Lianming & TonHe driver chuẩn hóa. |
+| 2026-06-24 | V1.0.0 | Tách riêng CAN ID builders cho từng driver, verify protocol Maxwell với PDF. |
 
 ---
 
