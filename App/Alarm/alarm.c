@@ -504,6 +504,7 @@ static bool ev_dc_load_lost(const AlarmInputs_t *in, uint32_t param) {
     /* Root cause suppression: station-level connector / mismatch protections */
     if (is_alarm_active_or_latched(ALARM_CTRL_JACK_OVER_V) ||
         is_alarm_active_or_latched(ALARM_CTRL_JACK_OVER_TEMP) ||
+        is_alarm_active_or_latched(ALARM_CTRL_MODULE_MISMATCH) ||
         is_alarm_active_or_latched(ALARM_BMS_VOLT_MISMATCH)) {
         return false;
     }
