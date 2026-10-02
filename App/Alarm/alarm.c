@@ -392,7 +392,8 @@ static bool ev_mod_comm_lost(const AlarmInputs_t *in, uint32_t param) {
     (void)param;
     bool active_session = (in->cc.state == CHARGE_CTRL_STATE_RUNNING ||
                            in->cc.state == CHARGE_CTRL_STATE_READY ||
-                           in->cc.state == CHARGE_CTRL_STATE_PRECHARGE);
+                           in->cc.state == CHARGE_CTRL_STATE_PRECHARGE ||
+                           ((in->cc.fault_flags & CHARGE_CTRL_FAULT_NO_MODULE) != 0U));
     if (!active_session) return false;
 
     /* Root cause suppression: if modules went offline due to AC power loss, suppress W010 */
@@ -583,12 +584,23 @@ static void gather_inputs(uint32_t now, AlarmInputs_t *in) {
         if (!CHG_LIB_GetModuleView(i, &mv)) continue;
         if (!mv.enabled) continue;
         in->mod_total_count++;
-        if (!mv.online) {
+        if (!mv.online || mv.state == CHG_LIB_STATE_OFFLINE) {
             in->mod_offline_count++;
+            in->mod_alarm_or |= (uint32_t)mv.alarm_flags | CHG_LIB_ALARM_COMM_FAIL;
+            in->mod_pfc_fault_or |= mv.pfc_fault;
             continue;
         }
-        if (mv.state == CHG_LIB_STATE_OFFLINE || mv.state == CHG_LIB_STATE_FAULT) {
-            /* still fold its alarm bits in -- a faulted module's cause matters */
+
+        if (mv.state == CHG_LIB_STATE_FAULT ||
+            mv.state == CHG_LIB_STATE_WARNING ||
+            mv.state == CHG_LIB_STATE_RECOVERING ||
+            ((mv.last_rx_tick != 0U) && ((now - mv.last_rx_tick) > 2000U))) {
+            /* Degraded/faulted/stale module: not healthy active, do not count in mod_active_count */
+            if (mv.state == CHG_LIB_STATE_WARNING ||
+                mv.state == CHG_LIB_STATE_RECOVERING ||
+                ((mv.last_rx_tick != 0U) && ((now - mv.last_rx_tick) > 2000U))) {
+                in->mod_alarm_or |= CHG_LIB_ALARM_COMM_FAIL;
+            }
             in->mod_alarm_or |= (uint32_t)mv.alarm_flags;
             in->mod_pfc_fault_or |= mv.pfc_fault;
             continue;
@@ -644,6 +656,26 @@ static AlarmAction_t get_effective_action(const AlarmSpec_t *sp, const AlarmInpu
             case ALARM_MOD_FAN_FAULT:
             case ALARM_MOD_AC_OVER_VOLT:
                 action = ALARM_ACT_INFO;
+                break;
+            case ALARM_MOD_OVER_VOLT_OUT:
+                /* If bus voltage genuinely exceeds Vmax + margin, it is a real bus over-voltage -> ESTOP.
+                 * Otherwise, if >=1 module is active and bus voltage is normal,
+                 * this is a dying/offline module seeing the live bus -> demote to INFO. */
+                if (in->cfg_vmax_v > 0.0f && in->mod_summary.voltage > (in->cfg_vmax_v + 5.0f)) {
+                    action = ALARM_ACT_ESTOP;
+                } else {
+                    action = ALARM_ACT_INFO;
+                }
+                break;
+            case ALARM_MOD_SHORT_CIRCUIT:
+                /* Real short circuit collapses bus voltage (< 5V) under load.
+                 * If bus voltage is normal and >=1 module is active,
+                 * this is an isolated single-module failure -> demote to INFO. */
+                if (in->mod_summary.voltage < 5.0f && in->mod_summary.total_current > 0.5f) {
+                    action = ALARM_ACT_ESTOP;
+                } else {
+                    action = ALARM_ACT_INFO;
+                }
                 break;
             default:
                 break;

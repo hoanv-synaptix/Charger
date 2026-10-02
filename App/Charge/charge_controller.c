@@ -17,6 +17,7 @@
 #include "chg_lib.h"
 #include "bms_core.h"
 #include "debug_log.h"
+#include "bsp_sys.h"
 #include <string.h>
 #include <math.h>
 
@@ -368,16 +369,21 @@ static void transition_to(ChargeCtrlState_t new_state, uint32_t now) {
 static uint8_t get_active_module_count(void) {
     uint8_t count = 0;
     CHG_LIB_ModuleView_t view;
+    uint32_t now = BSP_GetTick();
 
     uint8_t total = CHG_LIB_GetModuleCount();
     for (uint8_t i = 0; i < total; i++) {
         if (CHG_LIB_GetModuleView(i, &view)) {
-            /* Count enabled modules that are not in fault/offline.
-             * STOPPING is still considered active — module hasn't confirmed OFF yet. */
+            /* Count enabled modules that are healthy and actively communicating.
+             * Exclude OFFLINE, FAULT, WARNING, RECOVERING, or stale comms (>2.0s). */
             if (view.enabled &&
                 view.online &&
+                (view.last_rx_tick != 0U) &&
+                ((now - view.last_rx_tick) <= 2000U) &&
                 view.state != CHG_LIB_STATE_OFFLINE &&
-                view.state != CHG_LIB_STATE_FAULT) {
+                view.state != CHG_LIB_STATE_FAULT &&
+                view.state != CHG_LIB_STATE_WARNING &&
+                view.state != CHG_LIB_STATE_RECOVERING) {
                 count++;
             }
         }
@@ -635,7 +641,10 @@ static void update_relay_decision(uint32_t now_tick) {
     for (uint8_t i = 0; i < total; i++) {
         if (!CHG_LIB_GetModuleView(i, &view)) continue;
         if (!view.enabled || !view.online) continue;
-        if (view.state == CHG_LIB_STATE_OFFLINE || view.state == CHG_LIB_STATE_FAULT) continue;
+        if (view.state == CHG_LIB_STATE_OFFLINE ||
+            view.state == CHG_LIB_STATE_FAULT ||
+            view.state == CHG_LIB_STATE_WARNING ||
+            view.state == CHG_LIB_STATE_RECOVERING) continue;
         if (min_voltage < 0.0f || view.voltage < min_voltage) {
             min_voltage = view.voltage;
         }
@@ -1978,7 +1987,9 @@ static bool precharge_modules_at_target(const ChargeCycleConfig_t *cfg, uint32_t
     for (uint8_t i = 0U; i < total; i++) {
         if (!CHG_LIB_GetModuleView(i, &view) || !view.enabled ||
             !view.online || view.state == CHG_LIB_STATE_OFFLINE ||
-            view.state == CHG_LIB_STATE_FAULT) {
+            view.state == CHG_LIB_STATE_FAULT ||
+            view.state == CHG_LIB_STATE_WARNING ||
+            view.state == CHG_LIB_STATE_RECOVERING) {
             continue;
         }
 
@@ -2105,11 +2116,26 @@ void ChargeController_Process(uint32_t now_tick) {
     if (g_ctrl.state == CHARGE_CTRL_STATE_RUNNING ||
         g_ctrl.state == CHARGE_CTRL_STATE_PRECHARGE) {
         if (g_ctrl.actual_module_count == 0U) {
-            if (g_ctrl.module_mismatch_timer_tick == 0U) {
-                g_ctrl.module_mismatch_timer_tick = now_tick;
-            } else if ((now_tick - g_ctrl.module_mismatch_timer_tick) >= 10000U) {
-                LOG("CC: All modules lost (timeout 10s)\r\n");
-                set_fault(CHARGE_CTRL_FAULT_NO_MODULE, now_tick);
+            /* While any module is still in WARNING, the driver is waiting for its 10s offline timeout */
+            bool any_warning = false;
+            uint8_t total_mods = CHG_LIB_GetModuleCount();
+            for (uint8_t i = 0U; i < total_mods; i++) {
+                CHG_LIB_ModuleView_t view;
+                if (CHG_LIB_GetModuleView(i, &view) && view.enabled &&
+                    view.state == CHG_LIB_STATE_WARNING) {
+                    any_warning = true;
+                    break;
+                }
+            }
+            if (any_warning) {
+                g_ctrl.module_mismatch_timer_tick = 0U;
+            } else {
+                if (g_ctrl.module_mismatch_timer_tick == 0U) {
+                    g_ctrl.module_mismatch_timer_tick = now_tick;
+                } else if ((now_tick - g_ctrl.module_mismatch_timer_tick) >= 10000U) {
+                    LOG("CC: All modules lost (timeout 10s)\r\n");
+                    set_fault(CHARGE_CTRL_FAULT_NO_MODULE, now_tick);
+                }
             }
         } else {
             g_ctrl.module_mismatch_timer_tick = 0U;

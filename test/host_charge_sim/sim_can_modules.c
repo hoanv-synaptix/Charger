@@ -237,52 +237,52 @@ static bool sim_lianming_transmit(uint32_t ext_id, const uint8_t *data, uint8_t 
     if (id_base != LM_CMD_BASE) return true; /* AC/temp diagnostic reads: not simulated */
     if (dlc < 8) return false;
     uint8_t addr = (uint8_t)(ext_id & LM_ADDR_MASK);
-    if (addr != g_sim_module.addr) return true;
+    SimModuleState_t *sm = find_sim_module(addr);
+    if (sm == NULL) return true;
 
     uint8_t cmd = data[0];
     if (cmd == LM_CMD_START_STOP) {
-        g_sim_module.actually_on = (data[7] == LM_START_VALUE);
-        if (!g_sim_module.actually_on) {
-            g_sim_module.voltage = 0.0f;
-            g_sim_module.current = 0.0f;
-        } else if (g_sim_module.voltage <= 0.0f) {
-            g_sim_module.voltage = 1.0f;
+        sm->actually_on = (data[7] == LM_START_VALUE);
+        if (!sm->actually_on) {
+            sm->voltage = 0.0f;
+            sm->current = 0.0f;
+        } else if (sm->voltage <= 0.0f) {
+            sm->voltage = 1.0f;
         }
     } else if (cmd == LM_CMD_SET_OUTPUT) {
         /* Byte1-3 current(mA), Byte4-7 voltage(mV) per header -- not needed
          * for state-machine assertions, skip decoding the exact scale. */
     }
 
-    g_sim_module.pending = true;
-    g_sim_module.pending_func = cmd;
+    sm->pending = true;
+    sm->pending_func = cmd;
     return true;
 }
 
-static void sim_lianming_tick(uint32_t now_tick)
+static void sim_lianming_tick_one(SimModuleState_t *sm)
 {
-    (void)now_tick;
-    if (g_sim_module.silent) return;
-    if (!g_sim_module.pending) return;
-    g_sim_module.pending = false;
+    if (sm->silent) return;
+    if (!sm->pending) return;
+    sm->pending = false;
 
-    uint32_t resp_id = LM_RESP_BASE | g_sim_module.addr;
+    uint32_t resp_id = LM_RESP_BASE | sm->addr;
 
-    if (g_sim_module.pending_func == LM_CMD_START_STOP ||
-        g_sim_module.pending_func == LM_CMD_SET_OUTPUT) {
-        uint8_t resp[8] = { g_sim_module.pending_func, 0x01, 0, 0, 0, 0, 0, 0 };
+    if (sm->pending_func == LM_CMD_START_STOP ||
+        sm->pending_func == LM_CMD_SET_OUTPUT) {
+        uint8_t resp[8] = { sm->pending_func, 0x01, 0, 0, 0, 0, 0, 0 };
         CHG_LIB_FeedCanFrame(resp_id, resp, 8);
         return;
     }
 
     /* LM_CMD_READ_INFO: bytes 2-3=current(0.1A/bit BE), 4-5=voltage(0.1V/bit BE),
      * 6-7=status_flags (bit0=0 means running; see chg_lib_lianming.c) */
-    if (g_sim_module.actually_on) {
-        g_sim_module.current = g_sim_module.rated_current * 0.5f;
+    if (sm->actually_on) {
+        sm->current = sm->rated_current * 0.5f;
     }
-    uint16_t curr_raw = (uint16_t)(g_sim_module.current * 10.0f);
-    uint16_t volt_raw = (uint16_t)(g_sim_module.voltage * 10.0f);
-    uint16_t status = g_sim_module.lianming_status_raw;
-    if (g_sim_module.actually_on) status &= (uint16_t)~0x01U;
+    uint16_t curr_raw = (uint16_t)(sm->current * 10.0f);
+    uint16_t volt_raw = (uint16_t)(sm->voltage * 10.0f);
+    uint16_t status = sm->lianming_status_raw;
+    if (sm->actually_on) status &= (uint16_t)~0x01U;
     else status |= 0x01U;
 
     uint8_t resp[8];
@@ -295,6 +295,14 @@ static void sim_lianming_tick(uint32_t now_tick)
     resp[6] = (uint8_t)(status >> 8);
     resp[7] = (uint8_t)(status & 0xFF);
     CHG_LIB_FeedCanFrame(resp_id, resp, 8);
+}
+
+static void sim_lianming_tick(uint32_t now_tick)
+{
+    (void)now_tick;
+    for (uint8_t i = 0; i < g_sim_module_count; i++) {
+        sim_lianming_tick_one(&g_sim_modules[i]);
+    }
 }
 
 /* ============================================================= */

@@ -636,6 +636,14 @@ static void process_module(uint8_t idx, uint32_t now)
         }
         break;
 
+    case CHG_LIB_STATE_WARNING:
+        /* Comms timed out (>2.0s). Attempt periodic poll to see if module responds. */
+        if ((now - mod->last_poll_tick) >= 500U) {
+            lm_read_status(idx, now);
+            mod->last_poll_tick = now;
+        }
+        break;
+
     case CHG_LIB_STATE_OFFLINE:
         if ((now - mod->state_enter_tick) >= LM_RECOVERY_DELAY_MS) {
             set_state(mod, CHG_LIB_STATE_RECOVERING, now);

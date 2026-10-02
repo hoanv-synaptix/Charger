@@ -322,7 +322,7 @@ static bool setup_variant(uint8_t module_type, uint8_t module_count,
         g_sim_driver_kind = SIM_DRV_TONHE;
     }
     sim_install_backend(g_sim_driver_kind);
-    if (module_count > 1U && g_sim_driver_kind == SIM_DRV_MAXWELL) {
+    if (module_count > 1U) {
         sim_module_reset_n(module_count, 1U, 0U);
     } else {
         sim_module_reset(&g_sim_module, 1U, 0U);
@@ -330,10 +330,8 @@ static bool setup_variant(uint8_t module_type, uint8_t module_count,
     for (uint8_t i = 0U; i < module_count && i < SIM_MAX_MODULES; i++) {
         g_sim_modules[i].current_override = true; /* tests drive current directly */
         g_sim_modules[i].rated_current = 100.0f;
-        if (g_sim_driver_kind == SIM_DRV_MAXWELL) {
-            g_sim_modules[i].voltage = 400.0f;
-            g_sim_modules[i].voltage_override = true;
-        }
+        g_sim_modules[i].voltage = 400.0f;
+        g_sim_modules[i].voltage_override = true;
     }
     sim_bms_reset(&g_sim_bms);
 
@@ -2127,7 +2125,224 @@ static bool test_multi_module_degraded_alarm_action_is_info(void)
     return true;
 }
 
+static bool test_multi_module_one_module_silent_lost(void)
+{
+    printf("Running test_multi_module_one_module_silent_lost...\n");
+    ASSERT(setup_variant(CHARGE_MODULE_TYPE_MAXWELL, 2U, NULL), "setup 2-module scenario");
+    sim_module_reset_n(2, 1, 0);
+    healthy_bms(400.0f);
+    ASSERT(start_running(), "start running with 2 modules");
+
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "controller must be RUNNING");
+    ASSERT(cv.actual_module_count == 2U, "both modules must be active");
+
+    /* Module 1 goes silent (powered off or CAN lost) */
+    g_sim_modules[1].silent = true;
+
+    /* Advance time across 3s (warning threshold), 10s (offline threshold), 15s */
+    for (uint32_t step = 0; step < 15; step++) {
+        drive_ms(1000U);
+        ChargeController_GetView(&cv);
+        AlarmView_t av;
+        Alarm_GetView(&av);
+        printf("  t=%us: state=%d, actual_mods=%u, highest_act=%u, worst_code=%u, stop_reason=%u\n",
+               step + 1, cv.state, cv.actual_module_count, av.highest_action, av.worst_code, cv.stop_reason);
+    }
+
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "station must stay RUNNING with 1 module alive");
+    ASSERT(cv.actual_module_count == 1U, "active module count must be 1");
+
+    printf("[PASS] test_multi_module_one_module_silent_lost\n");
+    return true;
+}
+
+static bool test_multi_module_lianming_one_module_silent_lost(void)
+{
+    printf("Running test_multi_module_lianming_one_module_silent_lost...\n");
+    ASSERT(setup_variant(CHARGE_MODULE_TYPE_LIANMING, 2U, NULL), "setup 2-module scenario");
+    healthy_bms(400.0f);
+    ASSERT(start_running(), "start running with 2 Lianming modules");
+
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "controller must be RUNNING");
+    printf("  Initial: state=%d, actual_mods=%u\n", cv.state, cv.actual_module_count);
+
+    /* Establish real load */
+    g_sim_modules[0].actually_on = true;
+    g_sim_modules[1].actually_on = true;
+    g_sim_modules[0].current = 25.0f;
+    g_sim_modules[1].current = 25.0f;
+    g_sim_bms.pack_current_a = 50.0f;
+    drive_ms(2000U);
+    ChargeController_GetView(&cv);
+    printf("  After 2s running: state=%d, actual_mods=%u, load_est=%d\n",
+           cv.state, cv.actual_module_count, cv.relay_should_close);
+
+    /* Module 1 goes silent (powered off or CAN lost) */
+    g_sim_modules[1].silent = true;
+    g_sim_modules[1].current = 0.0f;
+    g_sim_bms.pack_current_a = 25.0f;
+
+    /* Advance time across 3s (warning threshold), 10s (offline threshold), 15s */
+    for (uint32_t step = 0; step < 15; step++) {
+        drive_ms(1000U);
+        ChargeController_GetView(&cv);
+        AlarmView_t av;
+        Alarm_GetView(&av);
+        printf("  t=%us: state=%d, actual_mods=%u, highest_act=%u, worst_code=%u, stop_reason=%u\n",
+               step + 1, cv.state, cv.actual_module_count, av.highest_action, av.worst_code, cv.stop_reason);
+    }
+
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "station must stay RUNNING with 1 Lianming module alive");
+    ASSERT(cv.actual_module_count == 1U, "active module count must be 1");
+
+    printf("[PASS] test_multi_module_lianming_one_module_silent_lost\n");
+    return true;
+}
+
+static bool test_multi_module_lianming_one_module_overvoltage_out_does_not_estop(void)
+{
+    printf("Running test_multi_module_lianming_one_module_overvoltage_out_does_not_estop...\n");
+    ASSERT(setup_variant(CHARGE_MODULE_TYPE_LIANMING, 2U, NULL), "setup 2-module scenario");
+    healthy_bms(400.0f);
+    ASSERT(start_running(), "start running with 2 Lianming modules");
+
+    /* Establish real load */
+    g_sim_modules[0].actually_on = true;
+    g_sim_modules[1].actually_on = true;
+    g_sim_modules[0].voltage = 400.0f;
+    g_sim_modules[1].voltage = 400.0f;
+    g_sim_modules[0].current = 25.0f;
+    g_sim_modules[1].current = 25.0f;
+    g_sim_bms.pack_current_a = 50.0f;
+    drive_ms(2000U);
+
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "controller must be RUNNING");
+
+    /* Module 1 shuts down / trips AC and reports bit 6 (Output Overvoltage) */
+    g_sim_modules[1].lianming_status_raw |= (1U << 6); /* Bit 6: Output overvoltage */
+    g_sim_modules[1].actually_on = false;
+    g_sim_modules[1].current = 0.0f;
+    g_sim_bms.pack_current_a = 25.0f;
+
+    /* Advance time */
+    for (uint32_t step = 0; step < 5; step++) {
+        drive_ms(1000U);
+    }
+
+    ChargeController_GetView(&cv);
+    AlarmView_t av;
+    Alarm_GetView(&av);
+
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "controller must remain RUNNING (not trip to ESTOP/FAULT)");
+    ASSERT(cv.actual_module_count == 1U, "active module count must be 1");
+    ASSERT(alarm_active(ALARM_MOD_OVER_VOLT_OUT), "E012 must be active in alarm view for visibility");
+    ASSERT(av.highest_action == ALARM_ACT_INFO, "action must be demoted to INFO, not ESTOP");
+
+    printf("[PASS] test_multi_module_lianming_one_module_overvoltage_out_does_not_estop\n");
+    return true;
+}
+
+static bool test_multi_module_lianming_one_module_hw_fault_does_not_estop(void)
+{
+    printf("Running test_multi_module_lianming_one_module_hw_fault_does_not_estop...\n");
+    ASSERT(setup_variant(CHARGE_MODULE_TYPE_LIANMING, 2U, NULL), "setup 2-module scenario");
+    healthy_bms(400.0f);
+    ASSERT(start_running(), "start running with 2 Lianming modules");
+
+    /* Establish real load */
+    g_sim_modules[0].actually_on = true;
+    g_sim_modules[1].actually_on = true;
+    g_sim_modules[0].voltage = 400.0f;
+    g_sim_modules[1].voltage = 400.0f;
+    g_sim_modules[0].current = 25.0f;
+    g_sim_modules[1].current = 25.0f;
+    g_sim_bms.pack_current_a = 50.0f;
+    drive_ms(2000U);
+
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "controller must be RUNNING");
+
+    /* Module 1 reports bit 1 (Hardware Fault) */
+    g_sim_modules[1].lianming_status_raw |= (1U << 1); /* Bit 1: Module hardware fault */
+    g_sim_modules[1].actually_on = false;
+    g_sim_modules[1].current = 0.0f;
+    g_sim_bms.pack_current_a = 25.0f;
+
+    /* Advance time */
+    for (uint32_t step = 0; step < 5; step++) {
+        drive_ms(1000U);
+    }
+
+    ChargeController_GetView(&cv);
+    AlarmView_t av;
+    Alarm_GetView(&av);
+
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "controller must remain RUNNING");
+    ASSERT(cv.actual_module_count == 1U, "active module count must be 1");
+    ASSERT(alarm_active(ALARM_MOD_HW_FAULT), "E010 must be active in alarm view for visibility");
+    ASSERT(av.highest_action == ALARM_ACT_INFO, "action must be demoted to INFO, not STOP");
+
+    printf("[PASS] test_multi_module_lianming_one_module_hw_fault_does_not_estop\n");
+    return true;
+}
+
+static bool test_multi_module_maxwell_one_module_short_circuit_does_not_estop(void)
+{
+    printf("Running test_multi_module_maxwell_one_module_short_circuit_does_not_estop...\n");
+    ASSERT(setup_variant(CHARGE_MODULE_TYPE_MAXWELL, 2U, NULL), "setup 2-module scenario");
+    sim_module_reset_n(2, 1, 0);
+    healthy_bms(400.0f);
+    ASSERT(start_running(), "start running with 2 Maxwell modules");
+
+    /* Establish real load */
+    g_sim_modules[0].actually_on = true;
+    g_sim_modules[1].actually_on = true;
+    g_sim_modules[0].voltage = 400.0f;
+    g_sim_modules[1].voltage = 400.0f;
+    g_sim_modules[0].current = 25.0f;
+    g_sim_modules[1].current = 25.0f;
+    g_sim_bms.pack_current_a = 50.0f;
+    drive_ms(2000U);
+
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "controller must be RUNNING");
+
+    /* Module 1 trips short circuit (bit 28 for Maxwell) */
+    g_sim_modules[1].maxwell_alarm_raw |= (1U << 28); /* MXR short circuit */
+    g_sim_modules[1].actually_on = false;
+    g_sim_modules[1].current = 0.0f;
+    g_sim_bms.pack_current_a = 25.0f;
+
+    /* Advance time */
+    for (uint32_t step = 0; step < 5; step++) {
+        drive_ms(1000U);
+    }
+
+    ChargeController_GetView(&cv);
+    AlarmView_t av;
+    Alarm_GetView(&av);
+
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "controller must remain RUNNING");
+    ASSERT(cv.actual_module_count == 1U, "active module count must be 1");
+    ASSERT(alarm_active(ALARM_MOD_SHORT_CIRCUIT), "E013 must be active in alarm view for visibility");
+    ASSERT(av.highest_action == ALARM_ACT_INFO, "action must be demoted to INFO, not ESTOP");
+
+    printf("[PASS] test_multi_module_maxwell_one_module_short_circuit_does_not_estop\n");
+    return true;
+}
+
 int main(void)
+
 {
     bool ok = true;
     ok &= test_all_31_codes_metadata_and_contracts();
@@ -2166,6 +2381,11 @@ int main(void)
     ok &= test_alarm_time_format_smart();
     ok &= test_cascade_suppression_comprehensive();
     ok &= test_multi_module_degraded_alarm_action_is_info();
+    ok &= test_multi_module_one_module_silent_lost();
+    ok &= test_multi_module_lianming_one_module_silent_lost();
+    ok &= test_multi_module_lianming_one_module_overvoltage_out_does_not_estop();
+    ok &= test_multi_module_lianming_one_module_hw_fault_does_not_estop();
+    ok &= test_multi_module_maxwell_one_module_short_circuit_does_not_estop();
 
     if (ok) { printf("\nALL TESTS PASSED.\n"); return 0; }
     printf("\nSOME TESTS FAILED.\n");
