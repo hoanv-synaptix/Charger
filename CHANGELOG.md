@@ -2,6 +2,29 @@
 
 Tất cả các thay đổi quan trọng theo từng phiên bản phát hành của hệ thống Charger Firmware và Tool điều khiển.
 
+## [V2.0.22] - 2026-10-05
+
+### 🚀 Chuẩn Hóa Báo Lỗi Module Độc Lập & Triệt Tiêu Chồng Lấn (Anti-Cascade Alarm Matrix)
+- **Định danh nguồn gốc lỗi theo từng module (`source_id` 1..8):**
+  - Mã hóa `source_id` vào byte cao của trường `code` (16-bit) trong `AlarmLogEntry_t`.
+  - Tự động bổ sung hậu tố ` [M1]`..` [M8]` vào chuỗi thông báo lỗi UTF-16 tiếng Việt hiển thị trên màn hình DWIN (ví dụ `W010: Mất giao tiếp [M2]`), bảo toàn wire size 8 bytes giao tiếp.
+- **Hoàn thiện 7 cây triệt tiêu lỗi gốc (Root-cause Cascade Suppression Trees):**
+  - Mất điện lưới AC (`W011`) triệt tiêu lỗi PFC (`E015`), lỗi phần cứng module do xả tụ (`E010`), và mất kết nối module (`W010`).
+  - Rút giắc sạc nóng khi đang tải (`E023`) triệt tiêu lỗi mất BMS CAN (`E021`) và không có áp pack (`E022`).
+  - BMS hạ dòng do quá nhiệt (`E005`) triệt tiêu lỗi mất tải DC (`E023`).
+  - Chế độ chờ sạc (`IDLE`) cho phép xe đi ngủ sâu cả năm mà không báo lỗi giả mất kết nối BMS (`E021`).
+
+### 🛡️ Nâng Cấp Kiến Trúc Phần Mềm & Loại Bỏ Hoàn Toàn Rò Rỉ Trạng Thái FSM
+- **Phân tầng kiến trúc một chiều nghiêm ngặt (Zero Architecture Violations):**
+  - Gỡ bỏ hoàn toàn direct include `#include "bsp_sys.h"` trong `charge_controller.c` và `#include "main.h"` trong `ota_service.c`.
+  - Chuẩn hóa hàm reset hệ thống trong OTA bằng ghi trực tiếp thanh ghi ARM Cortex-M0+ SCB AIRCR (`ota_system_reset()`).
+  - Quét tĩnh 117 files: **0 Circular Dependencies**, **0 Dynamic Heap Allocation** (`malloc`/`free` = 0).
+- **Triệt tiêu lỗi rò rỉ cờ giảm dòng súng sạc (`jack_temp_derating_active`):**
+  - Đảm bảo xóa cờ giảm dòng súng sạc khi kết thúc phiên sạc, ngăn ngừa hiện tượng phiên sạc sau bị giới hạn công suất oan do phiên sạc trước.
+- **Tự động hóa CI/CD không người trực (`test\run_all_local.bat`):**
+  - Hỗ trợ cờ `NONINTERACTIVE=1` và `CI=1`, sửa triệt để lỗi unescaped `&`.
+  - Tích hợp tự động 38 bài test Pytest Sprint 1, kiểm tra kiến trúc và 8 bộ mô phỏng máy chủ E2E (10/10 Stages PASS 100%).
+
 ## [V2.0.21] - 2026-09-30
 
 ### 🚀 Tối Ưu Hóa Giao Diện Màn Hình & Phản Hồi Cảm Ứng (Resistive Touchscreen Optimization)

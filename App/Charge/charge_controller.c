@@ -17,7 +17,6 @@
 #include "chg_lib.h"
 #include "bms_core.h"
 #include "debug_log.h"
-#include "bsp_sys.h"
 #include <string.h>
 #include <math.h>
 
@@ -71,6 +70,7 @@ static struct {
     ChargeCtrlOwner_t owner;
     uint32_t fault_flags;
     uint32_t last_update_tick;
+    uint32_t now_tick;
 
     /* Manual mode state */
     bool manual_mode;
@@ -274,6 +274,8 @@ static void set_fault(uint32_t flags, uint32_t now) {
 static void clear_fault(void) {
     g_ctrl.fault_flags = CHARGE_CTRL_FAULT_NONE;
     g_ctrl.bms_temp_trip_count = 0U;
+    g_ctrl.jack_temp_derating_active = false;
+    g_ctrl.protect_jack_temp_timer_tick = 0U;
 }
 
 static bool handle_bms_temperature_inhibit(const ChargeCycleConfig_t *cfg, const BMS_View_t *bms, uint32_t now_tick)
@@ -369,7 +371,7 @@ static void transition_to(ChargeCtrlState_t new_state, uint32_t now) {
 static uint8_t get_active_module_count(void) {
     uint8_t count = 0;
     CHG_LIB_ModuleView_t view;
-    uint32_t now = BSP_GetTick();
+    uint32_t now = g_ctrl.now_tick;
 
     uint8_t total = CHG_LIB_GetModuleCount();
     for (uint8_t i = 0; i < total; i++) {
@@ -1005,6 +1007,8 @@ static void stop_charging(void) {
     g_ctrl.zero_target_hold_logged = false;
     g_ctrl.standalone_vmax_reached_tick = 0;
     g_ctrl.protect_jack_temp_trip_timer_tick = 0;
+    g_ctrl.protect_jack_temp_timer_tick = 0;
+    g_ctrl.jack_temp_derating_active = false;
     g_ctrl.ramp_tick = 0;
     g_ctrl.last_running = 0;
     g_ctrl.last_inhibit = 0;
@@ -2108,7 +2112,12 @@ void ChargeController_SetJackTempC(float temp_c) {
     }
 }
 
+bool ChargeController_IsJackTempDeratingActive(void) {
+    return g_ctrl.jack_temp_derating_active;
+}
+
 void ChargeController_Process(uint32_t now_tick) {
+    g_ctrl.now_tick = now_tick;
     /* Update actual module count */
     g_ctrl.actual_module_count = get_active_module_count();
 
@@ -2275,6 +2284,7 @@ bool ChargeController_CheckPreconditions(uint32_t *fault_flags_out) {
 }
 
 bool ChargeController_Start(ChargeCtrlOwner_t owner, bool manual_mode, uint32_t now_tick) {
+    g_ctrl.now_tick = now_tick;
     if (g_ctrl.state == CHARGE_CTRL_STATE_RUNNING) {
         LOG("CC: Already running\r\n");
         return true;  /* Already running */
@@ -2333,6 +2343,8 @@ bool ChargeController_Start(ChargeCtrlOwner_t owner, bool manual_mode, uint32_t 
     g_ctrl.soc_candidate_band = CHARGE_STAGE_BAND_NONE;
     g_ctrl.last_running = 0;
     g_ctrl.last_inhibit = 0;
+    g_ctrl.jack_temp_derating_active = false;
+    g_ctrl.protect_jack_temp_timer_tick = 0U;
 
     clear_fault();
 
@@ -2379,6 +2391,7 @@ bool ChargeController_StartPrecharge(ChargeCtrlOwner_t owner, uint32_t now_tick)
 {
     ChargeCycleConfig_t cfg;
 
+    g_ctrl.now_tick = now_tick;
     g_ctrl.precharge_mode = true;
     if (g_ctrl.state == CHARGE_CTRL_STATE_FAULT) {
         if (check_precharge_faults() == CHARGE_CTRL_FAULT_NONE) {
@@ -2418,6 +2431,8 @@ bool ChargeController_StartPrecharge(ChargeCtrlOwner_t owner, uint32_t now_tick)
     g_ctrl.relay_latched_closed = false;
     g_ctrl.relay_should_close = false;
     g_ctrl.relay_open_pending = false;
+    g_ctrl.jack_temp_derating_active = false;
+    g_ctrl.protect_jack_temp_timer_tick = 0U;
     clear_fault();
 
     LOG("CC: Pre-charge start src=%u act=%u\r\n",
@@ -2439,6 +2454,8 @@ bool ChargeController_ResetFaultIfSafe(uint32_t now_tick)
     BMS_View_t bms;
     CHG_LIB_SystemSummary_t summary;
     uint32_t clearable_faults;
+
+    g_ctrl.now_tick = now_tick;
 
     if (g_ctrl.state != CHARGE_CTRL_STATE_FAULT) {
         return false;
@@ -2533,6 +2550,7 @@ bool ChargeController_ResetFaultIfSafe(uint32_t now_tick)
 }
 
 bool ChargeController_ResetEmergencyStop(uint32_t now_tick) {
+    g_ctrl.now_tick = now_tick;
     if (g_ctrl.state != CHARGE_CTRL_STATE_FAULT) {
         return false;
     }
@@ -2567,6 +2585,7 @@ bool ChargeController_IsManualMode(void) {
 }
 
 static void stop_with_reason(uint32_t now_tick, ChargeStopReason_t reason) {
+    g_ctrl.now_tick = now_tick;
     if (g_ctrl.state == CHARGE_CTRL_STATE_IDLE) {
         return;
     }
@@ -2604,6 +2623,7 @@ void ChargeController_StopForProtection(uint32_t now_tick) {
 }
 
 void ChargeController_EmergencyStop(uint32_t now_tick) {
+    g_ctrl.now_tick = now_tick;
     LOG("CC: EMERGENCY STOP\r\n");
 
     /* Immediate hardware stop */

@@ -1209,14 +1209,20 @@ void App_Loop(void)
         uint8_t log_count = Alarm_GetLogWithTimestamps(log_entries, log_timestamps, ALARM_LOG_DEPTH);
 
         DwinAlarmRowInput_t alarm_inputs[VP_ALARM_ROW_COUNT];
+        static uint16_t s_desc_buffers[VP_ALARM_ROW_COUNT][34];
         uint8_t alarm_row_count = 0U;
 
         for (uint8_t i = 0; (i < log_count) && (alarm_row_count < VP_ALARM_ROW_COUNT); i++) {
             if (log_entries[i].event == 1U) { /* Raised */
-                AlarmCode_t c = (AlarmCode_t)log_entries[i].code;
+                uint16_t raw_code = log_entries[i].code;
+                AlarmCode_t base_c = ALARM_LOG_CODE_BASE(raw_code);
                 alarm_inputs[alarm_row_count].timestamp_s = log_timestamps[i];
-                alarm_inputs[alarm_row_count].code_str = DWIN_Alarm_GetCodeString(c);
-                alarm_inputs[alarm_row_count].desc_utf16 = DWIN_Alarm_GetDescUtf16(c, &alarm_inputs[alarm_row_count].desc_len);
+                alarm_inputs[alarm_row_count].code_str = DWIN_Alarm_GetCodeString(base_c);
+                alarm_inputs[alarm_row_count].desc_utf16 = DWIN_Alarm_FormatDescUtf16(
+                    raw_code,
+                    s_desc_buffers[alarm_row_count],
+                    &alarm_inputs[alarm_row_count].desc_len
+                );
                 alarm_row_count++;
             }
         }

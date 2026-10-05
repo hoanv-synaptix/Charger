@@ -88,7 +88,7 @@ static bool alarm_logged_raise(AlarmCode_t code)
     AlarmLogEntry_t log[ALARM_LOG_DEPTH];
     uint8_t n = Alarm_GetLog(log, ALARM_LOG_DEPTH);
     for (uint8_t i = 0; i < n; i++) {
-        if (log[i].code == (uint16_t)code && log[i].event == 1U) return true;
+        if (ALARM_LOG_CODE_BASE(log[i].code) == code && log[i].event == 1U) return true;
     }
     return false;
 }
@@ -2341,10 +2341,109 @@ static bool test_multi_module_maxwell_one_module_short_circuit_does_not_estop(vo
     return true;
 }
 
+static bool test_multi_module_per_module_alarm_source_and_dwin_suffix(void)
+{
+    printf("Running test_multi_module_per_module_alarm_source_and_dwin_suffix...\n");
+    ChargeCycleConfig_t cfg;
+    ASSERT(setup_variant(CHARGE_MODULE_TYPE_MAXWELL, 3U, &cfg), "setup 3 modules failed");
+
+    healthy_bms(400.0f);
+    drive_ms(1500U);
+    ASSERT(start_running(), "start running failed");
+    drive_ms(2000U);
+
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "controller must be RUNNING");
+    ASSERT(cv.actual_module_count == 3U, "all 3 modules must be active initially");
+
+    /* 1. Module 0 (M1) trips over-temperature (bit 30 for Maxwell) */
+    g_sim_modules[0].maxwell_alarm_raw |= (1U << 30);
+    drive_ms(500U);
+
+    AlarmLogEntry_t log[ALARM_LOG_DEPTH];
+    uint8_t n = Alarm_GetLog(log, ALARM_LOG_DEPTH);
+    ASSERT(n >= 1U, "log should have at least 1 entry");
+
+    bool found_m1_over_temp = false;
+    uint16_t m1_code = 0;
+    for (uint8_t i = 0; i < n; i++) {
+        if (ALARM_LOG_CODE_BASE(log[i].code) == ALARM_MOD_OVER_TEMP &&
+            ALARM_LOG_CODE_SOURCE(log[i].code) == 1U &&
+            log[i].event == 1U) {
+            found_m1_over_temp = true;
+            m1_code = log[i].code;
+            break;
+        }
+    }
+    ASSERT(found_m1_over_temp, "log must contain OVER_TEMP raised for Module 1 (source=1)");
+
+    /* Verify DWIN formatted description ends with [M1] */
+    uint16_t desc_buf[34];
+    uint8_t desc_len = 0;
+    DWIN_Alarm_FormatDescUtf16(m1_code, desc_buf, &desc_len);
+    ASSERT(desc_len > 5U, "desc length should include suffix");
+    ASSERT(desc_buf[desc_len - 1] == (uint16_t)']', "must end with ']'");
+    ASSERT(desc_buf[desc_len - 2] == (uint16_t)'1', "must end with '1]'");
+    ASSERT(desc_buf[desc_len - 3] == (uint16_t)'M', "must end with 'M1]'");
+    ASSERT(desc_buf[desc_len - 4] == (uint16_t)'[', "must end with '[M1]'");
+
+    /* Station must stay running in degraded mode (2 modules alive) */
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "station must remain RUNNING with 2 modules alive");
+    ASSERT(cv.actual_module_count == 2U, "active module count must be 2");
+
+    /* 2. Later, Module 2 (M3) goes offline (COMM_FAIL) */
+    g_sim_modules[2].silent = true;
+    drive_ms(2500U);
+
+    n = Alarm_GetLog(log, ALARM_LOG_DEPTH);
+    bool found_m3_comm_fail = false;
+    uint16_t m3_code = 0;
+    for (uint8_t i = 0; i < n; i++) {
+        if (ALARM_LOG_CODE_BASE(log[i].code) == ALARM_MOD_COMM_FAIL &&
+            ALARM_LOG_CODE_SOURCE(log[i].code) == 3U &&
+            log[i].event == 1U) {
+            found_m3_comm_fail = true;
+            m3_code = log[i].code;
+            break;
+        }
+    }
+    ASSERT(found_m3_comm_fail, "log must contain COMM_FAIL raised for Module 3 (source=3)");
+
+    /* Verify DWIN formatted description ends with [M3] */
+    DWIN_Alarm_FormatDescUtf16(m3_code, desc_buf, &desc_len);
+    ASSERT(desc_len > 5U, "desc length should include suffix");
+    ASSERT(desc_buf[desc_len - 1] == (uint16_t)']', "must end with ']'");
+    ASSERT(desc_buf[desc_len - 2] == (uint16_t)'3', "must end with '3]'");
+    ASSERT(desc_buf[desc_len - 3] == (uint16_t)'M', "must end with 'M3]'");
+    ASSERT(desc_buf[desc_len - 4] == (uint16_t)'[', "must end with '[M3]'");
+
+    /* 3. Module 0 (M1) recovers from over-temperature */
+    g_sim_modules[0].maxwell_alarm_raw &= ~(1U << 30);
+    drive_ms(1500U);
+
+    n = Alarm_GetLog(log, ALARM_LOG_DEPTH);
+    bool found_m1_cleared = false;
+    for (uint8_t i = 0; i < n; i++) {
+        if (ALARM_LOG_CODE_BASE(log[i].code) == ALARM_MOD_OVER_TEMP &&
+            ALARM_LOG_CODE_SOURCE(log[i].code) == 1U &&
+            log[i].event == 0U) {
+            found_m1_cleared = true;
+            break;
+        }
+    }
+    ASSERT(found_m1_cleared, "log must contain OVER_TEMP CLEARED for Module 1 (source=1)");
+
+    printf("[PASS] test_multi_module_per_module_alarm_source_and_dwin_suffix\n");
+    return true;
+}
+
 int main(void)
 
 {
     bool ok = true;
+    ok &= test_multi_module_per_module_alarm_source_and_dwin_suffix();
     ok &= test_all_31_codes_metadata_and_contracts();
     ok &= test_alarm_action_priority_arbiter();
     ok &= test_cascade_suppression_all_three_module_drivers();

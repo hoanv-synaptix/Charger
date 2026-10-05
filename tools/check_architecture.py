@@ -14,6 +14,8 @@ Layers (see AGENTS.md section 5):
     APP_SYSTEM    App/System   -- composition root, may depend on anything below it
     APP_CHARGE    App/Charge   -- pure charging policy, hardware-agnostic
     APP_PROTOCOL  App/Protocol -- PC/DWIN protocol handling
+    APP_NETWORK   App/Network  -- cellular modem & AT engine
+    APP_OTA       App/OTA      -- firmware update service
     MODULES       Modules/*    -- BMS, charger drivers, HMI protocol
     PLATFORM_BSP  BSP/*        -- MCU-specific hardware access
     PLATFORM_USB  USB_Device/App/* -- USB CDC transport (CubeMX user-code section)
@@ -56,6 +58,8 @@ LAYER_DIRS = [
     ("App/Charge", "APP_CHARGE"),
     ("App/Protocol", "APP_PROTOCOL"),
     ("App/Storage", "APP_STORAGE"),
+    ("App/Network", "APP_NETWORK"),
+    ("App/OTA", "APP_OTA"),
     ("Modules", "MODULES"),
     ("BSP", "PLATFORM_BSP"),
     ("USB_Device/App", "PLATFORM_USB"),
@@ -82,11 +86,13 @@ SCAN_DIRS = ["App", "BSP", "Modules", "Utils", "Core", "Drivers", "Middlewares",
 # source_layer -> set of layers it may #include "local_header.h" from.
 # A layer may always include its own layer.
 ALLOWED_TARGETS = {
-    "APP_SYSTEM":   {"APP_ALARM", "APP_CHARGE", "APP_PROTOCOL", "APP_STORAGE", "MODULES", "PLATFORM_BSP", "PLATFORM_USB", "UTILS", "GENERATED"},
+    "APP_SYSTEM":   {"APP_ALARM", "APP_CHARGE", "APP_PROTOCOL", "APP_STORAGE", "APP_NETWORK", "APP_OTA", "MODULES", "PLATFORM_BSP", "PLATFORM_USB", "UTILS", "GENERATED"},
     "APP_ALARM":    {"APP_CHARGE", "MODULES", "UTILS"},
     "APP_CHARGE":   {"MODULES", "UTILS"},
-    "APP_PROTOCOL": {"APP_ALARM", "APP_CHARGE", "APP_STORAGE", "MODULES", "UTILS", "PLATFORM_USB"},
+    "APP_PROTOCOL": {"APP_ALARM", "APP_CHARGE", "APP_STORAGE", "APP_NETWORK", "APP_OTA", "MODULES", "UTILS", "PLATFORM_USB"},
     "APP_STORAGE":  {"PLATFORM_BSP", "GENERATED", "UTILS"},
+    "APP_NETWORK":  {"UTILS"},
+    "APP_OTA":      {"APP_CHARGE", "APP_NETWORK", "MODULES", "UTILS"},
     "MODULES":      {"PLATFORM_BSP", "UTILS"},
     "PLATFORM_BSP": {"GENERATED", "UTILS"},
     "PLATFORM_USB": {"GENERATED", "UTILS"},
@@ -94,7 +100,7 @@ ALLOWED_TARGETS = {
     "UTILS":        {"GENERATED"},
     # main() is the real composition root (see EXACT_LAYER_OVERRIDES above):
     # it may wire together anything below it, same as APP_SYSTEM.
-    "ENTRY_POINT":  {"APP_SYSTEM", "APP_CHARGE", "APP_PROTOCOL", "MODULES",
+    "ENTRY_POINT":  {"APP_SYSTEM", "APP_CHARGE", "APP_PROTOCOL", "APP_STORAGE", "APP_NETWORK", "APP_OTA", "MODULES",
                       "PLATFORM_BSP", "PLATFORM_USB", "UTILS", "GENERATED"},
 }
 

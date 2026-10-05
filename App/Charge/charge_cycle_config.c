@@ -11,12 +11,12 @@ static uint8_t s_active_mode = CHARGE_MODE_NORMAL;
 
 static __attribute__((noinline)) bool validate_non_negative(float value)
 {
-    return (value >= 0.0f) && (value <= 100000.0f);
+    return isfinite(value) && (value >= 0.0f) && (value <= 100000.0f);
 }
 
 static __attribute__((noinline)) bool validate_range(float value, float min_value, float max_value)
 {
-    return (value >= min_value) && (value <= max_value);
+    return isfinite(value) && (value >= min_value) && (value <= max_value);
 }
 
 void ChargeCycleConfig_GetDefaults(ChargeCycleConfig_t *config)

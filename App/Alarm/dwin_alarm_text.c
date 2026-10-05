@@ -202,3 +202,41 @@ const uint16_t* DWIN_Alarm_GetDescUtf16(AlarmCode_t code, uint8_t *out_len)
     }
     return str;
 }
+
+const uint16_t* DWIN_Alarm_FormatDescUtf16(uint16_t raw_code, uint16_t *out_buf, uint8_t *out_len)
+{
+    AlarmCode_t code = ALARM_LOG_CODE_BASE(raw_code);
+    uint8_t source_id = ALARM_LOG_CODE_SOURCE(raw_code);
+    uint8_t base_len = 0;
+    const uint16_t *base_str = DWIN_Alarm_GetDescUtf16(code, &base_len);
+
+    if (out_buf == NULL) {
+        if (out_len != NULL) *out_len = base_len;
+        return base_str;
+    }
+
+    /* Copy base description (up to 32 chars) */
+    uint8_t n = (base_len > 32U) ? 32U : base_len;
+    for (uint8_t i = 0; i < n; i++) {
+        out_buf[i] = base_str[i];
+    }
+    out_buf[n] = 0U;
+
+    /* Append " [Mk]" suffix if valid module source (1..8) */
+    if (source_id >= ALARM_SOURCE_MODULE_BASE && source_id <= 8U) {
+        /* Format: ' ' '[' 'M' '1'..'8' ']' */
+        if (n + 5U <= 32U) {
+            out_buf[n++] = (uint16_t)' ';
+            out_buf[n++] = (uint16_t)'[';
+            out_buf[n++] = (uint16_t)'M';
+            out_buf[n++] = (uint16_t)('0' + source_id);
+            out_buf[n++] = (uint16_t)']';
+            out_buf[n] = 0U;
+        }
+    }
+
+    if (out_len != NULL) {
+        *out_len = n;
+    }
+    return out_buf;
+}

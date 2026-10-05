@@ -73,7 +73,7 @@
  * the full per-edge history regardless -- the console line is only a bench aid. */
 #define ALARM_LOG_MIN_INTERVAL_MS    1000U
 
-/* ============== Inputs snapshot ============== */
+#define ALARM_MAX_MODULES 8U
 
 typedef struct {
     uint32_t now;
@@ -91,6 +91,12 @@ typedef struct {
     uint32_t mod_alarm_or;
     uint8_t  mod_pfc_fault_or;
     CHG_LIB_SystemSummary_t mod_summary;
+
+    /* Per-module snapshot for per-module alarm tracking */
+    uint32_t mod_alarms[ALARM_MAX_MODULES];
+    uint8_t  mod_pfc_faults[ALARM_MAX_MODULES];
+    bool     mod_is_offline[ALARM_MAX_MODULES];
+    bool     mod_is_enabled[ALARM_MAX_MODULES];
 
     float    cfg_vmax_v;
     float    cfg_vmin_v;
@@ -241,6 +247,7 @@ static const AlarmSpec_t k_specs[] = {
 
 static struct {
     AlarmRt_t rt[ALARM_SPEC_COUNT];
+    AlarmRt_t mod_rt[ALARM_MAX_MODULES][ALARM_SPEC_COUNT];
 
     /* session trackers for the DC derived alarms */
     bool     prev_relay_close;
@@ -580,14 +587,21 @@ static void gather_inputs(uint32_t now, AlarmInputs_t *in) {
     memset(&in->mod_summary, 0, sizeof(in->mod_summary));
 
     uint8_t total = CHG_LIB_GetModuleCount();
+    if (total > ALARM_MAX_MODULES) total = ALARM_MAX_MODULES;
     for (uint8_t i = 0; i < total; i++) {
         CHG_LIB_ModuleView_t mv;
         if (!CHG_LIB_GetModuleView(i, &mv)) continue;
         if (!mv.enabled) continue;
         in->mod_total_count++;
+        in->mod_is_enabled[i] = true;
+
         if (!mv.online || mv.state == CHG_LIB_STATE_OFFLINE) {
             in->mod_offline_count++;
-            in->mod_alarm_or |= (uint32_t)mv.alarm_flags | CHG_LIB_ALARM_COMM_FAIL;
+            in->mod_is_offline[i] = true;
+            uint32_t flags = (uint32_t)mv.alarm_flags | CHG_LIB_ALARM_COMM_FAIL;
+            in->mod_alarms[i] = flags;
+            in->mod_pfc_faults[i] = mv.pfc_fault;
+            in->mod_alarm_or |= flags;
             in->mod_pfc_fault_or |= mv.pfc_fault;
             continue;
         }
@@ -597,17 +611,22 @@ static void gather_inputs(uint32_t now, AlarmInputs_t *in) {
             mv.state == CHG_LIB_STATE_RECOVERING ||
             ((mv.last_rx_tick != 0U) && ((now - mv.last_rx_tick) > 2000U))) {
             /* Degraded/faulted/stale module: not healthy active, do not count in mod_active_count */
+            uint32_t flags = (uint32_t)mv.alarm_flags;
             if (mv.state == CHG_LIB_STATE_WARNING ||
                 mv.state == CHG_LIB_STATE_RECOVERING ||
                 ((mv.last_rx_tick != 0U) && ((now - mv.last_rx_tick) > 2000U))) {
-                in->mod_alarm_or |= CHG_LIB_ALARM_COMM_FAIL;
+                flags |= CHG_LIB_ALARM_COMM_FAIL;
             }
-            in->mod_alarm_or |= (uint32_t)mv.alarm_flags;
+            in->mod_alarms[i] = flags;
+            in->mod_pfc_faults[i] = mv.pfc_fault;
+            in->mod_alarm_or |= flags;
             in->mod_pfc_fault_or |= mv.pfc_fault;
             continue;
         }
 
         in->mod_active_count++;
+        in->mod_alarms[i] = (uint32_t)mv.alarm_flags;
+        in->mod_pfc_faults[i] = mv.pfc_fault;
         in->mod_alarm_or |= (uint32_t)mv.alarm_flags;
         in->mod_pfc_fault_or |= mv.pfc_fault;
 
@@ -625,10 +644,10 @@ static void gather_inputs(uint32_t now, AlarmInputs_t *in) {
 
 /* ============== Event log ============== */
 
-static void log_edge(uint32_t now, AlarmCode_t code, AlarmAction_t action, bool raised) {
+static void log_edge(uint32_t now, AlarmCode_t code, AlarmAction_t action, bool raised, uint8_t source_id) {
     AlarmLogEntry_t *e = &g_alarm.log[g_alarm.log_head];
     e->uptime_ms = now;
-    e->code = (uint16_t)code;
+    e->code = ALARM_LOG_ENCODE_CODE(code, source_id);
     e->action = (uint8_t)action;
     e->event = raised ? 1U : 0U;
     g_alarm.log_timestamp[g_alarm.log_head] = BSP_RTC_IsTimeValid() ? BSP_RTC_GetEpoch() : 0U;
@@ -637,10 +656,96 @@ static void log_edge(uint32_t now, AlarmCode_t code, AlarmAction_t action, bool 
     g_alarm.log_sequence++;
 
     /* Persist to External SPI Flash */
-    (void)AlarmStorage_Append(now, (uint16_t)code, (uint8_t)action, raised);
+    (void)AlarmStorage_Append(now, e->code, (uint8_t)action, raised);
 }
 
 /* ============== Debounce + aggregate ============== */
+
+static bool is_module_alarm(AlarmCode_t code) {
+    return (code >= ALARM_MOD_HW_FAULT && code <= ALARM_MOD_PFC_FAULT) ||
+           (code == ALARM_MOD_FAN_FAULT) ||
+           (code == ALARM_MOD_AC_OVER_VOLT);
+}
+
+static bool eval_mod_hw_fault_single(const AlarmInputs_t *in, uint8_t m) {
+    if (m >= ALARM_MAX_MODULES || !in->mod_is_enabled[m]) return false;
+    uint32_t ac_pfc_mask = CHG_LIB_ALARM_AC_UNDER_VOLT |
+                           CHG_LIB_ALARM_PFC_FAULT |
+                           CHG_LIB_ALARM_AC_PHASE_LOSS |
+                           CHG_LIB_ALARM_FREQ_FAULT |
+                           CHG_LIB_ALARM_PFC_IMBALANCE |
+                           CHG_LIB_ALARM_PFC_OVERCURR |
+                           CHG_LIB_ALARM_PFC_OVERVOLT;
+    if ((in->mod_alarms[m] & ac_pfc_mask) != 0U ||
+        in->mod_pfc_faults[m] != 0U ||
+        is_alarm_active_or_latched(ALARM_MOD_AC_UNDER_VOLT) ||
+        is_alarm_active_or_latched(ALARM_MOD_PFC_FAULT)) {
+        return false;
+    }
+    if (in->cc.state == CHARGE_CTRL_STATE_IDLE && in->mod_is_offline[m]) {
+        return false;
+    }
+    uint32_t specific_mask = CHG_LIB_ALARM_OVER_TEMP |
+                             CHG_LIB_ALARM_OVER_VOLTAGE_OUT |
+                             CHG_LIB_ALARM_SHORT_CIRCUIT |
+                             CHG_LIB_ALARM_OVER_CURR_OUT |
+                             CHG_LIB_ALARM_FAN_FAULT |
+                             CHG_LIB_ALARM_AC_OVER_VOLT;
+    if ((in->mod_alarms[m] & specific_mask) != 0U) return false;
+    return (in->mod_alarms[m] & CHG_LIB_ALARM_HW_FAULT) != 0U;
+}
+
+static bool eval_mod_comm_lost_single(const AlarmInputs_t *in, uint8_t m) {
+    if (m >= ALARM_MAX_MODULES || !in->mod_is_enabled[m]) return false;
+    bool active_session = (in->cc.state == CHARGE_CTRL_STATE_RUNNING ||
+                           in->cc.state == CHARGE_CTRL_STATE_READY ||
+                           in->cc.state == CHARGE_CTRL_STATE_PRECHARGE ||
+                           ((in->cc.fault_flags & CHARGE_CTRL_FAULT_NO_MODULE) != 0U));
+    if (!active_session) return false;
+    if ((in->mod_alarms[m] & CHG_LIB_ALARM_AC_UNDER_VOLT) != 0U ||
+        is_alarm_active_or_latched(ALARM_MOD_AC_UNDER_VOLT)) {
+        return false;
+    }
+    return in->mod_is_offline[m] || ((in->mod_alarms[m] & CHG_LIB_ALARM_COMM_FAIL) != 0U);
+}
+
+static bool eval_mod_ac_undervolt_single(const AlarmInputs_t *in, uint8_t m) {
+    if (m >= ALARM_MAX_MODULES || !in->mod_is_enabled[m]) return false;
+    if (in->cc.state == CHARGE_CTRL_STATE_IDLE) return false;
+    return (in->mod_alarms[m] & CHG_LIB_ALARM_AC_UNDER_VOLT) != 0U;
+}
+
+static bool eval_mod_pfc_single(const AlarmInputs_t *in, uint8_t m) {
+    if (m >= ALARM_MAX_MODULES || !in->mod_is_enabled[m]) return false;
+    if (in->cc.state == CHARGE_CTRL_STATE_IDLE) return false;
+    if ((in->mod_alarms[m] & CHG_LIB_ALARM_AC_UNDER_VOLT) != 0U ||
+        is_alarm_active_or_latched(ALARM_MOD_AC_UNDER_VOLT)) {
+        return false;
+    }
+    return (in->mod_pfc_faults[m] != 0U) ||
+           ((in->mod_alarms[m] & (CHG_LIB_ALARM_PFC_FAULT | CHG_LIB_ALARM_AC_PHASE_LOSS)) != 0U);
+}
+
+static bool eval_mod_flag_single(const AlarmInputs_t *in, uint32_t bit, uint8_t m) {
+    if (m >= ALARM_MAX_MODULES || !in->mod_is_enabled[m]) return false;
+    return (in->mod_alarms[m] & bit) != 0U;
+}
+
+static bool eval_mod_spec_single(const AlarmInputs_t *in, const AlarmSpec_t *sp, uint8_t m) {
+    switch (sp->code) {
+        case ALARM_MOD_HW_FAULT:       return eval_mod_hw_fault_single(in, m);
+        case ALARM_MOD_COMM_FAIL:      return eval_mod_comm_lost_single(in, m);
+        case ALARM_MOD_AC_UNDER_VOLT:  return eval_mod_ac_undervolt_single(in, m);
+        case ALARM_MOD_PFC_FAULT:      return eval_mod_pfc_single(in, m);
+        case ALARM_MOD_OVER_TEMP:
+        case ALARM_MOD_OVER_VOLT_OUT:
+        case ALARM_MOD_SHORT_CIRCUIT:
+        case ALARM_MOD_OVER_CURR_OUT:
+        case ALARM_MOD_FAN_FAULT:
+        case ALARM_MOD_AC_OVER_VOLT:   return eval_mod_flag_single(in, sp->param, m);
+        default:                       return false;
+    }
+}
 
 /* Dynamic action resolution: Demote local module faults to INFO if >=1 module remains active */
 static AlarmAction_t get_effective_action(const AlarmSpec_t *sp, const AlarmInputs_t *in) {
@@ -690,6 +795,64 @@ static void run_debounce(uint32_t now, const AlarmInputs_t *in, AlarmEdgeTally_t
         const AlarmSpec_t *sp = &k_specs[i];
         AlarmRt_t *rt = &g_alarm.rt[i];
 
+        if (is_module_alarm(sp->code)) {
+            bool any_active = false;
+            bool any_latched = false;
+
+            for (uint8_t m = 0; m < in->mod_total_count && m < ALARM_MAX_MODULES; m++) {
+                if (!in->mod_is_enabled[m]) continue;
+
+                AlarmRt_t *m_rt = &g_alarm.mod_rt[m][i];
+                bool m_raw = eval_mod_spec_single(in, sp, m);
+
+                if (m_raw != m_rt->raw_prev) {
+                    m_rt->raw_prev = m_raw;
+                    m_rt->edge_tick = now;
+                }
+                uint32_t held = now - m_rt->edge_tick;
+                uint32_t set_ms = sp->set_ms;
+                if (sp->code == ALARM_MOD_HW_FAULT) {
+                    set_ms = (in->cc.state == CHARGE_CTRL_STATE_IDLE)
+                                 ? ALARM_DB_HW_FAULT_IDLE_SET_MS
+                                 : ALARM_DB_HW_FAULT_ACTIVE_SET_MS;
+                }
+
+                if (m_raw) {
+                    if (m_rt->latched) m_rt->latched = false;
+                    if (!m_rt->active && held >= set_ms) {
+                        m_rt->active = true;
+                        log_edge(now, sp->code, get_effective_action(sp, in), true, (uint8_t)(m + 1U));
+#if defined(CHG_ENABLE_LOG) && (CHG_ENABLE_LOG != 0)
+                        if (tally->raised++ == 0U) tally->first_raised_desc = sp->desc;
+#else
+                        tally->raised++;
+#endif
+                    }
+                } else {
+                    if (m_rt->active && held >= sp->clear_ms) {
+                        if (sp->latching) {
+                            m_rt->latched = true;
+                        } else {
+                            m_rt->active = false;
+                            log_edge(now, sp->code, get_effective_action(sp, in), false, (uint8_t)(m + 1U));
+#if defined(CHG_ENABLE_LOG) && (CHG_ENABLE_LOG != 0)
+                            if (tally->cleared++ == 0U) tally->first_cleared_desc = sp->desc;
+#else
+                            tally->cleared++;
+#endif
+                        }
+                    }
+                }
+
+                if (m_rt->active) any_active = true;
+                if (m_rt->latched) any_latched = true;
+            }
+
+            rt->active = any_active;
+            rt->latched = any_latched;
+            continue;
+        }
+
         bool raw = sp->eval(in, sp->param);
 
         if (raw != rt->raw_prev) {
@@ -698,21 +861,13 @@ static void run_debounce(uint32_t now, const AlarmInputs_t *in, AlarmEdgeTally_t
         }
         uint32_t held = now - rt->edge_tick;
 
-        /* Dynamic state-dependent debounce: ALARM_MOD_HW_FAULT uses 10s in IDLE
-         * to swallow power-down capacitor discharge / precharge, but 1s during
-         * active charge for prompt safety shutdown. */
         uint32_t set_ms = sp->set_ms;
-        if (sp->code == ALARM_MOD_HW_FAULT) {
-            set_ms = (in->cc.state == CHARGE_CTRL_STATE_IDLE)
-                         ? ALARM_DB_HW_FAULT_IDLE_SET_MS
-                         : ALARM_DB_HW_FAULT_ACTIVE_SET_MS;
-        }
 
         if (raw) {
             if (rt->latched) rt->latched = false; /* condition returned -- genuinely active */
             if (!rt->active && held >= set_ms) {
                 rt->active = true;
-                log_edge(now, sp->code, get_effective_action(sp, in), true);
+                log_edge(now, sp->code, get_effective_action(sp, in), true, ALARM_SOURCE_STATION);
 #if defined(CHG_ENABLE_LOG) && (CHG_ENABLE_LOG != 0)
                 if (tally->raised++ == 0U) tally->first_raised_desc = sp->desc;
 #else
@@ -725,7 +880,7 @@ static void run_debounce(uint32_t now, const AlarmInputs_t *in, AlarmEdgeTally_t
                     rt->latched = true;    /* keep active until Alarm_Acknowledge */
                 } else {
                     rt->active = false;
-                    log_edge(now, sp->code, get_effective_action(sp, in), false);
+                    log_edge(now, sp->code, get_effective_action(sp, in), false, ALARM_SOURCE_STATION);
 #if defined(CHG_ENABLE_LOG) && (CHG_ENABLE_LOG != 0)
                     if (tally->cleared++ == 0U) tally->first_cleared_desc = sp->desc;
 #else
@@ -901,12 +1056,39 @@ void Alarm_Acknowledge(uint32_t now_tick) {
     for (uint8_t i = 0; i < ALARM_SPEC_COUNT; i++) {
         const AlarmSpec_t *sp = &k_specs[i];
         AlarmRt_t *rt = &g_alarm.rt[i];
+
+        if (is_module_alarm(sp->code)) {
+            bool any_active = false;
+            bool any_latched = false;
+            for (uint8_t m = 0; m < in.mod_total_count && m < ALARM_MAX_MODULES; m++) {
+                if (!in.mod_is_enabled[m]) continue;
+                AlarmRt_t *m_rt = &g_alarm.mod_rt[m][i];
+                if (!m_rt->latched) {
+                    if (m_rt->active) any_active = true;
+                    continue;
+                }
+                if (eval_mod_spec_single(&in, sp, m)) {
+                    any_latched = true;
+                    any_active = true;
+                    continue; /* still present on module m */
+                }
+                m_rt->latched = false;
+                m_rt->active = false;
+                m_rt->raw_prev = false;
+                log_edge(now_tick, sp->code, sp->action, false, (uint8_t)(m + 1U));
+                acked++;
+            }
+            rt->active = any_active;
+            rt->latched = any_latched;
+            continue;
+        }
+
         if (!rt->latched) continue;
         if (sp->eval(&in, sp->param)) continue; /* still present */
         rt->latched = false;
         rt->active = false;
         rt->raw_prev = false;
-        log_edge(now_tick, sp->code, sp->action, false);
+        log_edge(now_tick, sp->code, sp->action, false, ALARM_SOURCE_STATION);
         acked++;
     }
     if (acked > 0U) LOG("ALARM: %u latched cleared by ack\r\n", (unsigned)acked);

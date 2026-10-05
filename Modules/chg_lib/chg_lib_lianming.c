@@ -657,12 +657,18 @@ static void process_module(uint8_t idx, uint32_t now)
                 break;
             }
         }
-        /* Keep polling until 5 RX — no abort after 3 retries (SRS 6.2) */
-        lm_read_status(idx, now);
+        /* Keep polling until 5 RX — rate limit 500ms (2Hz) */
+        if ((now - mod->last_poll_tick) >= 500U) {
+            lm_send_read(mod);
+            mod->last_poll_tick = now;
+        }
         break;
 
     case CHG_LIB_STATE_FAULT:
-        lm_read_status(idx, now);
+        if ((now - mod->last_poll_tick) >= 500U) {
+            lm_send_read(mod);
+            mod->last_poll_tick = now;
+        }
         /* BUGFIX B-08: require 5 CONSECUTIVE clean reads since the alarm
          * bits last cleared, same debounce as OFFLINE->RECOVERING. Reads
          * taken while still faulted also increment rx_count, so the

@@ -41,3 +41,9 @@ node_modules/
 *.bak
 Releases/
 release_upload_url.txt
+
+# Agent teamwork metadata
+.agents/
+IM47.jpg
+PROJECT.md
+test/test_arch_and_cycles_challenger.py

@@ -99,11 +99,17 @@ typedef struct {
     uint8_t       active_count;
 } AlarmView_t;
 
-/* ============== Event log ============== */
+/* Helper macros for packing/unpacking module source_id in 16-bit alarm log code */
+#define ALARM_LOG_CODE_BASE(c)       ((AlarmCode_t)((c) & 0x00FFU))
+#define ALARM_LOG_CODE_SOURCE(c)     ((uint8_t)(((c) >> 8) & 0x00FFU))
+#define ALARM_LOG_ENCODE_CODE(c, s)  ((uint16_t)(((uint16_t)(s) << 8) | ((uint16_t)(c) & 0x00FFU)))
+
+#define ALARM_SOURCE_STATION         0U  /* Station-level / BMS / Controller */
+#define ALARM_SOURCE_MODULE_BASE     1U  /* Module index + 1 (1 = M1, 2 = M2, ...) */
 
 typedef struct {
     uint32_t uptime_ms;  /* tick at the edge                                  */
-    uint16_t code;       /* AlarmCode_t                                       */
+    uint16_t code;       /* bit 0..7: AlarmCode_t, bit 8..15: source_id       */
     uint8_t  action;     /* AlarmAction_t at the time of the edge             */
     uint8_t  event;      /* 1 = raised, 0 = cleared                           */
 } AlarmLogEntry_t;

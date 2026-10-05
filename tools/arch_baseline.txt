@@ -52,6 +52,16 @@
 #     PC-command response, ENTER handler). Fixing one and not the other is
 #     just inconsistency for no real gain; tick access at this narrow scope
 #     is the same pattern Modules already use against BSP_GetTick().
+#
+#   App/Network/quectel_at_engine.c:bsp_quectel.h
+#   App/Network/quectel_at_engine.c:bsp_rtc.h
+#     Cellular modem AT command engine interfaces directly with modem
+#     UART (bsp_quectel) and reads/syncs RTC (bsp_rtc) on NITZ network time update.
+#
+#   App/OTA/ota_service.c:bsp_spi_flash.h
+#   App/OTA/ota_service.c:bsp_quectel.h
+#     OTA firmware download state machine directly streams chunks to external
+#     SPI NOR Flash staging partition and coordinates modem buffer transfers.
 App/Charge/charge_cycle_storage.c:bsp_flash.h
 App/Charge/charge_energy_storage.c:bsp_flash.h
 # The following entries are the current header names of the same reviewed
@@ -64,3 +74,7 @@ App/Charge/charge_energy_storage.c:bsp_spi_flash.h
 App/Protocol/pc_debug_protocol.c:bsp_can.h
 App/Protocol/pc_debug_protocol.c:bsp_sys.h
 App/Protocol/pc_protocol.c:bsp_sys.h
+App/Network/quectel_at_engine.c:bsp_quectel.h
+App/Network/quectel_at_engine.c:bsp_rtc.h
+App/OTA/ota_service.c:bsp_spi_flash.h
+App/OTA/ota_service.c:bsp_quectel.h

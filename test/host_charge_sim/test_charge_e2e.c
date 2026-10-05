@@ -36,6 +36,7 @@ void BSP_ExitCritical(void) {}
  * test assert on transmitted CAN frame *content*, not just that a TX
  * happened. */
 extern bool MockCan_GetLastTx(uint32_t ext_id, uint8_t data_out[8]);
+extern bool ChargeController_IsJackTempDeratingActive(void);
 #include "bms_protocol.h" /* BMS_ID_CTRL_INFO */
 
 #define ASSERT(cond, msg) \
@@ -395,9 +396,9 @@ static bool test_driver_fault_recovery_debounce(uint8_t module_type, const char 
     ASSERT(mv.state == CHG_LIB_STATE_FAULT,
            "must NOT recover after only 1-2 clean reads -- that's the pre-fix bug");
 
-    /* Drive enough further time to accumulate 5+ clean reads and confirm
-     * it does eventually recover. */
-    drive_ms(1000U);
+    /* Drive enough further time to accumulate 5+ clean reads (at 500ms poll cadence: >=2500ms)
+     * and confirm it does eventually recover. */
+    drive_ms(3000U);
     ASSERT(CHG_LIB_GetModuleView(0, &mv), "module view unavailable");
     ASSERT(mv.state != CHG_LIB_STATE_FAULT,
            "should recover once 5 clean reads have accumulated since FAULT entry");
@@ -1650,6 +1651,83 @@ static bool test_jack_temp_derating_and_trip(void)
     ASSERT(cv.target_current_total_a == 0.0f, "target current must be 0 in FAULT");
 
     printf("[PASS] test_jack_temp_derating_and_trip\n");
+    return true;
+}
+
+static bool test_jack_temp_derating_does_not_leak_across_sessions(void)
+{
+    printf("Running test_jack_temp_derating_does_not_leak_across_sessions...\n");
+    ChargeCycleConfig_t cfg;
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_TONHE, &cfg), "setup failed");
+    cfg.protect_jack_temp_enabled = 1;
+    cfg.protect_jack_temp_delay_s = 2;
+    cfg.protect_jack_temp_threshold_c = 60.0f;
+    cfg.protect_jack_temp_delta_c = 5.0f;
+    cfg.protect_jack_temp_trip_c = 75.0f;
+    cfg.protect_jack_temp_power_limit_pct = 50.0f;
+    ASSERT(ChargeCycleConfig_Set(&cfg), "set config failed");
+
+    set_healthy_bms(400.0f, 50);
+    g_sim_bms.max_cell_mv = 3100; /* Stage band 1_2 allows full current */
+    ASSERT(warmup_and_start(1500U, 4000U), "Session 1 warmup_and_start failed");
+
+    /* Session 1 starts at normal temperature (25C) */
+    ChargeController_SetJackTempC(25.0f);
+    drive_ms(500U);
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "Session 1 must be RUNNING");
+    ASSERT(cv.derating == 0, "Session 1 should not start in derating");
+    ASSERT(!ChargeController_IsJackTempDeratingActive(), "Session 1 jack_temp_derating_active must be false");
+    ASSERT(fabsf(cv.target_current_total_a - 100.0f) < 2.0f, "Session 1 full current target commanded");
+
+    /* Session 1 connector temp reaches derate threshold (60C). After 2s debounce, derating activates */
+    ChargeController_SetJackTempC(62.0f);
+    drive_ms(2500U);
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "Session 1 must still be RUNNING in derating");
+    ASSERT(cv.derating == 1, "Session 1 derating must activate above threshold");
+    ASSERT(ChargeController_IsJackTempDeratingActive(), "Session 1 jack_temp_derating_active must be true");
+    ASSERT(fabsf(cv.target_current_total_a - 50.0f) < 2.0f, "Session 1 current must be derated to 50%");
+
+    /* Session 1 stops */
+    ChargeController_Stop(mock_tick);
+    drive_ms(1000U);
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_IDLE, "Session 1 must return to IDLE after stop");
+
+    /* Connector temperature cools into the hysteresis band:
+     * threshold is 60.0C, delta is 5.0C, so hysteresis band is (55.0C, 60.0C].
+     * At 57.0C, it has not cooled below (threshold - delta), so without state reset
+     * the previous session's derating flag would leak across sessions. */
+    ChargeController_SetJackTempC(57.0f);
+    drive_ms(500U);
+
+    /* Session 2 starts */
+    ASSERT(warmup_and_start(500U, 4000U), "Session 2 warmup_and_start failed");
+    drive_ms(500U);
+
+    /* Verify that Session 2 does NOT start derated:
+     * - jack_temp_derating_active must be false
+     * - derating must be 0
+     * - full current target commanded */
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "Session 2 must be RUNNING");
+    ASSERT(!ChargeController_IsJackTempDeratingActive(), "Session 2 jack_temp_derating_active must be false");
+    ASSERT(cv.derating == 0, "Session 2 must not start derated");
+    ASSERT(fabsf(cv.target_current_total_a - 100.0f) < 2.0f, "Session 2 must command full current target");
+
+    /* Drive further within hysteresis band (57C) to confirm derating does not spurious trigger */
+    drive_ms(2500U);
+    ChargeController_GetView(&cv);
+    ASSERT(cv.derating == 0, "Session 2 must remain non-derated in hysteresis band");
+    ASSERT(fabsf(cv.target_current_total_a - 100.0f) < 2.0f, "Session 2 target remains full current");
+
+    /* Clean up */
+    ChargeController_Stop(mock_tick);
+    drive_ms(1000U);
+
+    printf("[PASS] test_jack_temp_derating_does_not_leak_across_sessions\n");
     return true;
 }
 
@@ -3017,6 +3095,82 @@ static bool test_multi_module_all_modules_lost_trips_no_module(void)
     return true;
 }
 
+static bool test_charge_controller_continuous_charging_across_49_day_tick_rollover(void)
+{
+    printf("Running test_charge_controller_continuous_charging_across_49_day_tick_rollover...\n");
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_MAXWELL, NULL), "setup failed");
+    set_healthy_bms(400.0f, 50);
+
+    drive_ms(1500U);
+    ASSERT(ChargeController_Start(CHARGE_CTRL_OWNER_PC, false, mock_tick), "start refused");
+    drive_ms(2000U);
+
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "controller must be RUNNING");
+    ASSERT(cv.actual_module_count == 1U, "module must be active");
+
+    /* Fast-forward uptime to 5 seconds before 32-bit tick overflow (49.71 days) */
+    mock_tick = UINT32_MAX - 5000U;
+
+    /* Advance time 10 seconds, crossing the 0xFFFFFFFF -> 0 rollover boundary */
+    for (uint32_t step = 0; step < 10; step++) {
+        drive_ms(1000U);
+        ChargeController_GetView(&cv);
+        ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "controller must remain RUNNING across tick rollover");
+        ASSERT(cv.fault_flags == 0U, "no spurious fault must be triggered by tick rollover");
+    }
+
+    /* Verify controller can still cleanly stop after the rollover */
+    ChargeController_Stop(mock_tick);
+    drive_ms(500U);
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_IDLE, "controller must return to IDLE after stop");
+
+    printf("[PASS] test_charge_controller_continuous_charging_across_49_day_tick_rollover\n");
+    return true;
+}
+
+static bool test_idle_long_term_standby_bms_sleep_and_wake(void)
+{
+    printf("Running test_idle_long_term_standby_bms_sleep_and_wake...\n");
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_MAXWELL, NULL), "setup failed");
+    set_healthy_bms(400.0f, 100); /* 100% full */
+
+    /* Normal completed state in IDLE */
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_IDLE, "must start in IDLE");
+
+    /* Vehicle plugged in long-term: vehicle BMS goes into deep sleep (CAN silence) */
+    g_sim_bms.transmitting = false;
+
+    /* Jump to before 49.7-day rollover and simulate weeks/months of standby crossing rollover */
+    mock_tick = UINT32_MAX - 10000U;
+    for (uint32_t step = 0; step < 30; step++) {
+        drive_ms(1000U);
+        ChargeController_GetView(&cv);
+        ASSERT(cv.state == CHARGE_CTRL_STATE_IDLE, "standby must stay in IDLE while plugged in long-term");
+        ASSERT((cv.fault_flags & CHARGE_CTRL_FAULT_BMS_OFFLINE) == 0U, "BMS sleep in IDLE must NOT trigger fault");
+    }
+
+    /* User wakes vehicle / vehicle wakes up to request charge: CAN resumes */
+    g_sim_bms.transmitting = true;
+    g_sim_bms.soc_pct = 85; /* self-discharged to 85% */
+    drive_ms(1500U);
+
+    /* System must accept new charge session seamlessly */
+    ASSERT(ChargeController_Start(CHARGE_CTRL_OWNER_PC, false, mock_tick), "must accept charge after wake");
+    drive_ms(2000U);
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "charging must resume normally after long-term standby");
+
+    ChargeController_Stop(mock_tick);
+    drive_ms(100U);
+    printf("[PASS] test_idle_long_term_standby_bms_sleep_and_wake\n");
+    return true;
+}
+
 int main(void)
 {
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -3066,6 +3220,7 @@ int main(void)
     pass &= test_voltage_ramp_up();
     pass &= test_ramp_down_immediate();
     pass &= test_jack_temp_derating_and_trip();
+    pass &= test_jack_temp_derating_does_not_leak_across_sessions();
     pass &= test_config_admin_pin_validation();
     pass &= test_stage_threshold_validation();
     pass &= test_precharge_bms_recovery_hold();
@@ -3092,6 +3247,8 @@ int main(void)
     pass &= test_multi_module_degraded_charging_dynamic_rebalance();
     pass &= test_multi_module_degraded_power_clamp();
     pass &= test_multi_module_all_modules_lost_trips_no_module();
+    pass &= test_charge_controller_continuous_charging_across_49_day_tick_rollover();
+    pass &= test_idle_long_term_standby_bms_sleep_and_wake();
 
     if (pass) {
         printf("ALL TESTS PASSED.\n");

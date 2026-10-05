@@ -613,12 +613,18 @@ static void process_module(MXR_Internal_t *m, uint32_t now)
          break;
      }
  }
- /* Keep polling until 5 RX received — do NOT abort after 3 retries (SRS 6.2) */
- send_read(m, CHG_LIB_REG_ALARM_STATUS);
+ /* Keep polling until 5 RX received — rate limit 500ms (2Hz) */
+ if ((now - m->last_poll_tick) >= 500U) {
+     send_read(m, CHG_LIB_REG_ALARM_STATUS);
+     m->last_poll_tick = now;
+ }
  break;
 
  case CHG_LIB_STATE_FAULT:
- send_read(m, CHG_LIB_REG_ALARM_STATUS);
+ if ((now - m->last_poll_tick) >= 500U) {
+     send_read(m, CHG_LIB_REG_ALARM_STATUS);
+     m->last_poll_tick = now;
+ }
  /* BUGFIX B-08: require 5 CONSECUTIVE clean reads since the alarm bits
   * last cleared, same debounce as OFFLINE->RECOVERING, before trusting
   * the fault has cleared and restarting the module. rx_count keeps

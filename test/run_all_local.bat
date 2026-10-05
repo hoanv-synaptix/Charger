@@ -4,10 +4,18 @@ echo ==================================================
 echo   CHARGER LOCAL CI PIPELINE (WINDOWS)
 echo ==================================================
 
-echo [1/9] Running Static Analysis (check_ioc.py)...
-set "PYTHON_BIN=python"
-if exist "C:\cygwin64\bin\python3.9.exe" (
-    set "PYTHON_BIN=C:\cygwin64\bin\python3.9.exe"
+echo [1/10] Running Static Analysis ^& Architecture Checks...
+if not defined PYTHON_BIN (
+    set "PYTHON_BIN=python"
+    if exist "%LOCALAPPDATA%\Programs\Python\Python313\python.exe" (
+        set "PYTHON_BIN=%LOCALAPPDATA%\Programs\Python\Python313\python.exe"
+    ) else if exist "%LOCALAPPDATA%\Programs\Python\Python312\python.exe" (
+        set "PYTHON_BIN=%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
+    ) else if exist "%LOCALAPPDATA%\Programs\Python\Python311\python.exe" (
+        set "PYTHON_BIN=%LOCALAPPDATA%\Programs\Python\Python311\python.exe"
+    ) else if exist "C:\cygwin64\bin\python3.9.exe" (
+        set "PYTHON_BIN=C:\cygwin64\bin\python3.9.exe"
+    )
 )
 "%PYTHON_BIN%" check_ioc.py
 if %errorlevel% neq 0 (
@@ -15,7 +23,25 @@ if %errorlevel% neq 0 (
     exit /b %errorlevel%
 )
 
-echo [2/9] Running Native Unit Tests (test_logic.c)...
+"%PYTHON_BIN%" tools/check_architecture.py
+if %errorlevel% neq 0 (
+    echo [FAIL] Architecture Check Failed!
+    exit /b %errorlevel%
+)
+
+"%PYTHON_BIN%" -c "import pytest" >nul 2>&1
+if %errorlevel% equ 0 (
+    echo Running Sprint 1 Safety Regressions [pytest]...
+    "%PYTHON_BIN%" -m pytest test/test_sprint1_driver.py test/test_sprint1_filter.py test/test_sprint1_iwdg_failsafe.py test/test_sprint1_nan_inf.py test/test_sprint1_race.py
+    if %errorlevel% neq 0 (
+        echo [FAIL] Sprint 1 Regressions Failed!
+        exit /b %errorlevel%
+    )
+) else (
+    echo [INFO] pytest not available in %PYTHON_BIN%, skipping Sprint 1 pytest suite.
+)
+
+echo [2/10] Running Native Unit Tests (test_logic, Quectel, OTA SHA-256)...
 gcc -I"Modules/bms" -I"Modules/chg_lib" -I"test/mock_hal" test/test_logic.c Modules/bms/bms_protocol.c Modules/chg_lib/chg_lib_fsm.c -lm -o test_logic.exe
 if %errorlevel% neq 0 (
     echo [FAIL] Compilation of test_logic.c Failed!
@@ -27,7 +53,40 @@ if %errorlevel% neq 0 (
     exit /b %errorlevel%
 )
 
-echo [3/9] Running Config Storage Migration Test: v5 to v6...
+gcc -Wall -I"App/Network" test/test_quectel_readline.c -o test_quectel_readline.exe
+if %errorlevel% neq 0 (
+    echo [FAIL] Compilation of test_quectel_readline.c Failed!
+    exit /b %errorlevel%
+)
+.\test_quectel_readline.exe
+if %errorlevel% neq 0 (
+    echo [FAIL] Quectel ReadLine Tests Failed!
+    exit /b %errorlevel%
+)
+
+gcc -Wall -I"App/Network" -I"App/System" test/test_quectel_time_sync.c -o test_quectel_time_sync.exe
+if %errorlevel% neq 0 (
+    echo [FAIL] Compilation of test_quectel_time_sync.c Failed!
+    exit /b %errorlevel%
+)
+.\test_quectel_time_sync.exe
+if %errorlevel% neq 0 (
+    echo [FAIL] Quectel Time Sync Tests Failed!
+    exit /b %errorlevel%
+)
+
+gcc -Wall -I"App/OTA" test/test_ota_sha256.c App/OTA/ota_sha256.c -o test_ota_sha256.exe
+if %errorlevel% neq 0 (
+    echo [FAIL] Compilation of test_ota_sha256.c Failed!
+    exit /b %errorlevel%
+)
+.\test_ota_sha256.exe
+if %errorlevel% neq 0 (
+    echo [FAIL] OTA SHA-256 Tests Failed!
+    exit /b %errorlevel%
+)
+
+echo [3/10] Running Config Storage Migration Test: v5 to v6...
 gcc -Wall -DCHARGE_CYCLE_STORAGE_HOST_TEST -I"test/mock_hal" -I"Modules/chg_lib" -I"BSP" -I"Utils/Log" -I"App/Charge" ^
     test/host_charge_sim/test_config_storage.c ^
     App/Charge/charge_cycle_storage.c ^
@@ -44,7 +103,7 @@ if %errorlevel% neq 0 (
     exit /b %errorlevel%
 )
 
-echo [4/9] Running Charger E2E Simulation: BMS and module CAN to MCU app view...
+echo [4/10] Running Charger E2E Simulation: BMS and module CAN to MCU app view...
 gcc -Wall -I"test/mock_hal" -I"test/host_charge_sim" -I"Modules/chg_lib" -I"Modules/bms" -I"BSP" -I"Utils/Log" -I"App/Charge" -I"App/Protocol" -I"App/Storage" -I"Middlewares/FatFS" ^
     test/host_charge_sim/test_charge_e2e.c ^
     test/host_charge_sim/sim_can_modules.c ^
@@ -72,7 +131,7 @@ if %errorlevel% neq 0 (
     exit /b %errorlevel%
 )
 
-echo [5/9] Running PC Protocol E2E Simulation: byte stream to PC protocol parser...
+echo [5/10] Running PC Protocol E2E Simulation: byte stream to PC protocol parser...
 gcc -Wall -I"test/mock_hal" -I"test/host_charge_sim" -I"Modules/chg_lib" -I"Modules/bms" -I"BSP" -I"Utils/Log" -I"App/Charge" -I"App/Alarm" -I"App/Protocol" -I"App/System" -I"App/OTA" -I"App/Storage" -I"App/Network" -I"Middlewares/FatFS" ^
     test/host_protocol_sim/test_pc_protocol_e2e.c ^
     test/host_charge_sim/sim_can_modules.c ^
@@ -104,7 +163,7 @@ if %errorlevel% neq 0 (
     exit /b %errorlevel%
 )
 
-echo [6/9] Running DWIN Protocol E2E Simulation: byte stream to parser...
+echo [6/10] Running DWIN Protocol E2E Simulation: byte stream to parser...
 gcc -Wall -I"Modules/hmi" ^
     test/host_protocol_sim/test_dwin_protocol_e2e.c ^
     Modules/hmi/dwin_protocol.c ^
@@ -119,7 +178,7 @@ if %errorlevel% neq 0 (
     exit /b %errorlevel%
 )
 
-echo [7/9] Running Alarm Subsystem E2E Simulation: BMS and module CAN to controller...
+echo [7/10] Running Alarm Subsystem E2E Simulation: BMS and module CAN to controller...
 gcc -Wall -I"test/mock_hal" -I"test/host_charge_sim" -I"Modules/chg_lib" -I"Modules/bms" -I"BSP" -I"Utils/Log" -I"App/Charge" -I"App/Alarm" -I"App/Storage" -I"Middlewares/FatFS" ^
     test/host_alarm_sim/test_alarm_e2e.c ^
     test/host_charge_sim/sim_can_modules.c ^
@@ -155,7 +214,7 @@ if %errorlevel% neq 0 (
 )
 .\test_alarm_ui_blink.exe
 if %errorlevel% neq 0 (
-    echo [FAIL] Alarm UI Blinking & Buzzer Test Failed!
+    echo [FAIL] Alarm UI Blinking ^& Buzzer Test Failed!
     exit /b %errorlevel%
 )
 gcc -Wall test/host_ota_sim/test_ota_periodic_timer.c -o test_ota_periodic_timer.exe
@@ -169,7 +228,7 @@ if %errorlevel% neq 0 (
     exit /b %errorlevel%
 )
 
-echo [8/10] Running Energy & Duration Storage Test: v1 to v2 migration...
+echo [8/10] Running Energy ^& Duration Storage Test: v1 to v2 migration...
 gcc -Wall -DCHARGE_ENERGY_STORAGE_HOST_TEST -I"BSP" -I"Utils/Log" -I"App/Charge" ^
     test/host_charge_sim/test_energy_storage.c ^
     App/Charge/charge_energy_storage.c ^
@@ -180,7 +239,7 @@ if %errorlevel% neq 0 (
 )
 .\test_energy_storage.exe
 if %errorlevel% neq 0 (
-    echo [FAIL] Energy & Duration Storage Test Failed!
+    echo [FAIL] Energy ^& Duration Storage Test Failed!
     exit /b %errorlevel%
 )
 
@@ -196,4 +255,5 @@ echo Note: Hardware-In-The-Loop tests (integration_sync_test.py) must be run man
 echo ==================================================
 echo   LOCAL CI PASSED
 echo ==================================================
-pause
+if not "%CI%"=="1" if not "%NONINTERACTIVE%"=="1" if not defined CI if not defined NONINTERACTIVE pause
+exit /b 0

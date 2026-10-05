@@ -9,7 +9,6 @@
 
 #include "ota_service.h"
 #include "app_version.h"
-#include "main.h"
 #include "bms_core.h"
 #include "charge_controller.h"
 #include "chg_lib.h"
@@ -50,6 +49,17 @@ static uint32_t s_policy_interval_ms;
 static uint32_t s_next_policy_tick;
 static char s_policy_manifest_url[OTA_URL_MAX_LENGTH + 1U];
 static uint32_t s_idle_continuous_start_tick;
+static uint32_t s_now_tick;
+
+static inline void ota_system_reset(void)
+{
+    __asm volatile ("dsb 0xF" ::: "memory");
+    *(volatile uint32_t *)0xE000ED0CU = 0x05FA0004UL;
+    __asm volatile ("dsb 0xF" ::: "memory");
+    for (;;) {
+        __asm volatile ("nop");
+    }
+}
 
 typedef enum {
     OTA_STEP_IDLE = 0,
@@ -361,7 +371,7 @@ bool OTAService_StartDownload(const char *url, uint32_t version,
     s_erase_index = 0U;
     s_erase_count = (expected_size + SPI_FLASH_SECTOR_SIZE - 1U) / SPI_FLASH_SECTOR_SIZE;
     s_step = OTA_STEP_ERASE_START;
-    s_step_tick = HAL_GetTick();
+    s_step_tick = s_now_tick;
     return true;
 }
 
@@ -388,7 +398,7 @@ bool OTAService_StartManifestCheck(const char *manifest_url)
     s_idle_continuous_start_tick = 0U;
     s_desc.status = OTA_STATUS_DOWNLOADING;
     s_step = OTA_STEP_CHECK_PDP;   /* Verify PDP context before QHTTP */
-    s_step_tick = HAL_GetTick();
+    s_step_tick = s_now_tick;
     LOG("OTA: StartManifestCheck -> CHECK_PDP, URL=%s\r\n", manifest_url);
     return true;
 }
@@ -420,7 +430,7 @@ bool OTAService_SetPolicy(bool enabled, uint32_t interval_ms, const char *manife
     s_desc.policy_interval_ms = s_policy_interval_ms;
     memset(s_desc.policy_manifest_url, 0, sizeof(s_desc.policy_manifest_url));
     memcpy(s_desc.policy_manifest_url, s_policy_manifest_url, strlen(s_policy_manifest_url) + 1U);
-    s_next_policy_tick = HAL_GetTick();
+    s_next_policy_tick = s_now_tick;
     if (save_descriptor()) return true;
 
     /* Rollback both runtime variables and persistent descriptor state */
@@ -531,6 +541,7 @@ void OTAService_ConfirmBoot(void)
 void OTAService_Process(uint32_t now_tick)
 {
     char line[256];
+    s_now_tick = now_tick;
 
     if (s_step == OTA_STEP_IDLE && s_policy_enabled && s_policy_manifest_url[0] != '\0' &&
         (uint32_t)(now_tick - s_next_policy_tick) >= s_policy_interval_ms) {
@@ -559,8 +570,10 @@ void OTAService_Process(uint32_t now_tick)
                 if (OTAService_RequestApply()) {
                     BSP_Quectel_SendCmd("AT+QHTTPSTOP");
                     QuectelEngine_SetOtaExclusive(false);
-                    HAL_Delay(500);
-                    NVIC_SystemReset();
+                    for (volatile uint32_t i = 0U; i < 2000000U; i++) {
+                        __asm volatile ("nop");
+                    }
+                    ota_system_reset();
                     return;
                 } else {
                     LOG("OTA: RequestApply failed! Retrying in next cycle.\r\n");
