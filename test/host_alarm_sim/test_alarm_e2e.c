@@ -2439,10 +2439,56 @@ static bool test_multi_module_per_module_alarm_source_and_dwin_suffix(void)
     return true;
 }
 
-int main(void)
+static bool test_single_module_alarm_no_suffix_and_normal_stop(void)
+{
+    printf("Running test_single_module_alarm_no_suffix_and_normal_stop...\n");
+    ChargeCycleConfig_t cfg;
+    ASSERT(setup_variant(CHARGE_MODULE_TYPE_MAXWELL, 1U, &cfg), "setup single module");
+    healthy_bms(400.0f);
+    ASSERT(start_running(), "controller never RUNNING");
+    drive_ms(2000U);
 
+    /* Single module suffers over-temperature */
+    g_sim_modules[0].maxwell_alarm_raw |= (1U << 30);
+    drive_ms(500U);
+
+    AlarmLogEntry_t log[ALARM_LOG_DEPTH];
+    uint8_t n = Alarm_GetLog(log, ALARM_LOG_DEPTH);
+    bool found_over_temp = false;
+    uint16_t raw_code = 0;
+    for (uint8_t i = 0; i < n; i++) {
+        if (ALARM_LOG_CODE_BASE(log[i].code) == ALARM_MOD_OVER_TEMP && log[i].event == 1U) {
+            found_over_temp = true;
+            raw_code = log[i].code;
+            ASSERT(ALARM_LOG_CODE_SOURCE(raw_code) == ALARM_SOURCE_STATION,
+                   "single module system must have source_id = 0 (no M1 suffix)");
+            ASSERT(log[i].action == ALARM_ACT_STOP,
+                   "single module fault must STOP station, not demote to INFO");
+            break;
+        }
+    }
+    ASSERT(found_over_temp, "OVER_TEMP must be logged");
+
+    /* DWIN format must NOT contain '[M1]' */
+    uint16_t desc_buf[34];
+    uint8_t desc_len = 0;
+    DWIN_Alarm_FormatDescUtf16(raw_code, desc_buf, &desc_len);
+    ASSERT(desc_len > 0U, "desc length must be > 0");
+    ASSERT(desc_buf[desc_len - 1] != (uint16_t)']', "single module desc must NOT end with bracket ']'");
+
+    /* Controller must STOP / trip due to no active modules left */
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state != CHARGE_CTRL_STATE_RUNNING, "controller must not remain RUNNING when single module fails");
+
+    printf("[PASS] test_single_module_alarm_no_suffix_and_normal_stop\n");
+    return true;
+}
+
+int main(void)
 {
     bool ok = true;
+    ok &= test_single_module_alarm_no_suffix_and_normal_stop();
     ok &= test_multi_module_per_module_alarm_source_and_dwin_suffix();
     ok &= test_all_31_codes_metadata_and_contracts();
     ok &= test_alarm_action_priority_arbiter();

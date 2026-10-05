@@ -7,12 +7,15 @@ Tất cả các thay đổi quan trọng theo từng phiên bản phát hành c�
 ### 🚀 Chuẩn Hóa Báo Lỗi Module Độc Lập & Triệt Tiêu Chồng Lấn (Anti-Cascade Alarm Matrix)
 - **Định danh nguồn gốc lỗi theo từng module (`source_id` 1..8):**
   - Mã hóa `source_id` vào byte cao của trường `code` (16-bit) trong `AlarmLogEntry_t`.
-  - Tự động bổ sung hậu tố ` [M1]`..` [M8]` vào chuỗi thông báo lỗi UTF-16 tiếng Việt hiển thị trên màn hình DWIN (ví dụ `W010: Mất giao tiếp [M2]`), bảo toàn wire size 8 bytes giao tiếp.
+  - **Trạm 1 module (`mod_total_count == 1`):** Báo lỗi hoàn toàn như bình thường, giữ nguyên text thuần Việt tiêu chuẩn (ví dụ: `W010: Mất giao tiếp bộ sạc`), không hiển thị hậu tố `[M1]` để tránh gây hiểu nhầm khi trạm chỉ có 1 module.
+  - **Trạm đa module song song (`mod_total_count > 1`):** Tự động bổ sung hậu tố ` [M1]`..` [M8]` vào chuỗi thông báo lỗi UTF-16 tiếng Việt trên màn hình DWIN (ví dụ: `W010: Mất giao tiếp bộ sạc [M2]`), bảo toàn wire size 8 bytes giao tiếp.
 - **Hoàn thiện 7 cây triệt tiêu lỗi gốc (Root-cause Cascade Suppression Trees):**
   - Mất điện lưới AC (`W011`) triệt tiêu lỗi PFC (`E015`), lỗi phần cứng module do xả tụ (`E010`), và mất kết nối module (`W010`).
   - Rút giắc sạc nóng khi đang tải (`E023`) triệt tiêu lỗi mất BMS CAN (`E021`) và không có áp pack (`E022`).
   - BMS hạ dòng do quá nhiệt (`E005`) triệt tiêu lỗi mất tải DC (`E023`).
   - Chế độ chờ sạc (`IDLE`) cho phép xe đi ngủ sâu cả năm mà không báo lỗi giả mất kết nối BMS (`E021`).
+- **Đồng bộ hóa toàn bộ tài liệu kỹ thuật hệ thống:**
+  - Cập nhật `BANG_MA_LOI_HE_THONG_.md`, `MULTI_MODULE_PARALLEL_AND_ALARM_SPEC.md` và `TAI_LIEU_KY_THUAT_THONG_SO_VA_LOGIC_SAC.md` đồng nhất chuẩn V2.0.22.
 
 ### 🛡️ Nâng Cấp Kiến Trúc Phần Mềm & Loại Bỏ Hoàn Toàn Rò Rỉ Trạng Thái FSM
 - **Phân tầng kiến trúc một chiều nghiêm ngặt (Zero Architecture Violations):**

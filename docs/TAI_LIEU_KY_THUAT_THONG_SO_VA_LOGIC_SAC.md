@@ -407,7 +407,17 @@ Khi số lượng module hoạt động thực tế $N_{\text{actual}}$ thay đ�
 4. **Bảo vệ chống mất toàn bộ nguồn ($N_{\text{actual}} = 0$):**
    - Áp dụng bộ lọc debounce **10.000ms (10 giây)** để lọc sạch các trường hợp đứt truyền thông thoáng qua. Sau 10s vẫn là 0 module $\rightarrow$ Ngắt an toàn `E027`.
 
-### 8.2 Quy chuẩn Phần cứng Bắt buộc (Single-Vendor Policy)
+### 8.2 Hành vi Phân hệ Cảnh báo: Trạm Đơn (1 Module) vs Trạm Song Song (Đa Module)
+1. **Hệ thống Trạm sạc đơn (1 Module - `source_module_count == 1`):**
+   - **Báo lỗi như bình thường**: `source_id = 0` (`ALARM_SOURCE_STATION`).
+   - Màn hình DWIN và PC hiển thị tên lỗi nguyên bản thuần Việt (ví dụ: `W010: Mất giao tiếp bộ sạc`, `E011: Nhiệt độ bộ sạc cao`), **tuyệt đối không hiển thị thêm hậu tố `[M1]`**.
+   - Hành vi bảo vệ: Module gặp sự cố $\rightarrow$ $N_{\text{active}} = 0$ $\rightarrow$ Trạm ngắt sạc (STOP / ESTOP) ngay lập tức, bảo vệ an toàn toàn diện cho trạm và pin xe.
+2. **Hệ thống Trạm sạc song song ($N \ge 2$ - `source_module_count > 1`):**
+   - **Định danh nguồn gốc lỗi theo từng module**: `source_id = 1..8`.
+   - Màn hình DWIN tự động gắn thêm hậu tố ` [M1]`, ` [M2]`, ..., ` [M8]` vào cuối chuỗi text chi tiết của lỗi (ví dụ: `W010: Mất giao tiếp bộ sạc [M2]`, `E011: Nhiệt độ bộ sạc cao [M1]`).
+   - Giáng cấp hành vi (Dynamic Action Demotion): Khi còn ít nhất 1 module lành ($N_{\text{active}} \ge 1$), các lỗi cục bộ của module hỏng được chuyển về cấp `INFO`, trạm sạc tự động chia lại tải và tiếp tục sạc ở chế độ dự phòng Degraded Mode mà không bị dừng ngắt.
+
+### 8.3 Quy chuẩn Phần cứng Bắt buộc (Single-Vendor Policy)
 
 > [!CAUTION] **QUY CHUẨN LẮP ĐẶT PHẦN CỨNG BẮT BUỘC:**
 > Các module ghép song song trong cùng một tủ trạm sạc **BẮT BUỘC PHẢI CÙNG MỘT HÃNG SẢN XUẤT** (Toàn bộ là TonHe, hoặc toàn bộ là LianMing, hoặc toàn bộ là Maxwell), và khuyến nghị cùng model/công suất. **TUYỆT ĐỐI KHÔNG CẮM LẪN CÁC HÃNG KHÁC NHAU (VÍ DỤ 1 TONHE + 1 LIANMING).**

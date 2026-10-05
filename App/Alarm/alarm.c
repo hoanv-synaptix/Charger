@@ -817,11 +817,12 @@ static void run_debounce(uint32_t now, const AlarmInputs_t *in, AlarmEdgeTally_t
                                  : ALARM_DB_HW_FAULT_ACTIVE_SET_MS;
                 }
 
+                uint8_t src_id = (in->mod_total_count > 1U) ? (uint8_t)(m + 1U) : ALARM_SOURCE_STATION;
                 if (m_raw) {
                     if (m_rt->latched) m_rt->latched = false;
                     if (!m_rt->active && held >= set_ms) {
                         m_rt->active = true;
-                        log_edge(now, sp->code, get_effective_action(sp, in), true, (uint8_t)(m + 1U));
+                        log_edge(now, sp->code, get_effective_action(sp, in), true, src_id);
 #if defined(CHG_ENABLE_LOG) && (CHG_ENABLE_LOG != 0)
                         if (tally->raised++ == 0U) tally->first_raised_desc = sp->desc;
 #else
@@ -834,7 +835,7 @@ static void run_debounce(uint32_t now, const AlarmInputs_t *in, AlarmEdgeTally_t
                             m_rt->latched = true;
                         } else {
                             m_rt->active = false;
-                            log_edge(now, sp->code, get_effective_action(sp, in), false, (uint8_t)(m + 1U));
+                            log_edge(now, sp->code, get_effective_action(sp, in), false, src_id);
 #if defined(CHG_ENABLE_LOG) && (CHG_ENABLE_LOG != 0)
                             if (tally->cleared++ == 0U) tally->first_cleared_desc = sp->desc;
 #else

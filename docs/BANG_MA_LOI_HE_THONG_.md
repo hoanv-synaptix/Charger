@@ -112,15 +112,25 @@ Hệ thống quản trị và ghi nhật ký lỗi (Alarm Logging Subsystem) đ�
 
 ### 5.2 Cấu trúc Bản ghi Nhật ký (`AlarmLogEntry_t`)
 
-Mỗi sự kiện cảnh báo được nén thành một cấu trúc nhị phân 8 bytes lưu trữ:
+Mỗi sự kiện cảnh báo được nén thành một cấu trúc nhị phân 8 bytes lưu trữ (đảm bảo wire-format và kích thước flash không đổi):
 
 | Trường dữ liệu | Kiểu dữ liệu | Kích thước | Mô tả chi tiết |
 | :--- | :--- | :---: | :--- |
 | `uptime_ms` | `uint32_t` | 4 bytes | Thời gian hoạt động của MCU tính từ lúc khởi động (đơn vị: mili-giây). |
-| `code` | `uint16_t` | 2 bytes | Mã định danh lỗi (Enum `AlarmCode_t`), ánh xạ trực tiếp sang `E001`..`E032`, `W001`..`W011`. |
+| `code` | `uint16_t` | 2 bytes | **Mã nén 16-bit (Mã lỗi + Định danh nguồn)**:<br>• **Bit 0..7 (`AlarmCode_t`)**: Mã định danh lỗi (`E001`..`E032`, `W001`..`W011`). Macro: `ALARM_LOG_CODE_BASE(c)`.<br>• **Bit 8..15 (`source_id`)**: Nguồn gốc lỗi (`0` = Trạm/BMS/Hệ thống hoặc Trạm đơn 1 module; `1..8` = Module 1 đến Module 8 khi trạm chạy song song). Macro: `ALARM_LOG_CODE_SOURCE(c)`. |
 | `action` | `uint8_t` | 1 byte | Cấp hành vi xử lý sự cố (`0`: NONE, `1`: INFO, `2`: STOP, `3`: ESTOP). |
 | `event` | `uint8_t` | 1 byte | Trạng thái chuyển đổi: `1` = **XUẤT HIỆN LỖI (RAISED)**, `0` = **XÓA/HẾT LỖI (CLEARED)**. |
 | `timestamp` *(phụ)* | `uint32_t` | 4 bytes | Thời gian thực Epoch (giây kể từ 1970) lấy từ chip RTC ngoại (DS3231/STM32 RTC). Nếu RTC chưa sync, giá trị là 0. |
+
+> [!NOTE] **Quy tắc hiển thị mã lỗi và định danh Module trên HMI DWIN (`dwin_alarm_text.c`):**
+> - **Trường hợp Trạm sạc đơn (1 module - `mod_total_count == 1`):**
+>   - Báo lỗi **hoàn toàn như bình thường**: `source_id = 0` (`ALARM_SOURCE_STATION`).
+>   - Bảng nhật ký và Topbar hiển thị mô tả tiếng Việt nguyên bản tiêu chuẩn (ví dụ: `W010: Mất giao tiếp bộ sạc`, `E011: Nhiệt độ bộ sạc cao`), **tuyệt đối không hiển thị thêm hậu tố `[M1]`** nhằm tránh gây bối rối cho người dùng khi máy chỉ có duy nhất 1 module.
+>   - Về mặt an toàn: Module lỗi $\rightarrow$ $N_{\text{active}} = 0$ $\rightarrow$ Trạm thực hiện ngắt STOP / ESTOP ngay lập tức như trạm sạc đơn truyền thống.
+> - **Trường hợp Trạm sạc song song đa module ($N \ge 2$ - `mod_total_count > 1`):**
+>   - Khi một module $k$ gặp sự cố ($k = 1..8$): `source_id = k`.
+>   - Bảng nhật ký DWIN tự động nối thêm hậu tố định danh vào cuối chuỗi text chi tiết: ` [M1]`, ` [M2]`, ..., ` [M8]` (ví dụ: `W010: Mất giao tiếp bộ sạc [M2]`, `E011: Nhiệt độ bộ sạc cao [M1]`).
+>   - Cho phép người vận hành và kỹ thuật viên bảo trì biết chính xác vị trí khay/module vật lý đang gặp trục trặc để xử lý độc lập.
 
 ### 5.3 Nguyên tắc Ghi Log theo Sườn (Edge-Triggered Logging)
 
@@ -203,12 +213,19 @@ Khi có sự cố rớt module hoặc lệch số lượng module ($N_{\text{act
 
 ### 6.2 Cơ chế Giáng Cấp Hành Vi Báo Động (Alarm Action Demotion)
 
-Khi trạm vận hành ở chế độ đa module:
-- Các mã lỗi bảo vệ nội bộ của module gồm: `E010` (Lỗi phần cứng), `E011` (Quá nhiệt module), `E014` (Quá dòng module), `E015` (Lỗi khối nguồn PFC), `E016` (Lỗi quạt làm mát), `E017` (Quá áp AC đầu vào).
-- **Quy tắc phân cấp (`get_effective_action`):**
-  - Khi $N_{\text{active}} \ge 1$ (còn ít nhất 1 module bình thường): Hành vi xử lý của các mã lỗi trên được **giáng cấp từ `ALARM_ACT_STOP` xuống `ALARM_ACT_INFO`**. Trạm sạc loại bỏ module hỏng, phân bổ lại dòng cho các module lành và **tiếp tục phiên sạc mà không bị ngắt quãng**. Màn hình HMI hiển thị cảnh báo tương ứng.
-  - Khi $N_{\text{active}} = 0$ (toàn bộ module đều lỗi/hỏng): Hành vi tự động phục hồi về **`ALARM_ACT_STOP`** để ngắt relay và bảo vệ trạm.
-  - Các lỗi nghiêm trọng đe dọa cháy nổ ngõ ra DC (`E012` Quá áp DC, `E013` Ngắn mạch DC) luôn giữ nguyên cấp **`ALARM_ACT_ESTOP`** trong mọi tình huống.
+Hệ thống xử lý thông minh dựa trên số lượng module thực tế còn hoạt động:
+
+1. **Đối với hệ thống Trạm sạc đơn (1 Module - `mod_total_count == 1`):**
+   - Không áp dụng giáng cấp hành vi: Khi module duy nhất bị sự cố (bảo vệ quá nhiệt, quá dòng, mất pha, hỏng phần cứng hoặc mất kết nối CAN), số module lành $N_{\text{active}}$ tụt về 0.
+   - Trạm sạc **dừng sạc ngay lập tức (STOP / ESTOP)**, ngắt rơ-le và báo động như trạm sạc đơn tiêu chuẩn ("hoàn toàn như bình thường").
+   - Text hiển thị trên màn hình DWIN giữ nguyên định dạng chuẩn, không có hậu tố `[M1]`.
+
+2. **Đối với hệ thống Trạm sạc song song đa module ($N \ge 2$ - `mod_total_count > 1`):**
+   - Các mã lỗi bảo vệ nội bộ của từng module gồm: `E010` (Lỗi phần cứng), `E011` (Quá nhiệt module), `E014` (Quá dòng module), `E015` (Lỗi khối nguồn PFC), `E016` (Lỗi quạt làm mát), `E017` (Quá áp AC đầu vào).
+   - **Quy tắc phân cấp động (`get_effective_action`):**
+     - Khi $N_{\text{active}} \ge 1$ (vẫn còn ít nhất 1 module lành hoạt động): Hành vi xử lý của các mã lỗi trên được **giáng cấp từ `ALARM_ACT_STOP` xuống `ALARM_ACT_INFO`**. Trạm sạc cách ly module hỏng, phân bổ lại dòng cho các module lành và **tiếp tục phiên sạc ở chế độ suy giảm (Degraded Mode) mà không bị ngắt quãng**. Màn hình HMI hiển thị cảnh báo kèm đích danh module `[Mk]` (ví dụ: `E011: Nhiệt độ bộ sạc cao [M2]`).
+     - Khi $N_{\text{active}} = 0$ (toàn bộ module đều lỗi/hỏng): Hành vi tự động phục hồi về **`ALARM_ACT_STOP`** để ngắt relay và bảo vệ trạm.
+     - Các lỗi nghiêm trọng đe dọa cháy nổ ngõ ra DC (`E012` Quá áp DC, `E013` Ngắn mạch DC): Luôn kiểm tra áp bus tổng. Nếu là ngắn mạch thật hoặc quá áp bus thật thì giữ nguyên cấp **`ALARM_ACT_ESTOP`** trong mọi tình huống. Nếu chỉ là lỗi đo giả của riêng module đang chết trong khi các module khác bình thường thì giáng cấp về `INFO`.
 
 ### 6.3 Quy chuẩn Kỹ thuật Bắt buộc về Chủng loại Module Sạc (Single-Vendor Hardware Policy)
 

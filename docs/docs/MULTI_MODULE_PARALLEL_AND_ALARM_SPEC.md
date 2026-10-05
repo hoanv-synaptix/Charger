@@ -83,6 +83,22 @@ Bất kể đang chạy bao nhiêu module, các lỗi ảnh hưởng trực ti�
 * `E027`: Mất toàn bộ module sạc (`ALARM_CTRL_NO_MODULE`, $N_{active} = 0$) -> Khóa Start.
 * `E003`, `E004`, `E007`: Quá áp/quá dòng pin phía BMS -> **`ALARM_ACT_STOP`**.
 
+### 2.3. Cơ Chế Định Danh Nguồn Lỗi & Hiển Thị Đích Danh Module (Per-Module Fault Identification)
+
+Phân hệ cảnh báo hỗ trợ mã hóa nguồn gốc lỗi (`source_id`) trực tiếp vào 16-bit log code (`AlarmLogEntry_t.code`):
+* **Hệ thống 1 Module (`source_module_count == 1`):**
+  * Báo lỗi **như bình thường**: `source_id = 0` (`ALARM_SOURCE_STATION`).
+  * Text hiển thị trên màn hình DWIN giữ nguyên dạng chuẩn (ví dụ: `W010: Mất giao tiếp bộ sạc`, `E011: Nhiệt độ bộ sạc cao`), không có hậu tố `[M1]`.
+  * Khi module gặp sự cố, trạm lập tức ngắt sạc an toàn (STOP / ESTOP) vì không còn module nào gánh tải.
+* **Hệ thống Đa Module Song Song (`source_module_count >= 2`):**
+  * Khi module thứ $k$ ($k = 1..8$) gặp lỗi: `source_id = k`.
+  * Màn hình DWIN tự động nối thêm hậu tố định danh vào text lỗi: ` [M1]`, ` [M2]`, ..., ` [M8]` (ví dụ: `W010: Mất giao tiếp bộ sạc [M2]`).
+  * Cho phép người vận hành xác định chính xác module vật lý gặp sự cố để bảo trì, thay thế mà không làm gián đoạn phiên sạc của các module còn lại.
+
+### 2.4. Phương Thức Chia Dòng Giữa Các Module (Current Sharing Method)
+* **Phương thức vận hành**: Hệ thống sử dụng cơ chế **MCU Centralized Load Balancing** ($I_{\text{target\_per\_mod}} = I_{\text{BMS}} / N_{\text{active}}$) chu kỳ 20ms thay vì phụ thuộc tính năng share dòng tự động qua CAN nội bộ của hãng (vốn không khả thi do thiếu đường chia dòng analog hoặc xung đột vai trò Master giữa các bộ sạc).
+* **Đặc tính an toàn**: MCU liên tục giám sát trạng thái từng module, nếu 1 module ngắt kết nối hoặc lỗi, MCU lập tức tính toán lại tải và tái phân bổ ngay cho các module còn lại trong vòng 20ms.
+
 ---
 
 ## 3. Bảng Danh Mục 31 Mã Cảnh Báo & Bảo Vệ Hệ Thống (Alarm Catalog)
