@@ -2,6 +2,23 @@
 
 Tất cả các thay đổi quan trọng theo từng phiên bản phát hành của hệ thống Charger Firmware và Tool điều khiển.
 
+## [V2.0.24] - 2026-10-06
+
+### 🚀 Nâng Cấp Senior Thuật Toán Sai Sạc E032 Xét 2 Chiều & Bảo Vệ Phần Cứng Tức Thời
+- **Bảo vệ phần cứng tức thời chống xả ngược (Physical Back-Feed Protection - $V_{\text{batt}} > V_{\max} + 2.0\text{V}$):**
+  - Giải quyết triệt để ca test của khách hàng khi cài $V_{\max} = 50.0\text{V}$ nhưng cắm vào khối pin $V_{\text{batt}} = 56.8\text{V}$ (bộ sạc áp nhỏ cắm vào khối pin áp lớn hơn).
+  - Ngay khi phát hiện điện áp pin vượt trần sạc quá $2.0\text{V}$ (bù trừ sai số ADC $\pm 0.5\text{V}$), trạm sạc kích hoạt ngay lập tức **`E032: ALARM_BMS_VOLT_MISMATCH`**, khoá đóng relay ngắt dòng triệt để, bảo vệ an toàn 100% tụ điện và diode của bộ sạc khỏi xung dòng xả ngược.
+- **Tách biệt danh định bất đối xứng theo hệ danh định (Asymmetric Nominal Separation):**
+  - **Chiều sạc lớn cắm pin nhỏ ($V_{\max} \gg V_{\text{req}}$):** $\Delta V \ge \max(12.0\text{V}, \, 18\% \times V_{\max})$ $\rightarrow$ Kích hoạt `E032` để chống phồng nổ cell pin do bơm quá áp.
+  - **Chiều sạc nhỏ cắm pin lớn khi pin cạn ($V_{\text{req}} \gg V_{\max}$):** $\Delta V \ge \max(10.0\text{V}, \, 15\% \times V_{\max})$ $\rightarrow$ Kích hoạt `E032` nếu chênh lệch cấp hệ danh định rõ rệt.
+  - **Hỗ trợ sạc bảo quản / sạc non cho pin 32S:** Khách hàng cài trần $113.0\text{V}$ cho pin 32S ($V_{\text{batt}} = 112.0\text{V}$, BMS xin $116.8\text{V}$) hoạt động hoàn hảo, không còn hiện tượng báo lỗi ảo `E032` do độ lệch $3.8\text{V} < 16.95\text{V}$ nằm hoàn toàn trong dải an toàn cho phép.
+- **Phân định minh bạch chuẩn mực kiến trúc:**
+  - `E003: Quá áp pin`: Phản chiếu (Mirror) trực tiếp từ cờ báo động phần cứng của BMS (`0x07F4`) khi cell pin gặp sự cố nội bộ.
+  - `E032: Sai sạc`: Thuật toán độc lập của Trạm sạc đối chiếu 2 chiều thông số giữa Trạm và Pin.
+- **Kiểm thử tự động:**
+  - Mở rộng test case `test_bms_volt_mismatch_e032` trong `test/host_alarm_sim/test_alarm_e2e.c` mô phỏng đầy đủ ca test 50V vs 56.8V và pin 32S 113V vs 112V.
+  - Bộ Local CI 10/10 Stages PASS 100%.
+
 ## [V2.0.23] - 2026-10-06
 
 ### 🚀 Chuẩn Hóa Toàn Diện Thuật Toán Lỗi Nhầm Sạc E032 (ALARM_BMS_VOLT_MISMATCH)

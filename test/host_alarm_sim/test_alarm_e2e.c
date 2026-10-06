@@ -1480,23 +1480,25 @@ static bool test_bms_volt_mismatch_e032(void)
     ASSERT(!alarm_active(ALARM_BMS_VOLT_MISMATCH), "matching voltage must not trip E032");
 
     /* ------------------------------------------------------------------
-     * Part 1: High-voltage ESS battery test (Vmax = 500V -> threshold = 16% * 500 = 80V)
+     * Part 1: High-voltage ESS battery test (Vmax = 500V)
+     * Thresh over = max(12V, 18% * 500 = 90V)
+     * Thresh under = max(10V, 15% * 500 = 75V)
      * ------------------------------------------------------------------ */
 
-    /* Derating / storage charge in high-voltage system (< 80V, e.g. 450V vs 500V -> diff 50V) must NOT trip E032 */
+    /* Derating / storage charge in high-voltage system (< 75V, e.g. 450V vs 500V -> diff 50V) must NOT trip E032 */
     g_sim_bms.chg_volt_request_v = 450.0f;
     feed_chg_request(450.0f, 50.0f);
     drive_ms(1500U);
-    ASSERT(!alarm_active(ALARM_BMS_VOLT_MISMATCH), "10% derating (50V < 80V) in 500V system must not trip E032");
+    ASSERT(!alarm_active(ALARM_BMS_VOLT_MISMATCH), "10% derating (50V < 75V) in 500V system must not trip E032");
 
-    /* Cross-system mismatch via chg_volt_request (e.g. 600.0V vs 500.0V -> 100V >= 80V) */
+    /* Cross-system mismatch via chg_volt_request (e.g. 600.0V vs 500.0V -> 100V >= 75V under-threshold) */
     g_sim_bms.chg_volt_request_v = 600.0f;
     feed_chg_request(600.0f, 50.0f);
     drive_ms(500U); /* < 1000ms debounce */
     ASSERT(!alarm_active(ALARM_BMS_VOLT_MISMATCH), "debounce < 1000ms must not trip E032");
 
     drive_ms(600U); /* total 1100ms > 1000ms debounce */
-    ASSERT(alarm_active(ALARM_BMS_VOLT_MISMATCH), "mismatch >= 16% (100V >= 80V) after 1000ms must trip E032");
+    ASSERT(alarm_active(ALARM_BMS_VOLT_MISMATCH), "mismatch >= 15% (100V >= 75V) after 1000ms must trip E032");
 
     AlarmView_t av;
     Alarm_GetView(&av);
@@ -1509,11 +1511,11 @@ static bool test_bms_volt_mismatch_e032(void)
     drive_ms(600U);
     ASSERT(!alarm_active(ALARM_BMS_VOLT_MISMATCH), "E032 must clear after recovery");
 
-    /* Reverse physical back-feed protection via pack_voltage (pack 600V vs station 500V -> 100V >= 80V) */
-    g_sim_bms.pack_voltage_v = 600.0f;
+    /* Reverse physical back-feed protection via pack_voltage (pack 503V vs station 500V -> 3.0V > 2.0V margin) */
+    g_sim_bms.pack_voltage_v = 503.0f;
     feed_chg_request(500.0f, 50.0f);
     drive_ms(1100U);
-    ASSERT(alarm_active(ALARM_BMS_VOLT_MISMATCH), "live battery back-feed delta >= 80V must trip E032");
+    ASSERT(alarm_active(ALARM_BMS_VOLT_MISMATCH), "live battery back-feed delta > 2.0V must trip E032");
 
     /* Restore normal battery voltage */
     g_sim_bms.pack_voltage_v = 400.0f;
@@ -1521,7 +1523,8 @@ static bool test_bms_volt_mismatch_e032(void)
     ASSERT(!alarm_active(ALARM_BMS_VOLT_MISMATCH), "E032 must clear when battery voltage back in range");
 
     /* ------------------------------------------------------------------
-     * Part 2: Low-voltage pack test (48V LFP system: Vmax = 50V -> 16%*50 = 8V < 10V floor -> threshold = 10.0V)
+     * Part 2: Customer Test Case 1 - 50V Station with 56.8V Battery (Small Charger on Big Battery)
+     * Vmax = 50.0V, Vbatt = 56.8V > 50.0V + 2.0V = 52.0V -> MUST trip E032!
      * ------------------------------------------------------------------ */
     ChargeCycleConfig_t cfg_lv;
     ChargeCycleConfig_Get(&cfg_lv);
@@ -1529,22 +1532,42 @@ static bool test_bms_volt_mismatch_e032(void)
     cfg_lv.vmin_v = 40.0f;
     ChargeCycleConfig_Set(&cfg_lv);
 
-    /* Storage charge 50V for 16S LFP pack demanding 58.4V (diff = 8.4V < 10V floor) must NOT trip E032 */
-    g_sim_bms.chg_volt_request_v = 58.4f;
-    g_sim_bms.pack_voltage_v = 45.0f;
-    feed_chg_request(58.4f, 50.0f);
-    drive_ms(1500U);
-    ASSERT(!alarm_active(ALARM_BMS_VOLT_MISMATCH), "storage charge (diff 8.4V < 10V floor) must not trip E032");
-
-    /* Reverse back-feed: 72V pack (75V live) plugged into 48V station configured at 50V (diff = 25V >= 10V floor) */
-    g_sim_bms.pack_voltage_v = 75.0f;
+    g_sim_bms.pack_voltage_v = 56.8f;
+    g_sim_bms.chg_volt_request_v = 56.8f;
+    feed_chg_request(56.8f, 20.0f);
     drive_ms(1100U);
-    ASSERT(alarm_active(ALARM_BMS_VOLT_MISMATCH), "72V pack plugged into 50V station must trip E032");
+    ASSERT(alarm_active(ALARM_BMS_VOLT_MISMATCH), "50V station with 56.8V battery MUST trip E032 (Customer Case 1)");
 
-    /* Restore safe pack voltage */
-    g_sim_bms.pack_voltage_v = 45.0f;
+    /* Restore safe pack voltage for 48V system */
+    g_sim_bms.pack_voltage_v = 48.0f;
+    g_sim_bms.chg_volt_request_v = 50.0f;
+    feed_chg_request(50.0f, 20.0f);
     drive_ms(600U);
-    ASSERT(!alarm_active(ALARM_BMS_VOLT_MISMATCH), "E032 must clear when back in safe 48V range");
+    ASSERT(!alarm_active(ALARM_BMS_VOLT_MISMATCH), "E032 must clear when 48V battery in range");
+
+    /* ------------------------------------------------------------------
+     * Part 3: Customer Test Case 2 - 32S Battery configured at 113V, live 112V (Storage / Derating charge)
+     * Vmax = 113.0V, Vbatt = 112.0V <= Vmax, Vreq = 116.8V (LFP 32S full)
+     * Delta req = 116.8 - 113.0 = 3.8V < thresh_under (max(10V, 15%*113 = 16.95V))
+     * MUST NOT trip E032!
+     * ------------------------------------------------------------------ */
+    ChargeCycleConfig_t cfg_32s;
+    ChargeCycleConfig_Get(&cfg_32s);
+    cfg_32s.vmax_v = 113.0f;
+    cfg_32s.vmin_v = 90.0f;
+    ChargeCycleConfig_Set(&cfg_32s);
+
+    g_sim_bms.pack_voltage_v = 112.0f;
+    g_sim_bms.chg_volt_request_v = 116.8f;
+    feed_chg_request(116.8f, 30.0f);
+    drive_ms(1500U);
+    ASSERT(!alarm_active(ALARM_BMS_VOLT_MISMATCH), "32S battery (112V live, 116.8V req) on 113V station must NOT trip E032 (Customer Case 2)");
+
+    /* But plugging 32S battery into 72V station (Vmax = 84V, Vreq = 116.8V -> delta 32.8V >= 12.6V) MUST trip E032 */
+    cfg_32s.vmax_v = 84.0f;
+    ChargeCycleConfig_Set(&cfg_32s);
+    drive_ms(1100U);
+    ASSERT(alarm_active(ALARM_BMS_VOLT_MISMATCH), "32S battery into 72V station (84V Vmax) MUST trip E032");
 
     printf("[PASS] test_bms_volt_mismatch_e032\n");
     return true;

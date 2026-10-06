@@ -564,27 +564,34 @@ static bool ev_bms_volt_mismatch(const AlarmInputs_t *in, uint32_t param) {
     if (in->cfg_source_mode != CHARGE_SOURCE_BMS_CONTROLLED) return false;
     if (in->cfg_vmax_v <= 10.0f) return false;
 
-    /* Dynamic cross-system mismatch threshold:
-     * - Minimum floor: 10.0V (protects 12V-48V pack storage / derating margin up to 14.4%).
-     * - Dynamic scaling: 16% of Vmax for higher-voltage battery banks (72V, 96V, and 300V-500V ESS).
-     * Strictly bounded within the 14.4% (storage charge limit) to 20.0% (adjacent system separation) band. */
-    float thresh_v = in->cfg_vmax_v * 0.16f;
-    if (thresh_v < 10.0f) {
-        thresh_v = 10.0f;
+    /* 1. Hardware Reverse Back-Feed Protection (Sạc nhỏ cắm pin lớn):
+     * If battery terminal voltage already exceeds charger ceiling by > 2.0V,
+     * charger cannot supply current and closing relay risks reverse diode/bus breakdown. */
+    if (in->bms.batt_voltage > 10.0f &&
+        in->bms.batt_voltage > (in->cfg_vmax_v + 2.0f)) {
+        return true;
     }
 
-    /* 1. Cross-system mismatch via BMS charge voltage request */
+    /* 2. System Level Nominal Separation (Chống cắm nhầm hệ sạc):
+     * - Charger ceiling much higher than battery request (Sạc lớn cắm pin nhỏ):
+     *   Vmax - Vreq >= max(12.0V, 18% * Vmax)
+     * - Charger ceiling much lower than battery request (Sạc nhỏ cắm pin lớn khi pin cạn):
+     *   Vreq - Vmax >= max(10.0V, 15% * Vmax) */
     if (in->bms.chg_volt_request > 10.0f) {
-        float diff = fabsf(in->bms.chg_volt_request - in->cfg_vmax_v);
-        if (diff >= thresh_v) {
-            return true;
-        }
-    }
+        float thresh_over = in->cfg_vmax_v * 0.18f;
+        if (thresh_over < 12.0f) thresh_over = 12.0f;
 
-    /* 2. Physical hardware protection against high-voltage battery reverse back-feed */
-    if (in->bms.batt_voltage > 10.0f) {
-        if ((in->bms.batt_voltage - in->cfg_vmax_v) >= thresh_v) {
-            return true;
+        float thresh_under = in->cfg_vmax_v * 0.15f;
+        if (thresh_under < 10.0f) thresh_under = 10.0f;
+
+        if (in->cfg_vmax_v > in->bms.chg_volt_request) {
+            if ((in->cfg_vmax_v - in->bms.chg_volt_request) >= thresh_over) {
+                return true;
+            }
+        } else {
+            if ((in->bms.chg_volt_request - in->cfg_vmax_v) >= thresh_under) {
+                return true;
+            }
         }
     }
 
