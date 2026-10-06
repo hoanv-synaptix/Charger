@@ -1120,8 +1120,16 @@ static void update_hard_protection(const ChargeCycleConfig_t *cfg,
 
         /* Suppress jack V protect if voltage mismatch (E032) is detected */
         bool volt_mismatch = false;
-        if (bms->online && bms->chg_volt_request > 10.0f && cfg->vmax_v > 10.0f) {
-            if (fabsf(bms->chg_volt_request - cfg->vmax_v) > 2.0f) {
+        if (bms->online && cfg->vmax_v > 10.0f) {
+            float thresh_v = cfg->vmax_v * 0.16f;
+            if (thresh_v < 10.0f) {
+                thresh_v = 10.0f;
+            }
+            if (bms->chg_volt_request > 10.0f &&
+                fabsf(bms->chg_volt_request - cfg->vmax_v) >= thresh_v) {
+                volt_mismatch = true;
+            } else if (bms->batt_voltage > 10.0f &&
+                       (bms->batt_voltage - cfg->vmax_v) >= thresh_v) {
                 volt_mismatch = true;
             }
         }

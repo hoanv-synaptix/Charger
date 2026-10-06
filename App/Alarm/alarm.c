@@ -562,9 +562,33 @@ static bool ev_bms_volt_mismatch(const AlarmInputs_t *in, uint32_t param) {
     (void)param;
     if (!in->bms.online) return false;
     if (in->cfg_source_mode != CHARGE_SOURCE_BMS_CONTROLLED) return false;
-    if (in->bms.chg_volt_request <= 10.0f || in->cfg_vmax_v <= 10.0f) return false;
-    float diff = fabsf(in->bms.chg_volt_request - in->cfg_vmax_v);
-    return (diff > 2.0f);
+    if (in->cfg_vmax_v <= 10.0f) return false;
+
+    /* Dynamic cross-system mismatch threshold:
+     * - Minimum floor: 10.0V (protects 12V-48V pack storage / derating margin up to 14.4%).
+     * - Dynamic scaling: 16% of Vmax for higher-voltage battery banks (72V, 96V, and 300V-500V ESS).
+     * Strictly bounded within the 14.4% (storage charge limit) to 20.0% (adjacent system separation) band. */
+    float thresh_v = in->cfg_vmax_v * 0.16f;
+    if (thresh_v < 10.0f) {
+        thresh_v = 10.0f;
+    }
+
+    /* 1. Cross-system mismatch via BMS charge voltage request */
+    if (in->bms.chg_volt_request > 10.0f) {
+        float diff = fabsf(in->bms.chg_volt_request - in->cfg_vmax_v);
+        if (diff >= thresh_v) {
+            return true;
+        }
+    }
+
+    /* 2. Physical hardware protection against high-voltage battery reverse back-feed */
+    if (in->bms.batt_voltage > 10.0f) {
+        if ((in->bms.batt_voltage - in->cfg_vmax_v) >= thresh_v) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 /* ============== Inputs gather ============== */

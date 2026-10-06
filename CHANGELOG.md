@@ -2,6 +2,20 @@
 
 Tất cả các thay đổi quan trọng theo từng phiên bản phát hành của hệ thống Charger Firmware và Tool điều khiển.
 
+## [V2.0.23] - 2026-10-06
+
+### 🚀 Chuẩn Hóa Toàn Diện Thuật Toán Lỗi Nhầm Sạc E032 (ALARM_BMS_VOLT_MISMATCH)
+- **Công thức động co giãn theo cấp điện áp ($\Delta V_{\text{thresh}} = \max(10.0\text{V}, \, 16\% \times V_{\max})$):**
+  - **Sàn cứng 10.0V:** Bảo vệ biên độ sạc lưu kho ($30\% - 50\%$ SOC theo tiêu chuẩn vận chuyển UN38.3) cho các pack pin 12V - 48V. Khách hàng cài $V_{\max} = 50.0\text{V}$ cho pack 16S LFP 280Ah ($V_{\text{req}} = 58.4\text{V}$, lệch $8.4\text{V} < 10.0\text{V}$) sạc mượt mà, triệt tiêu 100% báo lỗi oan `E032`.
+  - **Tỷ lệ 16% động:** Tự động co giãn thích ứng hoàn hảo cho mọi hệ pack pin cao áp (72V, 96V, và 300V - 500V ESS). Nằm chuẩn xác trong vùng ngăn cách an toàn điện hóa ($14.4\% \rightarrow 20.0\%$).
+- **Cơ chế bảo vệ 2 chiều độc lập (Bảo vệ pin & Bảo vệ tủ sạc):**
+  - **Chiều 1 (Bảo vệ pin):** Sạc áp cao cắm pin áp thấp ($|V_{\text{req\_bms}} - V_{\max}| \ge \Delta V_{\text{thresh}}$) $\rightarrow$ Ngắt an toàn `ALARM_ACT_STOP`, dập dòng và mở relay chống phồng nổ cell pin.
+  - **Chiều 2 (Bảo vệ tủ sạc):** Sạc áp thấp cắm pin cao áp ($V_{\text{batt}} - V_{\max} \ge \Delta V_{\text{thresh}}$ hoặc $V_{\text{req}} - V_{\max} \ge \Delta V_{\text{thresh}}$) $\rightarrow$ Kích hoạt `E032` ngay tức thì, khoá relay ngăn ngừa dòng xả ngược từ pin cao áp làm nổ tụ và diode ngõ ra module.
+- **Đồng bộ hóa toàn bộ hệ thống:**
+  - Đồng bộ logic kiểm tra giữa `App/Alarm/alarm.c` và `App/Charge/charge_controller.c`.
+  - Mở rộng bộ test case `test_bms_volt_mismatch_e032` trong `test/host_alarm_sim/test_alarm_e2e.c` bao quát cả miền cao áp (500V) và miền hạ áp (48V).
+  - Cập nhật tài liệu kỹ thuật `Docs/BANG_MA_LOI_HE_THONG_.md` và bảng thông số `Docs/BANG_MA_LOI_HE_THONG.xlsx`.
+
 ## [V2.0.22] - 2026-10-05
 
 ### 🚀 Chuẩn Hóa Báo Lỗi Module Độc Lập & Triệt Tiêu Chồng Lấn (Anti-Cascade Alarm Matrix)

@@ -9,8 +9,8 @@
 /* Firmware Version */
 #define FW_VERSION_MAJOR        2U
 #define FW_VERSION_MINOR        0U
-#define FW_VERSION_PATCH        22U
-#define FW_VERSION_STRING       "V2.0.22"
+#define FW_VERSION_PATCH        23U
+#define FW_VERSION_STRING       "V2.0.23"
 
 /* Hardware Version */
 #define HW_VERSION_MAJOR        1U
