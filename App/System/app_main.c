@@ -160,6 +160,7 @@ static bool     dwin_precharge_exit_pending = false;
 static bool     dwin_precharge_seen_active = false;
 static bool     dwin_precharge_error_hold = false;
 static AlarmCode_t dwin_precharge_error_code = ALARM_NONE;
+static AlarmCode_t s_latched_stop_fault_code = ALARM_NONE;
 
 typedef enum {
     DWIN_RECOVERY_RUNNING = 0,
@@ -1178,6 +1179,14 @@ void App_Loop(void)
         ChargeEnergyStorage_Process(now, is_charging, s_total_charged_ah,
                                     s_total_energy_kwh, dd.total_charge_seconds);
 
+        /* Track last active fault code during active charging session so if it clears from BMS
+         * while station remains latched in FAULT, the display retains the true root-cause code. */
+        if (av.worst_code != ALARM_NONE) {
+            s_latched_stop_fault_code = av.worst_code;
+        } else if (cc_view.state != CHARGE_CTRL_STATE_FAULT) {
+            s_latched_stop_fault_code = ALARM_NONE;
+        }
+
         /* Topbar fault code: "0000" if normal, worst code (e.g. "E006") if fault active */
         if (raw_status == DWIN_STATUS_ERROR && !blink_on) {
             strncpy(dd.topbar_fault_code, "    ", sizeof(dd.topbar_fault_code) - 1U);
@@ -1186,11 +1195,18 @@ void App_Loop(void)
             if (dwin_precharge_error_hold && dwin_precharge_error_code != ALARM_NONE) {
                 const char *c_str = DWIN_Alarm_GetCodeString(dwin_precharge_error_code);
                 strncpy(dd.topbar_fault_code, c_str, sizeof(dd.topbar_fault_code) - 1U);
-            } else if (cc_view.state == CHARGE_CTRL_STATE_FAULT &&
-                       ((cc_view.fault_flags & CHARGE_CTRL_FAULT_BMS_ALARM) != 0U ||
-                        cc_view.stop_reason == CHARGE_STOP_BMS_ALARM)) {
-                const char *c_str = DWIN_Alarm_GetCodeString(ALARM_BMS_TEMP_HIGH_CHG);
-                strncpy(dd.topbar_fault_code, c_str, sizeof(dd.topbar_fault_code) - 1U);
+            } else if (cc_view.state == CHARGE_CTRL_STATE_FAULT) {
+                if (cc_view.bms_temp_trip_count > CHARGE_CTRL_BMS_TEMP_MAX_TRIPS) {
+                    /* Only display E005 when locked out due to exceeding max thermal trip limit */
+                    const char *c_str = DWIN_Alarm_GetCodeString(ALARM_BMS_TEMP_HIGH_CHG);
+                    strncpy(dd.topbar_fault_code, c_str, sizeof(dd.topbar_fault_code) - 1U);
+                } else if (s_latched_stop_fault_code != ALARM_NONE) {
+                    /* Retain root-cause fault code (e.g. E004) even after BMS recovers cell voltage */
+                    const char *c_str = DWIN_Alarm_GetCodeString(s_latched_stop_fault_code);
+                    strncpy(dd.topbar_fault_code, c_str, sizeof(dd.topbar_fault_code) - 1U);
+                } else {
+                    strncpy(dd.topbar_fault_code, "0000", sizeof(dd.topbar_fault_code) - 1U);
+                }
             } else {
                 strncpy(dd.topbar_fault_code, "0000", sizeof(dd.topbar_fault_code) - 1U);
             }

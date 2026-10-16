@@ -188,6 +188,7 @@ static bool ev_dc_load_lost(const AlarmInputs_t *in, uint32_t param);
 static bool ev_dc_out_not_established(const AlarmInputs_t *in, uint32_t param);
 static bool ev_bms_volt_mismatch(const AlarmInputs_t *in, uint32_t param);
 static bool ev_ctrl_module_mismatch(const AlarmInputs_t *in, uint32_t param);
+static bool ev_bms_discharge(const AlarmInputs_t *in, uint32_t param);
 
 /* BMS severity: bits that gate the charge relay in bms_core.c
  * (bms_critical_alarm_mask). Keep this list in sync with that function --
@@ -207,12 +208,12 @@ static const AlarmSpec_t k_specs[] = {
      * ChargeController_Stop() here, because that would erase the session and
      * make automatic thermal recovery impossible. */
     { ALARM_BMS_TEMP_HIGH_CHG,   ALARM_ACT_INFO,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms_temp_high, BMS_ALARM_TEMP_HIGH_CHG         ALARM_SPEC_DESC("BMS charge over-temp") },
-    { ALARM_BMS_TEMP_HIGH_DCHG,  ALARM_ACT_INFO,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms, BMS_ALARM_TEMP_HIGH_DCHG                ALARM_SPEC_DESC("BMS discharge over-temp") },
+    { ALARM_BMS_TEMP_HIGH_DCHG,  ALARM_ACT_INFO,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms_discharge, BMS_ALARM_TEMP_HIGH_DCHG       ALARM_SPEC_DESC("BMS discharge over-temp") },
     { ALARM_BMS_TEMP_LOW_CHG,    ALARM_ACT_STOP,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms, BMS_ALARM_TEMP_LOW_CHG                  ALARM_SPEC_DESC("BMS charge under-temp") },
-    { ALARM_BMS_TEMP_LOW_DCHG,   ALARM_ACT_INFO,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms, BMS_ALARM_TEMP_LOW_DCHG                 ALARM_SPEC_DESC("BMS discharge under-temp") },
+    { ALARM_BMS_TEMP_LOW_DCHG,   ALARM_ACT_INFO,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms_discharge, BMS_ALARM_TEMP_LOW_DCHG        ALARM_SPEC_DESC("BMS discharge under-temp") },
     { ALARM_BMS_TEMP_RELAY_HIGH, ALARM_ACT_INFO,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms, BMS_ALARM_TEMP_RELAY_HIGH               ALARM_SPEC_DESC("BMS relay over-temp") },
     { ALARM_BMS_OVER_CHG_CURR,   ALARM_ACT_STOP,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms, BMS_ALARM_OVER_CHG_CURR                 ALARM_SPEC_DESC("BMS over charge current") },
-    { ALARM_BMS_OVER_DCHG_CURR,  ALARM_ACT_INFO,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms, BMS_ALARM_OVER_DCHG_CURR                ALARM_SPEC_DESC("BMS over discharge current") },
+    { ALARM_BMS_OVER_DCHG_CURR,  ALARM_ACT_INFO,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_bms_discharge, BMS_ALARM_OVER_DCHG_CURR       ALARM_SPEC_DESC("BMS over discharge current") },
 
     /* --- module-reported --- */
     { ALARM_MOD_HW_FAULT,        ALARM_ACT_STOP,  false, ALARM_DB_HW_FAULT_ACTIVE_SET_MS, ALARM_DB_MIRROR_CLEAR_MS, ev_mod_hw_fault, 0 ALARM_SPEC_DESC("Module hardware fault") },
@@ -596,6 +597,38 @@ static bool ev_bms_volt_mismatch(const AlarmInputs_t *in, uint32_t param) {
     }
 
     return false;
+}
+
+static bool ev_bms_discharge(const AlarmInputs_t *in, uint32_t bit) {
+    if (in == NULL) return false;
+
+    /* Root cause cascade suppression:
+     * When BMS raises critical charging stop faults (high cell volt E004, high pack volt E003,
+     * over charge current E007, under temp charge E006), or while the station is in FAULT
+     * due to a BMS alarm, secondary BMS discharge warnings (W001 high temp discharge, W002
+     * low temp discharge, W004 over discharge curr) are irrelevant to the charging process
+     * and must be completely suppressed to avoid confusing the operator with false warnings. */
+    if (is_alarm_active_or_latched(ALARM_BMS_HIGH_CELL_VOLT) ||
+        is_alarm_active_or_latched(ALARM_BMS_HIGH_PACK_VOLT) ||
+        is_alarm_active_or_latched(ALARM_BMS_OVER_CHG_CURR) ||
+        is_alarm_active_or_latched(ALARM_BMS_TEMP_LOW_CHG)) {
+        return false;
+    }
+
+    uint32_t bms_critical_stop_mask = BMS_ALARM_HIGH_CELL_VOLT |
+                                      BMS_ALARM_HIGH_PACK_VOLT |
+                                      BMS_ALARM_OVER_CHG_CURR |
+                                      BMS_ALARM_TEMP_LOW_CHG;
+    if ((in->bms.alarm_flags & bms_critical_stop_mask) != 0U) {
+        return false;
+    }
+
+    if (in->cc.state == CHARGE_CTRL_STATE_FAULT &&
+        in->cc.stop_reason == CHARGE_STOP_BMS_ALARM) {
+        return false;
+    }
+
+    return ev_bms(in, bit);
 }
 
 /* ============== Inputs gather ============== */

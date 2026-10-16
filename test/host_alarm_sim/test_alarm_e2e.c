@@ -285,8 +285,10 @@ static bool test_all_bms_alm_info_fields_from_pdf(void)
 
     AlarmView_t warning_alarm;
     Alarm_GetView(&warning_alarm);
-    ASSERT(warning_alarm.active_count == 11U,
-           "all active severity 1 BMS alarms must reach unified alarm view");
+    /* 8 charge-relevant alarms active (3 secondary discharge warnings W001, W002, W004
+     * are suppressed by anti-cascade matrix when critical STOP alarms are active) */
+    ASSERT(warning_alarm.active_count == 8U,
+           "active severity 1 charge alarms must reach unified alarm view (discharge warnings suppressed)");
     ASSERT(warning_alarm.highest_action == ALARM_ACT_STOP,
            "severity 1 BMS alarms with stop action must trigger ALARM_ACT_STOP");
 
@@ -1895,6 +1897,41 @@ static bool test_cascade_suppression_comprehensive(void)
     ASSERT(alarm_active(ALARM_MOD_OVER_TEMP), "E011 must be active");
     ASSERT(!alarm_active(ALARM_DC_LOAD_LOST), "E023 must be suppressed by E011");
     ASSERT(!alarm_logged_raise(ALARM_DC_LOAD_LOST), "E023 must NOT be logged when E011 active");
+
+    /* ===================================================================
+     * 10. BMS High Cell Voltage (E004) suppresses discharge warnings (W002, W001, W004).
+     * When BMS sends 0x7F4 with both E004 and W002 (e.g. 01 03 00 00...),
+     * W002 must be completely suppressed so it does not pollute the alarm log or display.
+     * =================================================================== */
+    ASSERT(setup(NULL), "setup BMS E004 suppresses W002 cascade test");
+    healthy_bms(400.0f);
+    ASSERT(start_running(), "start running for E004 suppression test");
+    establish_load(400.0f, 40.0f);
+
+    /* Send ALM_INFO frame with byte 0 = 0x01 (high cell volt) and byte 1 = 0x03 (temp low dchg) */
+    g_sim_bms.high_cell_volt = 1U;
+    g_sim_bms.temp_cell_low_dchg = 3U;
+    g_sim_bms.alm_info_tx_enabled = true;
+    drive_ms(400U);
+
+    ASSERT(alarm_active(ALARM_BMS_HIGH_CELL_VOLT), "E004 must be active from frame 01 03");
+    ASSERT(!alarm_active(ALARM_BMS_TEMP_LOW_DCHG), "W002 must be completely suppressed when E004 is active");
+    ASSERT(!alarm_logged_raise(ALARM_BMS_TEMP_LOW_DCHG), "W002 must NOT be logged when E004 is active");
+    ASSERT(!alarm_active(ALARM_BMS_TEMP_HIGH_DCHG), "W001 must be suppressed when E004 is active");
+    ASSERT(!alarm_active(ALARM_BMS_OVER_DCHG_CURR), "W004 must be suppressed when E004 is active");
+
+    /* Cell voltage recovers, BMS clears high_cell_volt */
+    g_sim_bms.high_cell_volt = 0U;
+    g_sim_bms.temp_cell_low_dchg = 0U;
+    drive_ms(400U); /* Past 200ms clear debounce */
+
+    /* E004 clears on alarm service, but controller remains latched in FAULT awaiting manual reset */
+    ASSERT(!alarm_active(ALARM_BMS_HIGH_CELL_VOLT), "E004 should be cleared after cell recovery");
+    ChargeCtrlView_t cc_recovery_view;
+    ChargeController_GetView(&cc_recovery_view);
+    ASSERT(cc_recovery_view.state == CHARGE_CTRL_STATE_FAULT, "controller must remain latched in FAULT");
+    ASSERT(cc_recovery_view.stop_reason == CHARGE_STOP_BMS_ALARM, "stop reason must be CHARGE_STOP_BMS_ALARM");
+    ASSERT(cc_recovery_view.bms_temp_trip_count == 0U, "bms_temp_trip_count must be 0 (NOT thermal trip)");
 
     printf("[PASS] test_cascade_suppression_comprehensive\n");
     return true;

@@ -2,6 +2,21 @@
 
 Tất cả các thay đổi quan trọng theo từng phiên bản phát hành của hệ thống Charger Firmware và Tool điều khiển.
 
+## [V2.0.25] - 2026-10-16
+
+### 🚀 Triệt Tiêu Hoàn Toàn Lỗi Ảo Phái Sinh BMS CAN (0x7F4) & Chuẩn Hóa Hiển Thị FSM Fault
+- **Triệt tiêu lỗi ảo cảnh báo xả (`W002`, `W001`, `W004`) khi có sự cố sạc nguy cấp:**
+  - Giải quyết dứt điểm ca lỗi thực tế khi khối Pin gửi `CAN ID: 0x7F4, DATA: 01 03 00 00 00 00 00 00` (Byte 0 = 0x01 Quá áp cell `E004`, Byte 1 = 0x03 Cờ nhiệt độ xả thấp của BMS).
+  - Bổ sung hàm đánh giá chuyên biệt `ev_bms_discharge()`: Chế áp tuyệt đối các cảnh báo xả (`W001: Quá nhiệt xả`, `W002: Quá lạnh khi xả`, `W004: Quá dòng xả`) khi đang có bất kỳ lỗi dừng sạc nghiêm trọng nào (`E003: Quá áp pack`, `E004: Quá áp cell`, `E007: Quá dòng sạc`, `E006: Quá lạnh sạc`) hoặc khi trạm sạc đang khóa dừng ở trạng thái `FAULT` do lỗi sạc.
+  - Ngăn chặn hoàn toàn hiện tượng báo ảo song song, bảo toàn sự tập trung 100% vào lỗi gốc an toàn điện hóa.
+- **Xóa bỏ vĩnh viễn bug nhảy lỗi ảo `E005` (W005) khi cell pin tự phục hồi:**
+  - Gỡ bỏ hoàn toàn logic gán cứng `ALARM_BMS_TEMP_HIGH_CHG` (`E005`) trong `App/System/app_main.c`.
+  - Cơ chế **Bảo toàn mã lỗi gốc (Root-cause Code Retention)**: Giữ nguyên mã lỗi dừng sạc thực sự (`s_latched_stop_fault_code = E004`) trên thanh Topbar DWIN khi cell pin xả áp an toàn và BMS ngừng phát cờ lỗi, cho đến khi người dùng chủ động thao tác Clear Fault / rút súng sạc. Chỉ hiển thị `E005` khi thực sự khóa dừng do quá nhiệt lần 4 (`bms_temp_trip_count > 3`).
+- **Đồng bộ hóa kiểm thử & tài liệu:**
+  - Bổ sung Section 10 trong `test_cascade_suppression_comprehensive()` của `test/host_alarm_sim/test_alarm_e2e.c`.
+  - Cập nhật Cây triệt tiêu số 8 trong tài liệu `Docs/BANG_MA_LOI_HE_THONG_.md`.
+  - Bộ Local CI 10/10 Stages PASS 100%, Flash MCU 90.46% an toàn tuyệt đối.
+
 ## [V2.0.24] - 2026-10-06
 
 ### 🚀 Nâng Cấp Senior Thuật Toán Sai Sạc E032 Xét 2 Chiều & Bảo Vệ Phần Cứng Tức Thời
