@@ -1128,15 +1128,12 @@ void Alarm_Acknowledge(uint32_t now_tick) {
             for (uint8_t m = 0; m < in.mod_total_count && m < ALARM_MAX_MODULES; m++) {
                 if (!in.mod_is_enabled[m]) continue;
                 AlarmRt_t *m_rt = &g_alarm.mod_rt[m][i];
-                if (!m_rt->latched) {
-                    if (m_rt->active) any_active = true;
-                    continue;
-                }
                 if (eval_mod_spec_single(&in, sp, m)) {
                     any_latched = true;
                     any_active = true;
                     continue; /* still present on module m */
                 }
+                if (!m_rt->latched && !m_rt->active) continue;
                 m_rt->latched = false;
                 m_rt->active = false;
                 m_rt->raw_prev = false;
@@ -1148,15 +1145,15 @@ void Alarm_Acknowledge(uint32_t now_tick) {
             continue;
         }
 
-        if (!rt->latched) continue;
         if (sp->eval(&in, sp->param)) continue; /* still present */
+        if (!rt->latched && !rt->active) continue;
         rt->latched = false;
         rt->active = false;
         rt->raw_prev = false;
         log_edge(now_tick, sp->code, sp->action, false, ALARM_SOURCE_STATION);
         acked++;
     }
-    if (acked > 0U) LOG("ALARM: %u latched cleared by ack\r\n", (unsigned)acked);
+    if (acked > 0U) LOG("ALARM: %u alarms cleared by ack\r\n", (unsigned)acked);
     aggregate_view(&in);
     /* let dispatch_action re-arm on the next tick once nothing STOP-level remains */
 }

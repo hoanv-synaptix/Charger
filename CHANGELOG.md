@@ -2,6 +2,22 @@
 
 Tất cả các thay đổi quan trọng theo từng phiên bản phát hành của hệ thống Charger Firmware và Tool điều khiển.
 
+## [V2.0.26] - 2026-10-20
+
+### 🚀 Chuẩn Hóa Cơ Chế Reset Lỗi E021 (BMS Offline) & Chu Trình Vòng Lặp Vận Hành (IEC 61851-23)
+- **Cho phép Reset giải tỏa lỗi E021 về trạng thái IDLE (Standby an toàn):**
+  - Giải quyết dứt điểm phản ánh của khách hàng: Khi chưa kết nối CAN từ BMS, người dùng nhấn Start thì cảnh báo lỗi `E021` (còi kêu). Khi nhấn Reset thì phải xóa được lỗi, đưa trạm sạc về trạng thái `READY` và tắt còi ngay lập tức. Nếu người dùng tiếp tục nhấn Start mà vẫn chưa có BMS thì lại cảnh báo tiếp, tạo thành vòng lặp (**Loop**).
+  - Tách bạch điều kiện theo tiêu chuẩn **IEC 61851-23**: Điều kiện *"BMS Online"* chỉ dùng làm điều kiện tiên quyết để **BẮT ĐẦU SẠC (START)**, không dùng để cấm trạm sạc về chế độ **CHỜ AN TOÀN (RESET về IDLE)**.
+  - Sửa `ChargeController_ResetFaultIfSafe()`: Bỏ cờ `CHARGE_CTRL_FAULT_BMS_OFFLINE` khỏi các điều kiện chặn reset về IDLE.
+  - Bảo toàn 100% các chốt an toàn phần cứng: Rơ-le chưa ngắt tiếp điểm, nút dừng khẩn cấp E-Stop đang ấn, hoặc súng sạc quá nhiệt vẫn bị khóa cứng và từ chối Reset.
+- **Phản hồi tức thì (Instant Feedback) cho HMI & Còi báo:**
+  - Tối ưu `Alarm_Acknowledge()` trong `App/Alarm/alarm.c`: Xóa ngay lập tức cảnh báo non-latching `ALARM_BMS_COMM_LOST` (`E021`) khi controller đã về IDLE mà không cần chờ hết 500ms debounce clear.
+  - Cập nhật thứ tự xử lý nút bấm trong `App/System/app_main.c` và `App/Protocol/pc_protocol.c`: Reset controller về IDLE trước $\rightarrow$ Acknowledge alarm $\rightarrow$ Ngắt còi buzzer tức thì (`DWIN_Beep(0U)`).
+- **Kiểm thử tự động & Tài liệu:**
+  - Cập nhật test case `test_bms_offline()` trong `test/host_charge_sim/test_charge_e2e.c` xác minh chu trình loop Start $\leftrightarrow$ Reset.
+  - Cập nhật tài liệu `docs/BANG_MA_LOI_HE_THONG_.md` theo chuẩn IEC 61851-23.
+  - Toàn bộ Local CI 10/10 Stages PASS 100%, Flash MCU 90.43% an toàn.
+
 ## [V2.0.25] - 2026-10-16
 
 ### 🚀 Triệt Tiêu Hoàn Toàn Lỗi Ảo Phái Sinh BMS CAN (0x7F4) & Chuẩn Hóa Hiển Thị FSM Fault

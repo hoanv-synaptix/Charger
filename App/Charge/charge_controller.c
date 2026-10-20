@@ -2497,24 +2497,19 @@ bool ChargeController_ResetFaultIfSafe(uint32_t now_tick)
     }
 
     /* Re-run the checks for the mode that created the fault. A normal-charge
-     * reset must not be rejected by unused Vlow/Ilow settings, while a
-     * pre-charge reset must preserve its special BMS-offline allowance. */
-    if ((g_ctrl.precharge_mode ? check_precharge_faults()
-                               : check_preconditions_faults()) != CHARGE_CTRL_FAULT_NONE) {
+     * reset must not be rejected by unused Vlow/Ilow settings, and per IEC 61851-23,
+     * resetting to IDLE (standby passive safe state with open contactor) must not be
+     * blocked by BMS offline so operator can clear warning and loop safely. */
+    uint32_t blocking_faults = g_ctrl.precharge_mode
+        ? check_precharge_faults()
+        : (check_preconditions_faults() & ~CHARGE_CTRL_FAULT_BMS_OFFLINE);
+    if (blocking_faults != CHARGE_CTRL_FAULT_NONE) {
         return false;
     }
 
     ChargeCycleConfig_Get(&cfg);
     BMS_GetView(&bms);
     CHG_LIB_GetSystemSummary(&summary);
-
-    if ((g_ctrl.fault_flags & CHARGE_CTRL_FAULT_BMS_OFFLINE) != 0U &&
-        (!bms.online || BMS_IsDataStale())) {
-        /* A normal-charge BMS communication fault cannot be acknowledged as
-         * READY until the BMS link has actually recovered. Pre-charge does
-         * not set this flag because it intentionally permits BMS offline. */
-        return false;
-    }
 
     if ((g_ctrl.fault_flags & CHARGE_CTRL_FAULT_BMS_ALARM) != 0U) {
         /* A lost/stale BMS cannot prove that the alarm has cleared. Require

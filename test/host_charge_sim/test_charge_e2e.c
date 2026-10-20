@@ -1341,17 +1341,37 @@ static bool test_bms_offline(void)
     ChargeController_GetView(&cv);
     ASSERT(cv.state == CHARGE_CTRL_STATE_FAULT, "controller should FAULT on BMS offline");
     ASSERT(cv.stop_reason == CHARGE_STOP_BMS_OFFLINE, "stop reason should be BMS_OFFLINE");
-    ASSERT(!ChargeController_ResetFaultIfSafe(mock_tick),
-           "Home/normal-charge reset must reject an offline BMS fault");
 
-    g_sim_bms.transmitting = true;
-    drive_ms(200U);
+    /* Per IEC 61851-23: Once contactor is opened and charging stopped, operator
+     * can acknowledge/reset BMS offline fault back to IDLE standby passive safe state. */
     ASSERT(ChargeController_ResetFaultIfSafe(mock_tick),
-           "BMS offline fault should reset after the link recovers");
+           "BMS offline fault can be reset back to IDLE standby");
     ChargeController_GetView(&cv);
     ASSERT(cv.state == CHARGE_CTRL_STATE_IDLE &&
            cv.fault_flags == CHARGE_CTRL_FAULT_NONE,
-           "recovered BMS reset must return to IDLE without fault");
+           "safe reset must return controller to IDLE without fault flags");
+
+    /* Loop verification: If user presses Start again without BMS, it must warn/FAULT again */
+    ASSERT(!ChargeController_Start(CHARGE_CTRL_OWNER_DWIN, false, mock_tick),
+           "Start without BMS link must be rejected");
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_FAULT,
+           "controller must enter FAULT state when starting without BMS");
+    ASSERT((cv.fault_flags & CHARGE_CTRL_FAULT_BMS_OFFLINE) != 0U,
+           "fault flags must include BMS_OFFLINE");
+
+    /* Reset again to clear fault (loop cycle 2) */
+    ASSERT(ChargeController_ResetFaultIfSafe(mock_tick),
+           "repeated reset must succeed in returning to IDLE");
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_IDLE,
+           "controller must return to IDLE after repeated reset");
+
+    /* When BMS link recovers, Start should succeed */
+    g_sim_bms.transmitting = true;
+    drive_ms(200U);
+    ASSERT(ChargeController_Start(CHARGE_CTRL_OWNER_DWIN, false, mock_tick),
+           "Start must succeed once BMS is online");
 
     printf("[PASS] test_bms_offline\n");
     return true;

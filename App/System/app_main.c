@@ -545,12 +545,16 @@ static void app_action_button(uint16_t dwin_status, uint32_t now)
             break;
         case DWIN_STATUS_ERROR:
             LOG("App: button (ERROR) -> reset if safe\r\n");
-            Alarm_Acknowledge(now);      /* clear latched alarms whose cause is gone */
             /* The controller, not the HMI, decides whether the root cause and
              * output path are safe enough to clear. A failed reset is a
              * deliberate no-op and leaves ERROR visible. */
             (void)ChargeController_ResetEmergencyStop(now);
-            (void)ChargeController_ResetFaultIfSafe(now);
+            if (ChargeController_ResetFaultIfSafe(now)) {
+                Alarm_Acknowledge(now);  /* Clear alarm immediately now that controller is back in IDLE */
+                DWIN_Beep(0U);           /* Silence error buzzer immediately upon successful reset */
+            } else {
+                Alarm_Acknowledge(now);  /* Clear any secondary latched alarms whose causes have cleared */
+            }
             break;
         case DWIN_STATUS_COMPLETE:
             LOG("App: button (COMPLETE) -> acknowledge, back to READY\r\n");
