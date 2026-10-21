@@ -142,10 +142,10 @@ static void set_bms_alarm_severity(uint8_t field, uint8_t severity)
 static bool test_bms_alm_info_raw_e005(void)
 {
     printf("Running test_bms_alm_info_raw_e005...\n");
+    ASSERT(setup(NULL), "setup failed");
     uint8_t frame[8] = {0};
 
     /* In Motorola CAN layout, temp_cell_high_chg is bits 7-6 of byte 1. */
-    BMS_Init();
     frame[1] = 0x80U; /* severity=2 (fault): (2 << 6) */
     BMS_FeedFrame(0U, BMS_ID_ALM_INFO, frame, 8U);
 
@@ -1282,7 +1282,7 @@ static bool test_w010_active_states_and_exact_recovery_debounce(void)
     healthy_bms(400.0f);
     ASSERT(start_running(), "controller never RUNNING for online COMM_FAIL");
     g_sim_module.tonhe_fault_bits = (uint16_t)(1U << 9);
-    drive_step(20U);
+    drive_ms(220U); /* Allow 200ms W010 set debounce */
     CHG_LIB_ModuleView_t mv;
     ASSERT(CHG_LIB_GetModuleView(0U, &mv) && mv.online,
            "COMM_FAIL frame must remain an online valid snapshot");
@@ -1315,7 +1315,9 @@ static bool test_w010_active_states_and_exact_recovery_debounce(void)
     mock_tick = UINT32_MAX - 100U;
     drive_alarm_only(20U); /* refresh a valid frame immediately before wrap */
     g_sim_module.silent = true;
-    drive_alarm_only(10020U); /* timeout crosses 0U */
+    for (uint32_t elapsed = 0U; elapsed < 10020U; elapsed += 20U) {
+        drive_alarm_only(20U);
+    }
     ASSERT(alarm_active(ALARM_MOD_COMM_FAIL), "W010 must raise across tick wrap");
 
     g_sim_module.silent = false;
@@ -2586,9 +2588,201 @@ static bool test_single_module_alarm_no_suffix_and_normal_stop(void)
     return true;
 }
 
+static bool test_bms_temp_inhibit_suppresses_w010_trips(void)
+{
+    printf("Running test_bms_temp_inhibit_suppresses_w010_trips...\n");
+
+    ASSERT(setup(NULL), "setup");
+    healthy_bms(400.0f);
+    ASSERT(start_running(), "controller never RUNNING");
+    establish_load(400.0f, 40.0f);
+
+    /* Trip 1, 2, 3: Must inhibit (0A) and suppress W010 */
+    for (uint8_t trip = 1U; trip <= 3U; trip++) {
+        /* Over-temperature trips */
+        set_bms_alarm_severity(4U, 2U);
+        drive_ms(1000U);
+
+        ChargeCtrlView_t cv;
+        ChargeController_GetView(&cv);
+        ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "controller must stay RUNNING during recoverable trip");
+        ASSERT(cv.inhibit != 0U && cv.applied_current_per_module_a == 0.0f, "current must be clamped to 0A");
+        ASSERT(cv.bms_temp_trip_count == trip, "trip count mismatch");
+
+        /* Simulate module silent during inhibit */
+        g_sim_module.silent = true;
+        drive_ms(2500U);
+
+        /* Assert W010 is completely suppressed! */
+        ASSERT(!alarm_active(ALARM_MOD_COMM_FAIL), "W010 must be suppressed during BMS temp inhibit");
+        ASSERT(!alarm_logged_raise(ALARM_MOD_COMM_FAIL), "W010 must NOT be logged during BMS temp inhibit");
+
+        /* Cool down and auto-recover */
+        g_sim_module.silent = false;
+        set_bms_alarm_severity(4U, 0U);
+        drive_ms(3500U);
+
+        ChargeController_GetView(&cv);
+        ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "controller must recover to RUNNING");
+        ASSERT(cv.inhibit == 0U, "inhibit must clear on recovery");
+        ASSERT(cv.bms_temp_trip_count == trip, "trip count must persist across recoveries");
+
+        /* Re-establish load for next cycle */
+        establish_load(400.0f, 40.0f);
+    }
+
+    /* Trip 4: Over-temperature 4th time -> Must lock into FAULT with E005 */
+    set_bms_alarm_severity(4U, 2U);
+    drive_ms(1000U);
+
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_FAULT, "4th trip must trip controller to FAULT");
+    ASSERT(cv.fault_flags & CHARGE_CTRL_FAULT_BMS_ALARM, "Fault must be BMS_ALARM");
+    ASSERT(alarm_active(ALARM_BMS_TEMP_HIGH_CHG), "E005 must be active");
+    ASSERT(!alarm_active(ALARM_MOD_COMM_FAIL), "W010 must NOT be active when E005 tripped");
+    ASSERT(!alarm_logged_raise(ALARM_MOD_COMM_FAIL), "W010 must NEVER have been logged across all 4 trips");
+
+    printf("[PASS] test_bms_temp_inhibit_suppresses_w010_trips\n");
+    return true;
+}
+
+static bool test_jack_temp_derating_and_trip_suppresses_w010(void)
+{
+    printf("Running test_jack_temp_derating_and_trip_suppresses_w010...\n");
+
+    ChargeCycleConfig_t cfg;
+    ASSERT(setup(&cfg), "setup test_jack_temp_derating_and_trip_suppresses_w010");
+    cfg.protect_jack_temp_enabled = 1U;
+    cfg.protect_jack_temp_threshold_c = 60.0f;
+    cfg.protect_jack_temp_trip_c = 75.0f;
+    cfg.protect_jack_temp_delay_s = 3U;
+    cfg.protect_jack_temp_power_limit_pct = 50.0f;
+    ASSERT(ChargeCycleConfig_Set(&cfg), "config set failed");
+
+    healthy_bms(400.0f);
+    ASSERT(start_running(), "start running failed");
+    establish_load(400.0f, 40.0f);
+
+    /* 1. Enter soft derating: T = 65°C */
+    ChargeController_SetJackTempC(65.0f);
+    drive_ms(3500U); /* wait for delay_s (3s) */
+
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.jack_temp_derating_active != 0U, "Jack temp derating must be active");
+
+    /* During derating, simulate module CAN frame latency / silent */
+    g_sim_module.silent = true;
+    drive_ms(2500U);
+
+    /* Assert W010 is suppressed by derating */
+    ASSERT(!alarm_active(ALARM_MOD_COMM_FAIL), "W010 must be suppressed during jack temp derating");
+    ASSERT(!alarm_logged_raise(ALARM_MOD_COMM_FAIL), "W010 must NOT be logged during jack temp derating");
+
+    /* 2. Jack temp reaches hard trip threshold: T = 80°C */
+    ChargeController_SetJackTempC(80.0f);
+    /* Drive through 3s delay window while module remains silent */
+    drive_ms(3200U);
+
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_FAULT, "Jack over temp must transition controller to FAULT");
+    ASSERT(cv.fault_flags & CHARGE_CTRL_FAULT_PROTECT_JACK_TEMP, "Fault flag must be PROTECT_JACK_TEMP");
+    ASSERT(alarm_active(ALARM_CTRL_JACK_OVER_TEMP), "E031 must be active");
+    ASSERT(!alarm_active(ALARM_MOD_COMM_FAIL), "W010 must NOT be active when E031 trips");
+    ASSERT(!alarm_logged_raise(ALARM_MOD_COMM_FAIL), "W010 must NEVER have been logged");
+
+    printf("[PASS] test_jack_temp_derating_and_trip_suppresses_w010\n");
+    return true;
+}
+
+static bool test_w010_suppresses_e027_no_module(void)
+{
+    printf("Running test_w010_suppresses_e027_no_module...\n");
+    ASSERT(setup(NULL), "setup");
+    healthy_bms(400.0f);
+    ASSERT(start_running(), "controller start RUNNING");
+
+    /* All modules go completely silent on CAN */
+    g_sim_module.silent = true;
+    /* Drive past 2000ms offline timeout + 200ms debounce */
+    drive_ms(2400U);
+
+    ASSERT(alarm_active(ALARM_MOD_COMM_FAIL), "W010 must be active when all modules are lost");
+    /* E027 must be suppressed because the root cause is module CAN communication loss */
+    ASSERT(!alarm_active(ALARM_CTRL_NO_MODULE), "E027 must be suppressed when W010 is active");
+
+    printf("[PASS] test_w010_suppresses_e027_no_module\n");
+    return true;
+}
+
+static bool test_hot_unplug_with_comm_glitch_still_reports_e023(void)
+{
+    printf("Running test_hot_unplug_with_comm_glitch_still_reports_e023...\n");
+    ASSERT(setup(NULL), "setup");
+    healthy_bms(400.0f);
+    ASSERT(start_running(), "controller start RUNNING");
+
+    /* Establish real charging current */
+    establish_load(400.0f, 40.0f);
+
+    /* Hot-unplug occurs: current drops to 0A, and module reports transient disconnect */
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    g_sim_module.voltage = cv.target_voltage_v;
+    g_sim_module.current = 0.0f;
+    g_sim_bms.pack_current_a = 0.0f;
+
+    /* Drive through E023 debounce window: 800ms + 100ms margin */
+    drive_ms(900U);
+
+    ASSERT(alarm_active(ALARM_DC_LOAD_LOST), "E023 must report hot-unplug load lost");
+
+    printf("[PASS] test_hot_unplug_with_comm_glitch_still_reports_e023\n");
+    return true;
+}
+
+static bool test_volt_mismatch_raw_prevents_e023_race(void)
+{
+    printf("Running test_volt_mismatch_raw_prevents_e023_race...\n");
+    ChargeCycleConfig_t cfg;
+    ASSERT(setup(&cfg), "setup");
+    healthy_bms(400.0f);
+    ASSERT(start_running(), "controller start RUNNING");
+
+    /* Establish initial charging current */
+    establish_load(400.0f, 40.0f);
+
+    /* Sudden voltage mismatch occurs: battery terminal rises well above charger ceiling
+     * and current collapses to 0A */
+    g_sim_bms.pack_voltage_v = cfg.vmax_v + 5.0f; /* Exceeds by > 2V */
+    feed_chg_request(cfg.vmax_v + 5.0f, 50.0f);
+    g_sim_module.voltage = cfg.vmax_v;
+    g_sim_module.current = 0.0f;
+    g_sim_bms.pack_current_a = 0.0f;
+
+    /* Drive 850ms: past E023 debounce (800ms) but BEFORE E032 debounce (1000ms) */
+    drive_ms(850U);
+
+    ASSERT(!alarm_active(ALARM_DC_LOAD_LOST), "E023 must NOT fire before E032 due to raw mismatch check");
+
+    /* Drive remaining 250ms: total 1100ms > 1000ms -> E032 is now active */
+    drive_ms(250U);
+    ASSERT(alarm_active(ALARM_BMS_VOLT_MISMATCH), "E032 must be active after 1000ms debounce");
+    ASSERT(!alarm_active(ALARM_DC_LOAD_LOST), "E023 must remain suppressed by E032");
+
+    printf("[PASS] test_volt_mismatch_raw_prevents_e023_race\n");
+    return true;
+}
+
 int main(void)
 {
     bool ok = true;
+    ok &= test_w010_suppresses_e027_no_module();
+    ok &= test_hot_unplug_with_comm_glitch_still_reports_e023();
+    ok &= test_volt_mismatch_raw_prevents_e023_race();
+    ok &= test_bms_temp_inhibit_suppresses_w010_trips();
+    ok &= test_jack_temp_derating_and_trip_suppresses_w010();
     ok &= test_single_module_alarm_no_suffix_and_normal_stop();
     ok &= test_multi_module_per_module_alarm_source_and_dwin_suffix();
     ok &= test_all_31_codes_metadata_and_contracts();

@@ -2688,6 +2688,7 @@ void ChargeController_GetView(ChargeCtrlView_t *view) {
     view->faulted = (g_ctrl.state == CHARGE_CTRL_STATE_FAULT);
     view->derating = g_ctrl.derating;
     view->inhibit = g_ctrl.inhibit;
+    view->jack_temp_derating_active = g_ctrl.jack_temp_derating_active ? 1U : 0U;
     view->start_requested = (g_ctrl.state == CHARGE_CTRL_STATE_READY);
     view->emergency_stop = (g_ctrl.fault_flags & CHARGE_CTRL_FAULT_EMERGENCY_STOP) ? 1 : 0;
     view->target_voltage_v = g_ctrl.target_voltage_v;

@@ -1754,6 +1754,7 @@ static bool test_jack_temp_derating_does_not_leak_across_sessions(void)
 static bool test_config_admin_pin_validation(void)
 {
     printf("Running test_config_admin_pin_validation...\n");
+    ChargeCycleConfig_Init();
     ChargeCycleConfig_t cfg;
     ChargeCycleConfig_GetDefaults(&cfg);
     ASSERT(cfg.version == CHARGE_CYCLE_CONFIG_VERSION, "defaults use current config version");

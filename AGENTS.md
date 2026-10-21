@@ -715,9 +715,24 @@ Debug logging may be compiled out in production.
 
 ---
 
-## 21. Testing Rules
+## 21. Testing Rules (TDD & Clean Testing Principles)
 
 Pure logic must be host-testable.
+
+### 21.1 Test-Driven Development (TDD / Test-First Mandate)
+Before implementing ANY new feature or bug fix:
+1. **Red Stage**: Write the automated test case FIRST in `test/host_*`. Run the test to confirm it reproduces the bug or fails because the feature does not exist yet.
+2. **Green Stage**: Implement the minimal, clean code required to satisfy the test contract.
+3. **Refactor Stage**: Optimize and clean code while maintaining 100% green tests.
+
+### 21.2 Clean Code & Independent Test Isolation
+Tests must be completely decoupled from internal implementation details:
+- **Black-box Testing**: Tests must interact ONLY through Public Interfaces / APIs (`Alarm_Process`, `Alarm_GetView`, `ChargeController_Run`, `BMS_FeedFrame`, etc.). Never reach into private/static internals.
+- **Zero Inter-Test Dependency**: Each test must be hermetic and isolated (independent setup/teardown). No test may depend on state left behind by a previous test.
+- **Stimulus-Response Pattern**: Tests must follow the clear pattern:
+  - `Given` (clean precondition & mock environment)
+  - `When` (external stimulus: CAN frame, tick drive, user command)
+  - `Then` (observable public state verification)
 
 Host tests should cover:
 

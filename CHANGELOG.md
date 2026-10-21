@@ -2,6 +2,40 @@
 
 Tất cả các thay đổi quan trọng theo từng phiên bản phát hành của hệ thống Charger Firmware và Tool điều khiển.
 
+## [V2.0.28] - 2026-10-21
+
+### 🚀 Hoàn Thiện Triệt Để Cascade Suppression & Khử Xung Đột Logic Alarm 31 Mã Lỗi
+- **Khắc phục lỗi nuốt E023 (DC Load Lost) khi rút sạc đột ngột (Hot-unplug):**
+  - Tinh chỉnh mask kiểm tra cờ lỗi module trong `ev_dc_load_lost()` (`alarm.c`): Chỉ cho phép các lỗi phần cứng nội tại module thực sự (AC sụt/mất pha, PFC, quá nhiệt, quạt hỏng) giải trình cho việc dòng về 0A.
+  - Loại trừ `COMM_FAIL` khỏi danh sách cản trở E023, bảo đảm khi rút sạc gây mất kết nối CAN đột ngột thì trạm sạc vẫn nhận diện và báo chính xác lỗi ngắt tải DC `E023`.
+- **Khử xung đột hiển thị giữa E027 (No Module) và W010 (Module Comm Fail):**
+  - Bổ sung hàm đánh giá cascade suppression `ev_ctrl_no_module()` cho `ALARM_CTRL_NO_MODULE` (`E027`).
+  - Khi mất kết nối CAN với toàn bộ module (`W010` active/latched), hệ thống tự động chế áp `E027` để tránh báo 2 lỗi trùng lặp, chỉ điểm chính xác nguyên nhân gốc là mất đường truyền CAN.
+- **Triệt tiêu Race Condition giữa E032 (Voltage Mismatch) và E023 (DC Load Lost):**
+  - Bổ sung kiểm tra tức thời (raw check) `ev_bms_volt_mismatch(in, 0)` vào `ev_dc_load_lost()`.
+  - Khắc phục triệt để khoảng chênh lệch thời gian lọc debounce (800ms của E023 vs 1000ms của E032), ngăn chặn E023 chớp nháy trước 200ms khi cắm sai hệ pin.
+- **Bổ sung kiểm thử tự động E2E & Đồng bộ tài liệu:**
+  - Thêm 3 test case E2E trong `test/host_alarm_sim/test_alarm_e2e.c`: `test_w010_suppresses_e027_no_module`, `test_hot_unplug_with_comm_glitch_still_reports_e023`, `test_volt_mismatch_raw_prevents_e023_race` (tổng cộng 48/48 tests PASS).
+  - Cập nhật ma trận triệt tiêu cảnh báo trong `docs/BANG_MA_LOI_HE_THONG_.md`.
+
+## [V2.0.27] - 2026-10-21
+
+### 🚀 Triệt Tiêu Hoàn Toàn Lỗi Ảo W010 Trước E005 & E031, Chuẩn Hóa Cascade Suppression Toàn Diện
+- **Triệt tiêu lỗi ảo W010 nhảy 3 lần trước E005 (BMS Quá nhiệt):**
+  - Giải quyết dứt điểm hiện tượng khi BMS quá nhiệt trong 3 lần đầu (`bms_temp_trip_count = 1..3`), trạm kẹp dòng về 0.0A (`inhibit = 1`), module chuyển chế độ nghỉ/tắt khiến W010 nhảy ảo trước E005 đúng 3 lần.
+  - Sửa `ev_mod_comm_lost()` và `eval_mod_comm_lost_single()` trong `App/Alarm/alarm.c`: Bổ sung cascade suppression tự động chế áp W010 khi `inhibit != 0`, `bms_temp_trip_count > 0` hoặc cờ BMS quá nhiệt đang active/latched.
+  - Sửa FSM driver module (`chg_lib_tonhe.c`, `chg_lib_lianming.c`, `chg_lib_maxwell.c`): Khi dòng lệnh = 0A (CC_INHIBIT), module dừng nghỉ là đúng vật lý; driver không đếm retry khởi động và không tự gán cờ `CHG_LIB_ALARM_COMM_FAIL`.
+- **Triệt tiêu lỗi ảo W010 nhảy nhấp nháy (flapping) trước E031 (Quá nhiệt jack sạc):**
+  - Bổ sung trường `jack_temp_derating_active` vào struct `ChargeCtrlView_t` trong `App/Charge/charge_controller.h` và `charge_controller.c`.
+  - Bổ sung cascade suppression trong `alarm.c`: Chế áp W010 trong toàn bộ giai đoạn soft derating, trong 3 giây đếm trễ trip ngắt cứng và khi `ALARM_CTRL_JACK_OVER_TEMP` active/latched.
+- **Chuẩn hóa Debounce & Độ ưu tiên hiển thị Topbar DWIN:**
+  - Áp dụng bộ lọc debounce `set_ms = 500ms` (`ALARM_DB_MODULE_COMM_SET_MS`) cho `ALARM_MOD_COMM_FAIL` trong bảng `k_specs[]` để loại bỏ sạch 100% các xung trễ CAN 1 tick.
+  - Nâng độ ưu tiên hiển thị của `E005` trong `alarm_severity()` lên mức 2 (cao hơn mức 1 của `W010`) để thanh Topbar luôn ưu tiên lỗi nhiệt pin.
+- **Kiểm thử tự động & Tài liệu:**
+  - Bổ sung 2 test case E2E hồi quy trong `test/host_alarm_sim/test_alarm_e2e.c`: `test_bms_temp_inhibit_suppresses_w010_trips` và `test_jack_temp_derating_and_trip_suppresses_w010`.
+  - Cập nhật ma trận cascade suppression trong `docs/BANG_MA_LOI_HE_THONG_.md`.
+  - Toàn bộ Local CI 10/10 Stages PASS 100%.
+
 ## [V2.0.26] - 2026-10-20
 
 ### 🚀 Chuẩn Hóa Cơ Chế Reset Lỗi E021 (BMS Offline) & Chu Trình Vòng Lặp Vận Hành (IEC 61851-23)

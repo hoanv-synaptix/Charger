@@ -106,6 +106,7 @@ typedef struct {
     uint8_t inhibit;
     uint8_t start_requested;
     uint8_t emergency_stop;
+    uint8_t jack_temp_derating_active; /**< 1 when connector temp soft derating is active */
     float target_voltage_v;
     float target_current_total_a;
     float target_current_per_module_a;

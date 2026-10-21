@@ -375,7 +375,13 @@ static void parse_status(const uint8_t *data, uint8_t src_addr, uint32_t now)
         if (mod->view.state == CHG_LIB_STATE_STOPPING) {
             set_state(mod, CHG_LIB_STATE_IDLE, now); /* Confirmed stop */
         } else if (mod->view.state == CHG_LIB_STATE_RUNNING) {
-            set_state(mod, CHG_LIB_STATE_IDLE, now); /* Unexpected stop */
+            /* If controller commanded current to zero (e.g. thermal inhibit / soft pause),
+             * TonHe module physically turns off power and reports NORMAL_OFF.
+             * Keep module in RUNNING waiting for setpoint to unclamp, rather than dropping
+             * to IDLE and spamming restart retries. */
+            if (mod->target_current > 0.001f) {
+                set_state(mod, CHG_LIB_STATE_IDLE, now); /* Unexpected stop */
+            }
         } else if (!mod->should_run) {
             set_state(mod, CHG_LIB_STATE_IDLE, now);
         }
@@ -599,11 +605,15 @@ static void process_module(TONHE_Internal_t *mod, uint32_t now)
                 send_specific_start_stop(mod, true);
                 mod->retry_count++;
             } else {
-                /* Max retries reached, give up - signal failure to app via FAULT */
-                mod->waiting_confirm = false;
-                mod->should_run = false;
-                mod->view.alarm_flags |= CHG_LIB_ALARM_COMM_FAIL;
-                set_state(mod, CHG_LIB_STATE_FAULT, now);
+                if (mod->target_current <= 0.001f) {
+                    mod->confirm_tick = now; /* Inhibit / 0A setpoint: keep waiting without faulting */
+                } else {
+                    /* Max retries reached, give up - signal failure to app via FAULT */
+                    mod->waiting_confirm = false;
+                    mod->should_run = false;
+                    mod->view.alarm_flags |= CHG_LIB_ALARM_COMM_FAIL;
+                    set_state(mod, CHG_LIB_STATE_FAULT, now);
+                }
             }
         }
         break;

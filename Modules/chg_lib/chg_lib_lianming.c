@@ -574,9 +574,15 @@ static void process_module(uint8_t idx, uint32_t now)
         }
 
         if (mod->start_attempts > LM_MAX_RETRY) {
-            mod->view.alarm_flags |= CHG_LIB_ALARM_COMM_FAIL; /* Timeout */
-            set_state(mod, CHG_LIB_STATE_FAULT, now);
-            break;
+            if (mod->view.current_limit <= 0.001f) {
+                /* Target current is 0A (inhibit / soft pause) -> keep waiting without reporting false COMM_FAIL */
+                mod->start_attempts = 0U;
+                mod->retry_count = 0U;
+            } else {
+                mod->view.alarm_flags |= CHG_LIB_ALARM_COMM_FAIL; /* Timeout */
+                set_state(mod, CHG_LIB_STATE_FAULT, now);
+                break;
+            }
         }
         if (mod->retry_count == 0U) {
             /* Only send output setpoint if already programmed with positive values */

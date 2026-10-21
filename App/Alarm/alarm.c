@@ -55,6 +55,7 @@
 #define ALARM_DB_MIRROR_CLEAR_MS      200U   /* source is already debounced   */
 #define ALARM_DB_COMM_SET_MS          200U
 #define ALARM_DB_COMM_CLEAR_MS        500U
+#define ALARM_DB_MODULE_COMM_SET_MS   200U   /* 200ms filter: prevent false transient CAN timeout */
 #define ALARM_DB_MODULE_COMM_CLEAR_MS 200U
 #define ALARM_DB_NO_PACK_SET_MS       500U
 #define ALARM_DB_NO_PACK_CLEAR_MS    1000U
@@ -188,6 +189,7 @@ static bool ev_dc_load_lost(const AlarmInputs_t *in, uint32_t param);
 static bool ev_dc_out_not_established(const AlarmInputs_t *in, uint32_t param);
 static bool ev_bms_volt_mismatch(const AlarmInputs_t *in, uint32_t param);
 static bool ev_ctrl_module_mismatch(const AlarmInputs_t *in, uint32_t param);
+static bool ev_ctrl_no_module(const AlarmInputs_t *in, uint32_t param);
 static bool ev_bms_discharge(const AlarmInputs_t *in, uint32_t param);
 
 /* BMS severity: bits that gate the charge relay in bms_core.c
@@ -217,7 +219,7 @@ static const AlarmSpec_t k_specs[] = {
 
     /* --- module-reported --- */
     { ALARM_MOD_HW_FAULT,        ALARM_ACT_STOP,  false, ALARM_DB_HW_FAULT_ACTIVE_SET_MS, ALARM_DB_MIRROR_CLEAR_MS, ev_mod_hw_fault, 0 ALARM_SPEC_DESC("Module hardware fault") },
-    { ALARM_MOD_COMM_FAIL,       ALARM_ACT_INFO,  false, 0, ALARM_DB_MODULE_COMM_CLEAR_MS, ev_mod_comm_lost, 0                         ALARM_SPEC_DESC("Module comms fail") },
+    { ALARM_MOD_COMM_FAIL,       ALARM_ACT_INFO,  false, ALARM_DB_MODULE_COMM_SET_MS, ALARM_DB_MODULE_COMM_CLEAR_MS, ev_mod_comm_lost, 0 ALARM_SPEC_DESC("Module comms fail") },
     { ALARM_MOD_OVER_TEMP,       ALARM_ACT_STOP,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_OVER_TEMP                  ALARM_SPEC_DESC("Module over-temp") },
     { ALARM_MOD_OVER_VOLT_OUT,   ALARM_ACT_ESTOP, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_OVER_VOLTAGE_OUT           ALARM_SPEC_DESC("Module output over-voltage") },
     { ALARM_MOD_SHORT_CIRCUIT,   ALARM_ACT_ESTOP, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_SHORT_CIRCUIT             ALARM_SPEC_DESC("Module output short circuit") },
@@ -226,7 +228,7 @@ static const AlarmSpec_t k_specs[] = {
     { ALARM_MOD_PFC_FAULT,       ALARM_ACT_STOP,  false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod_pfc, 0                                   ALARM_SPEC_DESC("Module PFC fault") },
 
     /* --- controller faults (mirror, report/log only -- controller already acts) --- */
-    { ALARM_CTRL_NO_MODULE,       ALARM_ACT_INFO, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_ctrl, CHARGE_CTRL_FAULT_NO_MODULE              ALARM_SPEC_DESC("No charger module") },
+    { ALARM_CTRL_NO_MODULE,       ALARM_ACT_INFO, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_ctrl_no_module, CHARGE_CTRL_FAULT_NO_MODULE   ALARM_SPEC_DESC("No charger module") },
     { ALARM_CTRL_MODULE_MISMATCH, ALARM_ACT_INFO, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_ctrl_module_mismatch, CHARGE_CTRL_FAULT_MODULE_COUNT_MISMATCH ALARM_SPEC_DESC("Module count mismatch") },
     { ALARM_CTRL_INVALID_CONFIG,  ALARM_ACT_INFO, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_ctrl, CHARGE_CTRL_FAULT_INVALID_CONFIG         ALARM_SPEC_DESC("Invalid charge config") },
     { ALARM_CTRL_JACK_OVER_V,     ALARM_ACT_STOP, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_ctrl, CHARGE_CTRL_FAULT_PROTECT_JACK_V         ALARM_SPEC_DESC("Connector over-voltage protect") },
@@ -332,6 +334,21 @@ static bool ev_ctrl_module_mismatch(const AlarmInputs_t *in, uint32_t bit) {
     return (in != NULL) && ((in->cc.fault_flags & CHARGE_CTRL_FAULT_MODULE_COUNT_MISMATCH) != 0U);
 }
 
+static bool ev_ctrl_no_module(const AlarmInputs_t *in, uint32_t bit) {
+    if (in == NULL) return false;
+
+    /* Root cause suppression: If module communication is failing (W010 active/latched)
+     * or AC under-voltage, report W010/W011 instead of misleading configuration fault E027 */
+    if (is_alarm_active_or_latched(ALARM_MOD_COMM_FAIL) ||
+        is_alarm_active_or_latched(ALARM_MOD_AC_UNDER_VOLT) ||
+        (in->mod_offline_count > 0U && in->mod_total_count == in->mod_offline_count) ||
+        ((in->mod_alarm_or & (CHG_LIB_ALARM_COMM_FAIL | CHG_LIB_ALARM_AC_UNDER_VOLT)) != 0U)) {
+        return false;
+    }
+
+    return (in->cc.fault_flags & bit) != 0U;
+}
+
 static bool ev_mod_hw_fault(const AlarmInputs_t *in, uint32_t param) {
     (void)param;
     if ((in->mod_alarm_or & CHG_LIB_ALARM_HW_FAULT) == 0U) return false;
@@ -407,6 +424,27 @@ static bool ev_mod_comm_lost(const AlarmInputs_t *in, uint32_t param) {
     /* Root cause suppression: if modules went offline due to AC power loss, suppress W010 */
     if ((in->mod_alarm_or & CHG_LIB_ALARM_AC_UNDER_VOLT) != 0U ||
         is_alarm_active_or_latched(ALARM_MOD_AC_UNDER_VOLT)) {
+        return false;
+    }
+
+    /* Cascade suppression 1: BMS Thermal Protection Cycle:
+     * When BMS is under thermal pause (inhibit active, trip count > 0, or BMS temp alarm active),
+     * controller commands current to 0.0A via CC_INHIBIT and vehicle battery opens contactor.
+     * Modules idling or exhibiting transient CAN latency during this stage must NEVER trigger W010. */
+    if (in->cc.inhibit != 0U ||
+        in->cc.bms_temp_trip_count > 0U ||
+        is_alarm_active_or_latched(ALARM_BMS_TEMP_HIGH_CHG) ||
+        (in->bms.alarm_flags & BMS_ALARM_TEMP_HIGH_CHG) != 0U) {
+        return false;
+    }
+
+    /* Cascade suppression 2: Connector / Jack Over-Temperature Protection:
+     * When connector temperature is derating power or within trip confirmation delay (or E031 faulted),
+     * sudden setpoint collapse and thermal contact fluctuations induce CAN frame latency.
+     * Suppress secondary W010 alarms so only the primary thermal root-cause is reported. */
+    if (in->cc.jack_temp_derating_active != 0U ||
+        is_alarm_active_or_latched(ALARM_CTRL_JACK_OVER_TEMP) ||
+        ((in->cc.fault_flags & CHARGE_CTRL_FAULT_PROTECT_JACK_TEMP) != 0U)) {
         return false;
     }
 
@@ -491,9 +529,21 @@ static bool ev_dc_load_lost(const AlarmInputs_t *in, uint32_t param) {
     }
 
     /* Root cause suppression:
-     * When charger module trips its own output (hardware fault, over-temp, over-current,
-     * AC under-volt, fan fault, PFC fault, AC over-volt), output current drops to 0A by module protection -- NOT DC load lost. */
-    if (in->mod_alarm_or != 0U || in->mod_pfc_fault_or != 0U) {
+     * When charger module trips its own output due to internal hardware protection
+     * (AC under-volt, over-temp, fan fault, PFC fault, AC over-volt), output current drops
+     * to 0A by module internal protection -- NOT DC load lost.
+     * Note: COMM_FAIL is intentionally EXCLUDED here so an in-flight CAN glitch or
+     * disconnect transient cannot mask a genuine hot-unplug load loss. */
+    uint32_t mod_internal_hw_trip_mask = CHG_LIB_ALARM_AC_UNDER_VOLT |
+                                         CHG_LIB_ALARM_PFC_FAULT |
+                                         CHG_LIB_ALARM_AC_PHASE_LOSS |
+                                         CHG_LIB_ALARM_FREQ_FAULT |
+                                         CHG_LIB_ALARM_PFC_IMBALANCE |
+                                         CHG_LIB_ALARM_OVER_TEMP |
+                                         CHG_LIB_ALARM_FAN_FAULT |
+                                         CHG_LIB_ALARM_AC_OVER_VOLT;
+
+    if ((in->mod_alarm_or & mod_internal_hw_trip_mask) != 0U || in->mod_pfc_fault_or != 0U) {
         return false;
     }
     if (is_alarm_active_or_latched(ALARM_MOD_HW_FAULT) ||
@@ -513,7 +563,8 @@ static bool ev_dc_load_lost(const AlarmInputs_t *in, uint32_t param) {
     if (is_alarm_active_or_latched(ALARM_CTRL_JACK_OVER_V) ||
         is_alarm_active_or_latched(ALARM_CTRL_JACK_OVER_TEMP) ||
         is_alarm_active_or_latched(ALARM_CTRL_MODULE_MISMATCH) ||
-        is_alarm_active_or_latched(ALARM_BMS_VOLT_MISMATCH)) {
+        is_alarm_active_or_latched(ALARM_BMS_VOLT_MISMATCH) ||
+        ev_bms_volt_mismatch(in, 0)) {
         return false;
     }
 
@@ -770,6 +821,21 @@ static bool eval_mod_comm_lost_single(const AlarmInputs_t *in, uint8_t m) {
         is_alarm_active_or_latched(ALARM_MOD_AC_UNDER_VOLT)) {
         return false;
     }
+
+    /* Cascade suppression 1: BMS Thermal Protection */
+    if (in->cc.inhibit != 0U ||
+        in->cc.bms_temp_trip_count > 0U ||
+        is_alarm_active_or_latched(ALARM_BMS_TEMP_HIGH_CHG) ||
+        (in->bms.alarm_flags & BMS_ALARM_TEMP_HIGH_CHG) != 0U) {
+        return false;
+    }
+
+    /* Cascade suppression 2: Connector / Jack Temperature Protection */
+    if (in->cc.jack_temp_derating_active != 0U ||
+        is_alarm_active_or_latched(ALARM_CTRL_JACK_OVER_TEMP) ||
+        ((in->cc.fault_flags & CHARGE_CTRL_FAULT_PROTECT_JACK_TEMP) != 0U)) {
+        return false;
+    }
     return in->mod_is_offline[m] || ((in->mod_alarms[m] & CHG_LIB_ALARM_COMM_FAIL) != 0U);
 }
 
@@ -985,6 +1051,7 @@ static uint8_t alarm_severity(AlarmCode_t code, AlarmAction_t action) {
         return 3U;
     }
     switch (code) {
+        case ALARM_BMS_TEMP_HIGH_CHG:
         case ALARM_CTRL_NO_MODULE:
         case ALARM_CTRL_MODULE_MISMATCH:
         case ALARM_CTRL_INVALID_CONFIG:

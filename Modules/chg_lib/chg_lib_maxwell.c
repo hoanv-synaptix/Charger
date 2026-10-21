@@ -534,11 +534,16 @@ static void process_module(MXR_Internal_t *m, uint32_t now)
         }
         break;
 
- case CHG_LIB_STATE_STARTING:
+    case CHG_LIB_STATE_STARTING:
         if (m->start_attempts > MXR_START_MAX_ATTEMPTS) {
-            m->view.alarm_flags |= CHG_LIB_ALARM_COMM_FAIL; /* Timeout */
-            set_state(m, CHG_LIB_STATE_FAULT, now);
-            break;
+            if (m->setpoint.current_limit <= 0.001f) {
+                m->start_attempts = 0;
+                m->retry_count = 0;
+            } else {
+                m->view.alarm_flags |= CHG_LIB_ALARM_COMM_FAIL; /* Timeout */
+                set_state(m, CHG_LIB_STATE_FAULT, now);
+                break;
+            }
         }
         if (m->retry_count == 0) {
             send_set_float(m, CHG_LIB_REG_SET_VOLTAGE, m->setpoint.voltage_v);
@@ -554,9 +559,13 @@ static void process_module(MXR_Internal_t *m, uint32_t now)
             m->view.last_tx_tick = now;
         } else if (m->retry_count >= 3 && (now - m->view.last_tx_tick) >= MXR_START_CONFIRM_WAIT_MS) {
             if ((m->retry_count - 3U) >= MXR_START_CONFIRM_READS) {
-                m->view.stats.timeout_count++;
-                m->view.alarm_flags |= CHG_LIB_ALARM_COMM_FAIL;
-                set_state(m, CHG_LIB_STATE_FAULT, now);
+                if (m->setpoint.current_limit <= 0.001f) {
+                    m->view.last_tx_tick = now;
+                } else {
+                    m->view.stats.timeout_count++;
+                    m->view.alarm_flags |= CHG_LIB_ALARM_COMM_FAIL;
+                    set_state(m, CHG_LIB_STATE_FAULT, now);
+                }
             } else {
                 /* BUGFIX: the RUNNING confirmation below requires
                  * m->view.voltage > 0, but that field is only refreshed by
