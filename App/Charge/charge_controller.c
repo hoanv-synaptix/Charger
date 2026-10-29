@@ -87,6 +87,10 @@ static struct {
     float last_valid_target_current_per_module_a;
     bool module_target_hold_active;
     bool zero_target_hold_logged;
+    int last_logged_manual_v_int;
+    int last_logged_manual_i_int;
+    int last_logged_standalone_v_int;
+    int last_logged_standalone_i_int;
 
     /* Applied values */
     float applied_voltage_v;
@@ -1005,6 +1009,10 @@ static void stop_charging(void) {
     g_ctrl.last_valid_target_current_per_module_a = 0.0f;
     g_ctrl.module_target_hold_active = false;
     g_ctrl.zero_target_hold_logged = false;
+    g_ctrl.last_logged_manual_v_int = -1;
+    g_ctrl.last_logged_manual_i_int = -1;
+    g_ctrl.last_logged_standalone_v_int = -1;
+    g_ctrl.last_logged_standalone_i_int = -1;
     g_ctrl.standalone_vmax_reached_tick = 0;
     g_ctrl.protect_jack_temp_trip_timer_tick = 0;
     g_ctrl.protect_jack_temp_timer_tick = 0;
@@ -1693,10 +1701,9 @@ static void run_manual_mode(uint32_t now_tick) {
 
     int v_int = (int)(g_ctrl.target_voltage_v * 10.0f);
     int i_int = (int)(g_ctrl.target_current_per_module_a * 10.0f);
-    static int last_v_int = -1, last_i_int = -1;
-    if (v_int != last_v_int || i_int != last_i_int) {
-        last_v_int = v_int;
-        last_i_int = i_int;
+    if (v_int != g_ctrl.last_logged_manual_v_int || i_int != g_ctrl.last_logged_manual_i_int) {
+        g_ctrl.last_logged_manual_v_int = v_int;
+        g_ctrl.last_logged_manual_i_int = i_int;
         LOG("CC: Manual V=%d.%dV I=%d.%dA/mod\r\n",
             v_int / 10, v_int % 10, i_int / 10, i_int % 10);
     }
@@ -1771,10 +1778,9 @@ static void run_standalone_mode(uint32_t now_tick) {
 
     int v_int = (int)(g_ctrl.target_voltage_v * 10.0f);
     int i_int = (int)(g_ctrl.target_current_per_module_a * 10.0f);
-    static int last_v_int = -1, last_i_int = -1;
-    if (v_int != last_v_int || i_int != last_i_int) {
-        last_v_int = v_int;
-        last_i_int = i_int;
+    if (v_int != g_ctrl.last_logged_standalone_v_int || i_int != g_ctrl.last_logged_standalone_i_int) {
+        g_ctrl.last_logged_standalone_v_int = v_int;
+        g_ctrl.last_logged_standalone_i_int = i_int;
         LOG("CC: Standalone V=%d.%dV I=%d.%dA/mod\r\n",
             v_int / 10, v_int % 10, i_int / 10, i_int % 10);
     }
@@ -2117,6 +2123,10 @@ void ChargeController_Init(void) {
     g_ctrl.last_derating = 1;
     g_ctrl.last_running = 0;
     g_ctrl.stop_reason = CHARGE_STOP_NONE;
+    g_ctrl.last_logged_manual_v_int = -1;
+    g_ctrl.last_logged_manual_i_int = -1;
+    g_ctrl.last_logged_standalone_v_int = -1;
+    g_ctrl.last_logged_standalone_i_int = -1;
     /* Same "no sensor reading yet" fallback apply_jack_temp_derating used
      * to apply itself when all 4 NTC channels read invalid. */
     g_ctrl.jack_temp_input_c = 25.0f;
@@ -2243,8 +2253,7 @@ void ChargeController_Process(uint32_t now_tick) {
 
         case CHARGE_CTRL_STATE_DELAY: {
             stop_charging();
-            uint32_t elapsed_s = (now_tick >= g_ctrl.delay_start_tick) ?
-                                 ((now_tick - g_ctrl.delay_start_tick) / 1000U) : 0U;
+            uint32_t elapsed_s = (uint32_t)(now_tick - g_ctrl.delay_start_tick) / 1000U;
             if (elapsed_s >= g_ctrl.delay_duration_s) {
                 g_ctrl.delay_remaining_s = 0U;
                 g_ctrl.is_delaying = false;
@@ -2343,6 +2352,10 @@ bool ChargeController_Start(ChargeCtrlOwner_t owner, bool manual_mode, uint32_t 
         (unsigned)g_ctrl.source_module_count, (unsigned)g_ctrl.actual_module_count);
 
     g_ctrl.stop_reason = CHARGE_STOP_NONE;
+    g_ctrl.last_logged_manual_v_int = -1;
+    g_ctrl.last_logged_manual_i_int = -1;
+    g_ctrl.last_logged_standalone_v_int = -1;
+    g_ctrl.last_logged_standalone_i_int = -1;
     g_ctrl.standalone_vmax_reached_tick = 0;
     
     /* Reset hysteresis tracking bands for the new cycle */
@@ -2441,6 +2454,10 @@ bool ChargeController_StartPrecharge(ChargeCtrlOwner_t owner, uint32_t now_tick)
     g_ctrl.source_module_count = cfg.source_module_count;
     g_ctrl.actual_module_count = actual_count;
     g_ctrl.stop_reason = CHARGE_STOP_NONE;
+    g_ctrl.last_logged_manual_v_int = -1;
+    g_ctrl.last_logged_manual_i_int = -1;
+    g_ctrl.last_logged_standalone_v_int = -1;
+    g_ctrl.last_logged_standalone_i_int = -1;
     g_ctrl.precharge_hold_active = false;
     g_ctrl.precharge_hold_start_tick = 0U;
     g_ctrl.precharge_hold_loss_tick = 0U;

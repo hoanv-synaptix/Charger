@@ -16,3 +16,7 @@ void BSP_EnterCritical(void) {
 void BSP_ExitCritical(void) {
     __enable_irq();
 }
+
+void BSP_SystemReset(void) {
+    NVIC_SystemReset();
+}

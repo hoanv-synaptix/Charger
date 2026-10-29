@@ -33,6 +33,7 @@ void ChargeCycleConfig_GetDefaults(ChargeCycleConfig_t *config)
     config->can_battery_id = 1U;
     config->source_module_count = 1U;
     config->module_address = DEFAULT_MODULE_ADDRESS;
+    config->auto_start_enabled = DEFAULT_AUTO_START_ENABLED;
 
     config->battery_capacity_ah = DEFAULT_BATTERY_CAPACITY_AH;
     config->imin_c = DEFAULT_IMIN_C;

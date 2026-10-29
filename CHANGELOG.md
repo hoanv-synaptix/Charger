@@ -2,6 +2,28 @@
 
 Tất cả các thay đổi quan trọng theo từng phiên bản phát hành của hệ thống Charger Firmware và Tool điều khiển.
 
+## [V2.0.28] - 2026-10-29
+
+### 🚀 Phát Hành Tính Năng Sạc Tự Động Plug & Charge (Workflow W4) & Đồng Bộ Giao Diện HMI DWIN 16MB / 8MB
+- **Tính năng Sạc tự động Plug & Charge (Workflow W4):**
+  - **Tự động bắt đầu sạc khi cắm giắc (Auto Start on Plug-in):** Khi xe kết nối và tín hiệu CAN từ BMS ổn định trong 1.5 giây (`AUTO_START_CAN_ONLINE_DEBOUNCE_MS`), trạm sạc tự động kích hoạt chu trình sạc (`ChargeController_Start`) mà người dùng không cần bấm nút START trên màn hình.
+  - **Khóa an toàn chống tự kích hoạt lại (Anti-Restart Lock):** Khi người dùng chủ động bấm STOP hoặc pin sạc đầy (COMPLETE), hệ thống khóa cờ `user_stopped` / `charge_completed` để ngăn chặn trạm sạc tự động phóng điện đè lên khi giắc sạc vẫn đang cắm trong xe.
+  - **Tự động giải phóng khóa an toàn khi rút giắc (Session Reset on Unplug):** Khi giắc sạc được rút ra (tín hiệu BMS CAN ngắt $\ge 5$ giây), session được reset an toàn sẵn sàng cho xe tiếp theo cắm vào.
+  - **Kiểm soát điều kiện pin đầy & an toàn hệ thống:** Kiểm tra pin đã đầy sẵn (`AutoStart_IsBatteryFull` theo cell voltage, SOC, pack voltage) để khóa trạng thái COMPLETE, kiểm tra các cờ lỗi cứng BMS / hệ thống trước khi cho phép sạc.
+- **Cấu hình lưu trữ Flash v10 (`ChargeCycleStorage`):**
+  - Bổ sung trường `auto_start_enabled` (0: MANUAL, 1: AUTO) vào cấu hình `ChargeCycleConfig_t`.
+  - Đồng bộ độc lập cho cả 2 Profile sạc Nhanh (`Fast`) và Tiêu chuẩn (`Normal`).
+  - Đảm bảo tương thích ngược và nâng cấp trong suốt từ các bản lưu trữ v5, v6, v7, v8, v9.
+- **Đồng bộ hóa giao diện HMI DWIN (Hỗ trợ song song màn hình 16MB & 8MB):**
+  - **Bổ sung giao diện chế độ Auto:** Thêm trang Page 12 Setting Auto (`12_setting_auto.png`), công tắc chuyển chế độ Auto/Manual (`VP 0x1132`), nút truy cập Setting từ Footer Dashboard (`VP 0x1060`).
+  - **Chuẩn hóa kiến trúc Flash cho màn hình 8MB (`ui_darkmode_8MB`):**
+    - Phân bổ ảnh nền UI vào Block 29 (`29.icl`) thay cho Block 32 để vừa vặn trọn vẹn trong không gian 32 block Flash ($0 \dots 31$).
+    - Cấu hình file `T5LCFG.CFG`: `ICL Address = 29` (`0x1D`), `Touch-sensitive Variable Changes Update: Auto` (`0x38`) để màn hình tự động truyền mã phím `0x83` tức thì về MCU khi chạm cảm ứng.
+- **Kiểm thử tự động HIL & Unit Tests:**
+  - 11/11 Unit Tests cho logic Auto Start (`test_auto_start_logic.c`) PASS 100%.
+  - 5/5 Live Hardware Automation Tests qua ZLG USBCAN (`test_hil_auto_start_live.py`) PASS 100% trên bàn test thực tế.
+  - Local CI 10/10 Stages PASS 100%.
+
 ## [V2.0.27] - 2026-10-21
 
 ### 🚀 Triệt Tiêu Hoàn Toàn Lỗi Ảo W010 Trước E005 & E031, Hoàn Thiện Cascade Suppression 31 Mã Lỗi

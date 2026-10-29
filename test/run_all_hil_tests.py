@@ -63,6 +63,7 @@ def main():
         bms.fault_high_pack_volt = 0
         bms.max_cell_temp_c = 28.0
         bms.transmitting = True
+        bms.last_ctrl_allow_charge = False
 
         mod.actually_on = False
         mod.fault_bits = 0x0000
@@ -110,7 +111,8 @@ def main():
             act_i = m.get("total_current", 0.0)
             di = act_i - last_i
             last_i = act_i
-            ramp_rates.append(di)
+            if s > 1: # Bo qua do tre dong relay / khoi dong ban dau
+                ramp_rates.append(di)
             print(f"    t={s:02d}s: I={act_i:.1f}A (+{di:.1f}A/s) | MCU={m.get('controller_state')}", flush=True)
         # Verify ramp: each step <= 6.0A/s and final >= 20A
         max_ramp = max(ramp_rates) if ramp_rates else 0
@@ -452,6 +454,13 @@ def main():
                 icon = "✅ PASS" if r["passed"] else "❌ FAIL"
                 f.write(f"| {idx} | {r['suite']} | {r['code']} | {r['title']} | **{icon}** | {r['detail']} |\n")
         print(f"\n[INFO] Đã xuất báo cáo chi tiết ra file: {REPORT_FILE}\n", flush=True)
+
+        if "--no-hold" in sys.argv:
+            bms.running = False
+            mod.running = False
+            sniffer.close()
+            dev.close()
+            return
 
         # Hold standby
         print("Tiếp tục duy trì Standby (52.8V, SOC 80%) trên màn hình DWIN...")

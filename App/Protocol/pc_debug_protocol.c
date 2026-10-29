@@ -575,6 +575,18 @@ bool DebugProtocol_HandleCommand(uint8_t cmd, const uint8_t *payload, uint16_t l
             config.delay_enabled = curr.delay_enabled;
             config.delay_hours = curr.delay_hours;
             config.delay_minutes = curr.delay_minutes;
+        } else if (len == 254U) {
+            /* v9 payload backward compatibility */
+            target_mode = (payload[243] <= 1U) ? payload[243] : ChargeCycleConfig_GetActiveMode();
+            ChargeCycleConfig_GetProfile(target_mode, &config);
+            memcpy(&config, payload, 254U);
+            config.version = CHARGE_CYCLE_CONFIG_VERSION;
+            config.auto_start_enabled = DEFAULT_AUTO_START_ENABLED;
+            ChargeCycleConfig_t curr;
+            ChargeCycleConfig_GetProfile(target_mode, &curr);
+            config.delay_enabled = curr.delay_enabled;
+            config.delay_hours = curr.delay_hours;
+            config.delay_minutes = curr.delay_minutes;
         } else if (len == 253U) {
             /* v8 payload backward compatibility */
             target_mode = (payload[243] <= 1U) ? payload[243] : ChargeCycleConfig_GetActiveMode();

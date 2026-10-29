@@ -8,6 +8,7 @@
  */
 
 #include "app_main.h"
+#include "auto_start.h"
 #include "bsp_can.h"
 #include "bsp_adc.h"
 #include "bsp_rs485.h"
@@ -315,6 +316,14 @@ static void dwin_send_identity_and_page(uint32_t now)
     last_dwin_full_tick = now;
 }
 
+static void dwin_refresh_setting_strings(void)
+{
+    char hw_buf[16];
+    dwin_format_hw_version(ChargeCycleConfig_GetHwRev(), hw_buf, sizeof(hw_buf));
+    DWIN_SendSettingStrings(hw_buf, FW_VERSION_STRING,
+                            ChargeCycleConfig_GetDeviceId());
+}
+
 static void dwin_check_and_send_identity_update(void)
 {
     static char s_last_dev_id[16] = "";
@@ -494,7 +503,8 @@ static uint16_t dwin_status_from_state(const ChargeCtrlView_t *cc,
      * In standby (with or without BMS/modules), always present READY + START. */
     if (cc->stop_reason == CHARGE_STOP_VOLTAGE_REACHED ||
         cc->stop_reason == CHARGE_STOP_CELL_VOLTAGE_REACHED ||
-        cc->stop_reason == CHARGE_STOP_SOC_REACHED) {
+        cc->stop_reason == CHARGE_STOP_SOC_REACHED ||
+        AutoStart_IsChargeCompleted()) {
         return DWIN_STATUS_COMPLETE;
     }
     return DWIN_STATUS_READY;
@@ -536,11 +546,13 @@ static void app_action_button(uint16_t dwin_status, uint32_t now)
     switch (dwin_status) {
         case DWIN_STATUS_READY:
             LOG("App: button (READY) -> start charge cycle\r\n");
+            AutoStart_OnUserStart();
             ChargeController_Start(CHARGE_CTRL_OWNER_DWIN, false, now);
             break;
         case DWIN_STATUS_STARTING:
         case DWIN_STATUS_CHARGING:
             LOG("App: button (STARTING/CHARGING) -> stop charge cycle\r\n");
+            AutoStart_OnUserStop();
             ChargeController_Stop(now);
             break;
         case DWIN_STATUS_ERROR:
@@ -559,6 +571,7 @@ static void app_action_button(uint16_t dwin_status, uint32_t now)
         case DWIN_STATUS_COMPLETE:
             LOG("App: button (COMPLETE) -> acknowledge, back to READY\r\n");
             ChargeController_AcknowledgeCompletion();
+            AutoStart_OnUserReset();
             break;
         default:
             break;
@@ -670,6 +683,9 @@ void App_Init(void)
     Alarm_Init();
     LOG("App_Init: Alarm subsystem initialized.\r\n");
 
+    /* Initialize auto-start (Workflow W4) */
+    AutoStart_Init();
+
     /* Initialize ADC for NTC */
     BSP_ADC_Init();
     LOG("App_Init: NTC ADC initialized.\r\n");
@@ -764,6 +780,9 @@ void App_Loop(void)
          * mirror below -- an alarm that commands a stop this tick is reflected
          * in the relay write via the ChargeController_GetView() there. */
         Alarm_Process(now);
+
+        /* Auto Start Workflow W4 handler */
+        AutoStart_Process(now);
 
         /* Cập nhật Rơ-le (Relay) — quyết định đóng/mở được tính trong
          * ChargeController_Process() (relay_should_close: RUNNING + điện áp
@@ -1313,6 +1332,19 @@ void DWIN_OnKeyEvent(uint16_t vp, uint16_t keyval)
 
     LOG("DWIN: key event (vp=0x%04X keyval=0x%04X)\r\n", (unsigned)vp, (unsigned)keyval);
 
+    if (vp == VP_HOME_SETTING_KEY || (vp == VP_TIME_MODE_KEY && keyval == DWIN_SETTING_KEY_OPEN_SET)) {
+        ChargeCycleConfig_t cfg;
+        ChargeCycleConfig_Get(&cfg);
+        uint16_t target_page = (cfg.auto_start_enabled != 0U) ?
+                                DWIN_PAGE_SETTING_AUTO : DWIN_PAGE_SETTING_MANUAL;
+        LOG("DWIN: Open Setting page=%u (auto_start_enabled=%u)\r\n",
+            (unsigned)target_page, (unsigned)cfg.auto_start_enabled);
+        DWIN_InvalidateSyncState();
+        DWIN_SetPage(target_page);
+        dwin_refresh_setting_strings();
+        return;
+    }
+
     if (vp == VP_TIME_MODE_KEY) {
         if (keyval == DWIN_SETTING_KEY_LOGIN) {
             dwin_open_login();
@@ -1336,6 +1368,29 @@ void DWIN_OnKeyEvent(uint16_t vp, uint16_t keyval)
             uint16_t time_vals[2] = { s_cfg_hours, s_cfg_minutes };
             DWIN_SendWords(VP_CFG_HOURS, time_vals, 2U);
         }
+        return;
+    }
+
+    if (vp == VP_SET_AUTO_TOGGLE) {
+        uint8_t en = (keyval == DWIN_SET_KEY_AUTO_ON || keyval == 1U) ? 1U : 0U;
+        ChargeCycleConfig_t cfg;
+        ChargeCycleConfig_Get(&cfg);
+        if (cfg.auto_start_enabled != en) {
+            ChargeCycleConfig_t p_fast, p_norm;
+            ChargeCycleConfig_GetProfile(CHARGE_MODE_FAST, &p_fast);
+            ChargeCycleConfig_GetProfile(CHARGE_MODE_NORMAL, &p_norm);
+            p_fast.auto_start_enabled = en;
+            p_norm.auto_start_enabled = en;
+            ChargeCycleConfig_SetProfile(CHARGE_MODE_FAST, &p_fast);
+            ChargeCycleConfig_SetProfile(CHARGE_MODE_NORMAL, &p_norm);
+            (void)ChargeCycleStorage_SaveProfile(CHARGE_MODE_FAST, &p_fast);
+            (void)ChargeCycleStorage_SaveProfile(CHARGE_MODE_NORMAL, &p_norm);
+            LOG("DWIN: auto_start_enabled set to %u (saved to flash for all profiles)\r\n", (unsigned)en);
+        }
+        uint16_t target_page = (en != 0U) ? DWIN_PAGE_SETTING_AUTO : DWIN_PAGE_SETTING_MANUAL;
+        DWIN_InvalidateSyncState();
+        DWIN_SetPage(target_page);
+        dwin_refresh_setting_strings();
         return;
     }
 

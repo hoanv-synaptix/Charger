@@ -62,7 +62,7 @@ int main(void)
     bool ok = true;
     ChargeCycleConfig_t old_cfg;
     ChargeCycleConfig_t loaded;
-    uint8_t record[256]; /* v5 and v6 records both occupy one aligned slot. */
+    uint8_t record[512]; /* Buffer large enough for any record version */
 
     memset(g_charge_config_test_flash, 0xFF, sizeof(g_charge_config_test_flash));
     ChargeCycleConfig_GetDefaults(&old_cfg);
@@ -113,21 +113,43 @@ int main(void)
                  loaded.delay_hours == 2U && loaded.delay_minutes == 30U,
                  "v6 migration installs v7 defaults (FAST, DELAY OFF, 02:30)");
 
-    /* Test native v7 save and load roundtrip */
+    /* Test native v10 save and load roundtrip with auto_start_enabled */
     ChargeCycleConfig_GetDefaults(&loaded);
     loaded.charge_mode = 1U;
     loaded.delay_enabled = 1U;
     loaded.delay_hours = 5U;
     loaded.delay_minutes = 45U;
-    ok &= expect(ChargeCycleStorage_Save(&loaded), "v7 native save succeeds");
+    loaded.auto_start_enabled = 1U;
+    ok &= expect(ChargeCycleStorage_Save(&loaded), "v10 native save succeeds");
 
     ChargeCycleConfig_t reloaded;
     memset(&reloaded, 0, sizeof(reloaded));
-    ok &= expect(ChargeCycleStorage_Load(&reloaded), "v7 native load succeeds");
-    ok &= expect(reloaded.version == CHARGE_CYCLE_CONFIG_VERSION, "v7 native load version matches");
+    ok &= expect(ChargeCycleStorage_Load(&reloaded), "v10 native load succeeds");
+    ok &= expect(reloaded.version == CHARGE_CYCLE_CONFIG_VERSION, "v10 native load version matches");
     ok &= expect(reloaded.charge_mode == 1U && reloaded.delay_enabled == 1U &&
-                 reloaded.delay_hours == 5U && reloaded.delay_minutes == 45U,
-                 "v7 native fields roundtrip intact");
+                 reloaded.delay_hours == 5U && reloaded.delay_minutes == 45U &&
+                 reloaded.auto_start_enabled == 1U,
+                 "v10 native fields roundtrip intact including auto_start_enabled");
+
+    /* Test v9 -> v10 migration (v9 payload = 254 bytes) */
+    memset(g_charge_config_test_flash, 0xFF, sizeof(g_charge_config_test_flash));
+    ChargeCycleConfig_GetDefaults(&old_cfg);
+    old_cfg.version = 9U;
+    memset(record, 0xFF, sizeof(record));
+    payload_length = 254U;
+    memcpy(&record[0], &magic, sizeof(magic));
+    memcpy(&record[4], &record_version, sizeof(record_version));
+    memcpy(&record[6], &payload_length, sizeof(payload_length));
+    memcpy(&record[12], &old_cfg, 254U);
+    payload_crc = crc32(&record[12], 254U);
+    memcpy(&record[8], &payload_crc, sizeof(payload_crc));
+    memcpy(g_charge_config_test_flash, record, sizeof(record));
+
+    memset(&loaded, 0, sizeof(loaded));
+    ok &= expect(ChargeCycleStorage_Load(&loaded), "v9 record loads");
+    ok &= expect(loaded.version == CHARGE_CYCLE_CONFIG_VERSION, "v9 migration upgrades version to v10");
+    ok &= expect(loaded.auto_start_enabled == DEFAULT_AUTO_START_ENABLED,
+                 "v9 migration installs default auto_start_enabled (0: MANUAL)");
 
     /* Test Dual Profile independent saving and re-packing */
     ChargeCycleConfig_t fast_in, norm_in;

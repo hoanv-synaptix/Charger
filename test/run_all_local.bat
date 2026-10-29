@@ -243,6 +243,36 @@ if %errorlevel% neq 0 (
     exit /b %errorlevel%
 )
 
+echo Running Auto Start (Workflow W4) Logic Unit Tests...
+gcc -Wall -I"test/mock_hal" -I"test/host_charge_sim" -I"Modules/chg_lib" -I"Modules/bms" -I"BSP" -I"Utils/Log" -I"App/Charge" -I"App/Alarm" -I"App/System" -I"App/Storage" -I"Middlewares/FatFS" ^
+    test/host_auto_start_sim/test_auto_start_logic.c ^
+    test/host_charge_sim/sim_can_modules.c ^
+    test/host_charge_sim/sim_bms.c ^
+    test/mock_hal/mock_stubs.c ^
+    App/System/auto_start.c ^
+    App/Alarm/alarm.c ^
+    App/Charge/charge_controller.c ^
+    App/Charge/charge_cycle_config.c ^
+    Modules/chg_lib/chg_lib_core.c ^
+    Modules/chg_lib/chg_lib_can_backend.c ^
+    Modules/chg_lib/chg_lib_maxwell.c ^
+    Modules/chg_lib/chg_lib_lianming.c ^
+    Modules/chg_lib/chg_lib_tonhe.c ^
+    Modules/chg_lib/chg_lib_fsm.c ^
+    Modules/bms/bms_core.c ^
+    Modules/bms/bms_can.c ^
+    Modules/bms/bms_protocol.c ^
+    -lm -o test_auto_start_logic.exe
+if %errorlevel% neq 0 (
+    echo [FAIL] Compilation of test_auto_start_logic.c Failed!
+    exit /b %errorlevel%
+)
+.\test_auto_start_logic.exe
+if %errorlevel% neq 0 (
+    echo [FAIL] Auto Start Logic Unit Tests Failed!
+    exit /b %errorlevel%
+)
+
 echo [9/10] Building Firmware (Release preset)...
 call build.bat
 if %errorlevel% neq 0 (

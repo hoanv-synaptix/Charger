@@ -670,6 +670,19 @@ class DwinScreenSniffer(threading.Thread):
             time.sleep(0.01)
 
     def _decode_frame(self, cmd: int, vp: int, data: bytes):
+        if cmd == 0x83:
+            nw = data[0] if len(data) >= 1 else 0
+            keyval = ((data[1] << 8) | data[2]) if len(data) >= 3 else 0
+            vp_names = {
+                0x1043: "NUT ACTION (START / STOP / RESET)",
+                0x1060: "NUT SETTING FOOTER (Page 01 -> Setting)",
+                0x1132: "CONG TAC AUTO / MANUAL",
+                0x1130: "NUT TIME & MODE / LOGIN",
+            }
+            name = vp_names.get(vp, f"VP 0x{vp:04X}")
+            print(f"\n>>> [RS485 NHAN TIN HIEU BAM NUT DWIN] {name} | VP=0x{vp:04X} | KeyVal=0x{keyval:04X} ({keyval})\n", flush=True)
+            return
+
         if cmd != 0x82:
             return
         updated = False
@@ -714,7 +727,11 @@ class DwinScreenSniffer(threading.Thread):
             self.state["status_icon"] = struct.unpack(">H", data[:2])[0]
             updated = True
         elif vp == 0x1042 and len(data) >= 2:  # Button icon
-            self.state["button_icon"] = struct.unpack(">H", data[:2])[0]
+            btn_mode = struct.unpack(">H", data[:2])[0]
+            if self.state["button_icon"] != btn_mode:
+                btn_names = {0: "START", 1: "STOP", 2: "RESET"}
+                print(f"\n>>> [RS485 MCU PHAN HOI] Doi bieu tuong nut sang: {btn_names.get(btn_mode, str(btn_mode))}\n", flush=True)
+            self.state["button_icon"] = btn_mode
             updated = True
         elif vp == 0x1510:  # Precharge Voltage (8B GBK Text)
             text = data.decode("latin1", errors="ignore").rstrip("\x00").strip()
@@ -734,6 +751,8 @@ class DwinScreenSniffer(threading.Thread):
             updated = True
         elif vp == 0x0084 and len(data) >= 4:  # SYS_PIC_SET (Page)
             page = struct.unpack(">H", data[2:4])[0]
+            if self.state["current_page"] != page:
+                print(f"\n>>> [RS485 MCU PHAN HOI] Chuyen sang Trang: Page {page}\n", flush=True)
             self.state["current_page"] = page
             updated = True
         elif vp == 0x1500:  # Login PIN mask

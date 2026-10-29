@@ -781,6 +781,8 @@ void DWIN_ParseRX(const uint8_t *buf, uint16_t len)
                         } else if ((vp == VP_SET_LOGIN_KEY || vp == VP_TIME_MODE_KEY ||
                                     vp == VP_LOGIN_KEY ||
                                     vp == VP_PRECHARGE_ACTION_KEY ||
+                                    vp == VP_SET_AUTO_TOGGLE ||
+                                    vp == VP_HOME_SETTING_KEY ||
                                     vp == VP_CFG_APPLY_KEY) && keyval != 0U) {
                             s_last_page = -1;
                             DWIN_OnKeyEvent(vp, keyval);

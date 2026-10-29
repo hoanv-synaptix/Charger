@@ -44,6 +44,7 @@ extern "C" {
 #define DEFAULT_DELAY_HOURS                   2U
 #define DEFAULT_DELAY_MINUTES                 30U
 #define DEFAULT_MODULE_ADDRESS                1U
+#define DEFAULT_AUTO_START_ENABLED            0U /* 0: MANUAL (default), 1: AUTO */
 
 #define DEFAULT_CELL_VOLT_ENABLED             1U
 #define DEFAULT_CELL_VOLT_DELTA_T_S           0.0f
@@ -195,9 +196,12 @@ typedef struct __attribute__((packed)) {
 
     /* v9: Base CAN ID address for charging module(s) */
     uint8_t  module_address;  /* 0..240 (default: 1) */
+
+    /* v10: Plug & Charge Auto Start workflow (W4) */
+    uint8_t  auto_start_enabled; /* 0: MANUAL (default), 1: AUTO */
 } ChargeCycleConfig_t;
 
-_Static_assert(sizeof(ChargeCycleConfig_t) == 254, "ChargeCycleConfig_t must stay 254 bytes");
+_Static_assert(sizeof(ChargeCycleConfig_t) == 255, "ChargeCycleConfig_t must stay 255 bytes");
 
 #define CHARGE_MODE_FAST                      0U
 #define CHARGE_MODE_NORMAL                    1U

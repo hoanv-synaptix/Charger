@@ -585,8 +585,8 @@ static void process_frame(uint8_t cmd, const uint8_t *payload, uint8_t len)
         if (ok) {
             send_ack(cmd);
             PC_Protocol_ProcessTx();
-            HAL_Delay(100);
-            NVIC_SystemReset();
+            BSP_Delay(100);
+            BSP_SystemReset();
             return;
         }
         break;

@@ -57,6 +57,7 @@
 #define VP_TOPBAR_FAULT_CODE 0x1044U  /* MCU->panel: shared fault-code Text, 8 bytes; shown on Home and Page 07 */
 #define DWIN_SOC_TEXT_VP     0x1048U  /* MCU->panel: Text GBK, 8 bytes = 4 VP @ 0x1048..0x104B */
 #define VP_CHG_DURATION      0x1050U  /* MCU->panel: Text GBK, 16 bytes = 8 VP @ 0x1050..0x1057 (VD: "01:25:34") */
+#define VP_HOME_SETTING_KEY  0x1060U  /* panel->MCU: Return Key on Home (Page 01) -> Open Setting (Page 02 or 12) */
 
 /* SOC Text Display style pointer contract from the DWIN project. The color
  * field is three WORDs after the SP, not a byte or bit offset. */
@@ -86,6 +87,9 @@ typedef enum {
 #define VP_SET_TOTAL_ENERGY  0x1120U  /* ASCII/GBK, 8 VP / 16 chars: "685.2 kWh" */
 #define VP_SET_UPTIME        0x1128U  /* ASCII/GBK, 8 VP / 16 chars: "1000h" (total charge hours) */
 #define VP_SET_LOGIN_KEY     0x1130U  /* panel->MCU: Return Key -> admin Login page */
+#define VP_SET_AUTO_TOGGLE   0x1132U  /* panel->MCU: Return Key (1: AUTO, 2: MANUAL) */
+#define DWIN_SET_KEY_AUTO_ON 0x0001U  /* Turn ON Auto Start (sent from Manual page) */
+#define DWIN_SET_KEY_AUTO_OFF 0x0002U /* Turn OFF Auto Start (sent from Auto page) */
 
 #define VP_SET_ID_WORDS      4U       /* 4 VP = 8 bytes max for HW, FW, Device ID */
 #define VP_SET_STR_WORDS     8U       /* default field width */
@@ -120,6 +124,7 @@ typedef enum {
 #define DWIN_PRECHARGE_KEY_START   0x0001U /* Legacy alias */
 #define DWIN_PRECHARGE_KEY_STOP    0x0001U /* Legacy alias */
 #define DWIN_SETTING_KEY_LOGIN     0x0301U
+#define DWIN_SETTING_KEY_OPEN_SET  0x0303U
 
 /* Status icon values for 27.icl (Precharge status) */
 typedef enum {
@@ -176,16 +181,18 @@ typedef enum {
 #define DWIN_CFG_KEY_NORM_OFF      0x0004U
 
 typedef enum {
-    DWIN_PAGE_LOGO         = 0,
-    DWIN_PAGE_DASH         = 1,
-    DWIN_PAGE_SETTING      = 2,
-    DWIN_PAGE_ALARM        = 3,
-    DWIN_PAGE_LOGIN        = 6,
-    DWIN_PAGE_PRECHARGE    = 7,
+    DWIN_PAGE_LOGO            = 0,
+    DWIN_PAGE_DASH            = 1,
+    DWIN_PAGE_SETTING         = 2,
+    DWIN_PAGE_SETTING_MANUAL  = 2,
+    DWIN_PAGE_ALARM           = 3,
+    DWIN_PAGE_LOGIN           = 6,
+    DWIN_PAGE_PRECHARGE       = 7,
     DWIN_PAGE_CONFIG_FAST_ON  = 8,
     DWIN_PAGE_CONFIG_FAST_OFF = 9,
     DWIN_PAGE_CONFIG_NORM_ON  = 10,
     DWIN_PAGE_CONFIG_NORM_OFF = 11,
+    DWIN_PAGE_SETTING_AUTO    = 12,
 } DwinPageId_e;
 
 /* VP_SYS_STATUS_ICON values (status-box Variable Icon on the dashboard).
