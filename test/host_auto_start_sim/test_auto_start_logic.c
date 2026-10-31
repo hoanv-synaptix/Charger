@@ -480,6 +480,112 @@ static bool test_auto_start_blocked_by_bms_hard_alarm(void)
     return true;
 }
 
+/**
+ * Case 12: Fault Lockout on E004 High Cell Voltage Prevents Chattering Oscillation.
+ * When BMS trips E004 (high_cell_volt) during charge:
+ * 1. Charger stops immediately (STOPPING -> IDLE, stop_reason = PROTECTION).
+ * 2. AutoStart latches fault_latched = true.
+ * 3. BMS cell voltage drops and clears error flag (high_cell_volt = 0).
+ * 4. AutoStart must NOT auto-start charging again! (Locks out infinite loop).
+ */
+static bool test_auto_start_fault_lockout_on_e004_prevents_chattering(void)
+{
+    printf("Running test_auto_start_fault_lockout_on_e004_prevents_chattering...\n");
+    setup_system();
+
+    ChargeCycleConfig_t cfg;
+    ChargeCycleConfig_Get(&cfg);
+    cfg.auto_start_enabled = 1U;
+    cfg.cell_volt_enabled = 1U;
+    cfg.cell_volt_5_v = 3.60f; /* Higher than BMS trip point */
+    ChargeCycleConfig_Set(&cfg);
+
+    /* 1. Let auto start engage */
+    drive_ms(2000U);
+
+    ChargeCtrlView_t cc;
+    ChargeController_GetView(&cc);
+    ASSERT(cc.state == CHARGE_CTRL_STATE_RUNNING, "Must be charging after 2s");
+
+    /* 2. Battery reaches 100% and cell spikes -> BMS fires E004 (high_cell_volt = 1) */
+    g_sim_bms.high_cell_volt = 1U;
+    drive_ms(200U);
+
+    ChargeController_GetView(&cc);
+    ASSERT(cc.state == CHARGE_CTRL_STATE_FAULT || cc.state == CHARGE_CTRL_STATE_STOPPING,
+           "Must transition to FAULT/STOPPING immediately on E004 high cell voltage");
+    const AutoStartState_t *state = AutoStart_GetState();
+    ASSERT(state->fault_latched == true, "fault_latched must be TRUE after protection stop");
+
+    /* 3. Cell relaxes: BMS clears high_cell_volt back to 0 */
+    g_sim_bms.high_cell_volt = 0U;
+    /* Run for 5 seconds with healthy BMS and plugged cable */
+    drive_ms(5000U);
+
+    /* CRITICAL ASSERTION: Charger must NOT auto-start while fault_latched is true! */
+    ChargeController_GetView(&cc);
+    ASSERT(cc.state != CHARGE_CTRL_STATE_RUNNING,
+           "CRITICAL: Must NOT auto-start after runtime fault (prevents chattering loop)");
+    ASSERT(state->fault_latched == true, "fault_latched must remain latched while plugged");
+
+    /* 4. Unplug cable for > 6s (> 5000ms BMS_OFFLINE_TIMEOUT_MS + 1000ms AUTO_START_CAN_OFFLINE_RESET_MS) */
+    g_sim_bms.transmitting = false;
+    drive_ms(6500U);
+
+    ASSERT(state->fault_latched == false, "Unplugging cable must reset fault_latched");
+
+    printf("[PASS] test_auto_start_fault_lockout_on_e004_prevents_chattering\n");
+    return true;
+}
+
+/**
+ * Case 13: Manual User Start Can Clear Fault Lockout.
+ * If user explicitly presses START after a fault, fault_latched is cleared and charge resumes.
+ */
+static bool test_auto_start_manual_start_can_clear_fault_lockout(void)
+{
+    printf("Running test_auto_start_manual_start_can_clear_fault_lockout...\n");
+    setup_system();
+
+    ChargeCycleConfig_t cfg;
+    ChargeCycleConfig_Get(&cfg);
+    cfg.auto_start_enabled = 1U;
+    ChargeCycleConfig_Set(&cfg);
+
+    /* Start and trip fault */
+    drive_ms(2000U);
+    g_sim_bms.high_cell_volt = 1U;
+    drive_ms(500U);
+
+    const AutoStartState_t *state = AutoStart_GetState();
+    ASSERT(state->fault_latched == true, "Must be fault latched");
+
+    /* Clear fault on BMS side */
+    g_sim_bms.high_cell_volt = 0U;
+    drive_ms(500U);
+
+    /* On DWIN HMI, when in ERROR state, user presses Reset button to clear fault back to IDLE */
+    (void)ChargeController_ResetEmergencyStop(mock_tick);
+    (void)ChargeController_ResetFaultIfSafe(mock_tick);
+    Alarm_Acknowledge(mock_tick);
+    AutoStart_OnUserReset();
+
+    /* User clicks START manually */
+    AutoStart_OnUserStart();
+    ASSERT(state->fault_latched == false, "Manual START must clear fault_latched");
+
+    (void)ChargeController_Start(CHARGE_CTRL_OWNER_DWIN, false, mock_tick);
+    drive_ms(200U);
+
+    ChargeCtrlView_t cc;
+    ChargeController_GetView(&cc);
+    ASSERT(cc.state == CHARGE_CTRL_STATE_RUNNING || cc.state == CHARGE_CTRL_STATE_READY,
+           "Charge must resume after user manual START");
+
+    printf("[PASS] test_auto_start_manual_start_can_clear_fault_lockout\n");
+    return true;
+}
+
 /* ========================================================================= */
 /* Test Runner                                                               */
 /* ========================================================================= */
@@ -500,9 +606,11 @@ int main(void)
     ok &= test_auto_start_cable_unplug_5s_resets_session();
     ok &= test_auto_start_blocked_by_system_alarm();
     ok &= test_auto_start_blocked_by_bms_hard_alarm();
+    ok &= test_auto_start_fault_lockout_on_e004_prevents_chattering();
+    ok &= test_auto_start_manual_start_can_clear_fault_lockout();
 
     if (ok) {
-        printf(">>> ALL 11 AUTO START LOGIC UNIT TESTS PASSED 100%%! <<<\n");
+        printf(">>> ALL 13 AUTO START LOGIC UNIT TESTS PASSED 100%%! <<<\n");
         return 0;
     } else {
         printf(">>> AUTO START LOGIC UNIT TESTS FAILED! <<<\n");

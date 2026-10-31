@@ -14,6 +14,7 @@ void AutoStart_ResetSession(void)
 {
     s_w4.user_stopped = false;
     s_w4.charge_completed = false;
+    s_w4.fault_latched = false;
     s_w4.can_online_since = 0U;
     s_w4.can_offline_since = 0U;
     s_w4.plug_latched = false;
@@ -52,11 +53,13 @@ void AutoStart_OnUserStart(void)
 {
     s_w4.user_stopped = false;
     s_w4.charge_completed = false;
+    s_w4.fault_latched = false;
 }
 
 void AutoStart_OnUserReset(void)
 {
     s_w4.charge_completed = false;
+    s_w4.fault_latched = false;
     s_w4.user_stopped = true;
 }
 
@@ -91,21 +94,42 @@ void AutoStart_Process(uint32_t now)
         if (s_w4.can_offline_since == 0U) {
             s_w4.can_offline_since = now;
         } else if ((uint32_t)(now - s_w4.can_offline_since) >= AUTO_START_CAN_OFFLINE_RESET_MS) {
-            if (s_w4.user_stopped || s_w4.charge_completed) {
+            if (s_w4.user_stopped || s_w4.charge_completed || s_w4.fault_latched) {
                 LOG("AutoStart: Session reset (CAN offline confirmed)\r\n");
             }
             s_w4.user_stopped = false;
             s_w4.charge_completed = false;
+            s_w4.fault_latched = false;
         }
+        /* When cable is unplugged/BMS offline, do not evaluate runtime controller faults */
+        return;
     }
 
-    /* 2. Track completion from ChargeController */
+    /* 2. Track completion & fault lockout from ChargeController */
     ChargeCtrlView_t cc;
     ChargeController_GetView(&cc);
     if (cc.stop_reason == CHARGE_STOP_VOLTAGE_REACHED ||
         cc.stop_reason == CHARGE_STOP_CELL_VOLTAGE_REACHED ||
         cc.stop_reason == CHARGE_STOP_SOC_REACHED) {
         s_w4.charge_completed = true;
+    }
+
+    /* Lockout AutoStart on any runtime fault/protection stop to prevent oscillation/chattering.
+     * Note: cc.stop_reason == CHARGE_STOP_BMS_OFFLINE indicates cable disconnect, which must NOT
+     * lock out the next vehicle plug-in session. */
+    if (cc.stop_reason == CHARGE_STOP_PROTECTION ||
+        cc.stop_reason == CHARGE_STOP_BMS_ALARM ||
+        cc.stop_reason == CHARGE_STOP_MODULE_FAULT ||
+        cc.stop_reason == CHARGE_STOP_MODULE_TIMEOUT ||
+        cc.stop_reason == CHARGE_STOP_EMERGENCY ||
+        (cc.state == CHARGE_CTRL_STATE_FAULT &&
+         cc.stop_reason != CHARGE_STOP_BMS_OFFLINE &&
+         cc.stop_reason != CHARGE_STOP_NONE)) {
+        if (!s_w4.fault_latched) {
+            s_w4.fault_latched = true;
+            LOG("AutoStart: Fault detected (stop_reason=%u, state=%d) -> Lockout engaged\r\n",
+                (unsigned)cc.stop_reason, (int)cc.state);
+        }
     }
 
     /* 3. If auto start is disabled or plug not latched, nothing to do */
@@ -115,8 +139,8 @@ void AutoStart_Process(uint32_t now)
         return;
     }
 
-    /* 4. Check if session was stopped or completed */
-    if (s_w4.user_stopped || s_w4.charge_completed) {
+    /* 4. Check if session was stopped, completed, or faulted */
+    if (s_w4.user_stopped || s_w4.charge_completed || s_w4.fault_latched) {
         return;
     }
 
@@ -141,9 +165,8 @@ void AutoStart_Process(uint32_t now)
         return;
     }
 
-    /* 7. If controller in FAULT due to previous disconnect, try clearing if safe */
-    if (cc.state == CHARGE_CTRL_STATE_FAULT) {
-        (void)ChargeController_ResetEmergencyStop(now);
+    /* 7. If controller was left in FAULT due to cable disconnect (BMS offline), clear it now that plug is latched */
+    if (cc.state == CHARGE_CTRL_STATE_FAULT && s_w4.plug_latched && !s_w4.fault_latched) {
         if (ChargeController_ResetFaultIfSafe(now)) {
             Alarm_Acknowledge(now);
             ChargeController_GetView(&cc);

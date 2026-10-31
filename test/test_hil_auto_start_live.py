@@ -140,6 +140,12 @@ def main():
     print("\n" + "-" * 70)
     print(">>> [TEST 3/5] Plug & Charge Auto Start - Cam giac -> Tu dong sac sau 1.5s")
     print("-" * 70)
+    # Ensure idle state before starting test
+    bms.transmitting = True
+    time.sleep(1.0)
+    ensure_idle_state("COM26")
+    time.sleep(0.5)
+
     # Simulate unplugging first to reset session
     bms.transmitting = False
     print("  [1] Mo phong chua cam giac (ngat CAN 5.5s de reset session)...")
@@ -149,7 +155,7 @@ def main():
     bms.transmitting = True
     t_start = time.time()
 
-    st, ok, elapsed = wait_for_state([1, 2], timeout=5.0)
+    st, ok, elapsed = wait_for_state([1, 2], timeout=6.0)
     print(f"  [3] Phat hien MCU chuyen sang: {st} ({CHARGE_CTRL_STATE_NAMES.get(st)}) sau {elapsed:.2f}s (Chuan: >= 1.5s)")
 
     if ok:

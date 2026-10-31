@@ -13,6 +13,7 @@
 typedef struct {
     bool     user_stopped;
     bool     charge_completed;
+    bool     fault_latched;
     uint32_t can_online_since;
     uint32_t can_offline_since;
     bool     plug_latched;

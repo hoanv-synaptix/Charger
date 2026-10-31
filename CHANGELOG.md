@@ -2,6 +2,20 @@
 
 Tất cả các thay đổi quan trọng theo từng phiên bản phát hành của hệ thống Charger Firmware và Tool điều khiển.
 
+## [V2.0.29] - 2026-10-31
+
+### 🚀 Khóa An Toàn AutoStart Khi Xảy Ra Alarm & Triệt Tiêu Vòng Lặp Sạc Lại E004 (Anti-Chattering)
+- **Triệt tiêu hiện tượng dao động lặp lỗi E004 (Chattering Oscillation):**
+  - **Nguyên nhân gốc rễ:** Khi xe nạp tới 100% SOC (cell đạt ~3.52V), BMS xe phát cờ `high_cell_volt = 1` khiến trạm báo `E004` và ngắt dòng về 0A. Khi dòng ngắt, sụt áp nội trở $IR$ biến mất khiến điện áp cell tự hạ xuống ~3.47V $\rightarrow$ BMS xe xóa cờ lỗi $\rightarrow$ Trạm xóa lỗi E004 $\rightarrow$ `AutoStart_Process` thấy trạng thái `IDLE` nên tự ý xóa lỗi và bật sạc lại, gây ra vòng lặp sạc - ngắt liên tục vô tận.
+  - **Khóa an toàn phiên sạc (`s_w4.fault_latched = true`):** Khi đang trong phiên cắm sạc mà xảy ra bất kỳ lỗi dừng bảo vệ nào (`CHARGE_STOP_PROTECTION`, `CHARGE_STOP_BMS_ALARM`, `CHARGE_STOP_MODULE_FAULT`, `CHARGE_STOP_EMERGENCY`, hoặc `CHARGE_CTRL_STATE_FAULT`), AutoStart lập tức **khóa cứng phiên sạc**, tuyệt đối không tự động kích hoạt sạc lại dù lỗi có tự hết và trạm về `IDLE`.
+  - **Loại bỏ cơ chế tự xóa lỗi ngầm:** Xóa bỏ đoạn code tự ý gọi `ChargeController_ResetFaultIfSafe()` và `Alarm_Acknowledge()` trong `auto_start.c`, bảo đảm trạm tuân thủ đúng tiêu chuẩn an toàn IEC 61851 / GB/T (chỉ xóa lỗi và sạc tiếp khi người dùng rút giắc cắm hoặc bấm START tay).
+  - **Giải phóng khóa phiên (`Session Reset`):** Tự động xóa cờ khóa lỗi `fault_latched` khi rút súng sạc ra khỏi xe (BMS CAN offline liên tục $> 5.0\text{s}$), hoặc khi người dùng chủ động bấm nút START trên màn hình DWIN / App PC.
+- **Kiểm thử tự động & Bổ sung Unit Tests (TDD):**
+  - Mở rộng bộ kiểm thử `Charger/test/host_auto_start_sim/test_auto_start_logic.c` lên 13/13 test cases (PASS 100%):
+    - `test_auto_start_fault_lockout_on_e004_prevents_chattering`: Kiểm chứng ngăn chặn hoàn toàn vòng lặp tự kích sạc lại khi E004 kích hoạt và tự giải tỏa.
+    - `test_auto_start_manual_start_can_clear_fault_lockout`: Kiểm chứng người dùng chủ động bấm START tay có thể giải tỏa khóa an toàn và tiếp tục sạc bình thường.
+  - Cập nhật tài liệu Bảng mã lỗi `BANG_MA_LOI_HE_THONG_.md` và kế hoạch kiến trúc an toàn.
+
 ## [V2.0.28] - 2026-10-29
 
 ### 🚀 Phát Hành Tính Năng Sạc Tự Động Plug & Charge (Workflow W4) & Đồng Bộ Giao Diện HMI DWIN 16MB / 8MB
