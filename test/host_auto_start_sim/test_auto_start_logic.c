@@ -586,6 +586,101 @@ static bool test_auto_start_manual_start_can_clear_fault_lockout(void)
     return true;
 }
 
+/**
+ * Two-Way Handshake: When cable is plugged in before AC breaker is turned on,
+ * AutoStart must stay in safe IDLE standby and NOT trigger E027 or lock out.
+ * When AC power is established, AutoStart must immediately start charging.
+ */
+static bool test_auto_start_waits_for_module_power_before_starting(void)
+{
+    printf("Running test_auto_start_waits_for_module_power_before_starting...\n");
+    setup_system();
+
+    ChargeCycleConfig_t cfg;
+    ChargeCycleConfig_Get(&cfg);
+    cfg.auto_start_enabled = 1U;
+    ChargeCycleConfig_Set(&cfg);
+
+    /* Module is unpowered / silent (AC breaker is off) */
+    g_sim_modules[0].silent = true;
+
+    /* BMS is plugged in and transmitting for 5 seconds */
+    drive_ms(5000U);
+
+    ChargeCtrlView_t cc;
+    ChargeController_GetView(&cc);
+    const AutoStartState_t *state = AutoStart_GetState();
+
+    /* Two-Way Handshake requirement: Must stay in IDLE, no fault latched, within 30s grace period */
+    ASSERT(cc.state == CHARGE_CTRL_STATE_IDLE, "Must stay in IDLE waiting for module power");
+    ASSERT(state->fault_latched == false, "Must not latch fault while waiting for AC power");
+    ASSERT(AutoStart_IsModuleTimeout() == false, "Must not be timed out at 5s");
+
+    AlarmView_t av;
+    Alarm_GetView(&av);
+    ASSERT((av.active_mask & (1ULL << ALARM_CTRL_NO_MODULE)) == 0, "E027 must NOT be reported during grace period");
+
+    /* Now user turns on AC breaker at t=5s -> module boots and communicates */
+    g_sim_modules[0].silent = false;
+    drive_ms(300U);
+
+    ChargeController_GetView(&cc);
+    ASSERT(cc.state == CHARGE_CTRL_STATE_RUNNING || cc.state == CHARGE_CTRL_STATE_READY,
+           "Must automatically start charging once module power is restored");
+
+    printf("[PASS] test_auto_start_waits_for_module_power_before_starting\n");
+    return true;
+}
+
+/**
+ * Module Timeout: When vehicle is plugged in but AC power is NOT turned on for >30s,
+ * E027 warning is displayed. When AC power is eventually turned on, E027 self-clears
+ * and charging automatically begins without requiring cable replug or reset button.
+ */
+static bool test_auto_start_module_timeout_reports_e027_and_recovers_on_ac_power(void)
+{
+    printf("Running test_auto_start_module_timeout_reports_e027_and_recovers_on_ac_power...\n");
+    setup_system();
+
+    ChargeCycleConfig_t cfg;
+    ChargeCycleConfig_Get(&cfg);
+    cfg.auto_start_enabled = 1U;
+    ChargeCycleConfig_Set(&cfg);
+
+    /* Module is silent (AC breaker off) */
+    g_sim_modules[0].silent = true;
+
+    /* Wait past 30 seconds timeout */
+    drive_ms(31000U);
+
+    ASSERT(AutoStart_IsModuleTimeout() == true, "Must flag module timeout past 30s");
+
+    AlarmView_t av;
+    Alarm_GetView(&av);
+    ASSERT((av.active_mask & (1ULL << ALARM_CTRL_NO_MODULE)) != 0, "E027 must be active after 30s timeout");
+
+    ChargeCtrlView_t cc;
+    ChargeController_GetView(&cc);
+    const AutoStartState_t *state = AutoStart_GetState();
+    ASSERT(cc.state == CHARGE_CTRL_STATE_IDLE, "Controller must still be in safe IDLE standby");
+    ASSERT(state->fault_latched == false, "Must not latch fatal fault (allow auto-recovery)");
+
+    /* Now user turns on AC breaker -> module comes online */
+    g_sim_modules[0].silent = false;
+    drive_ms(300U);
+
+    ASSERT(AutoStart_IsModuleTimeout() == false, "Timeout warning must clear when module online");
+    Alarm_GetView(&av);
+    ASSERT((av.active_mask & (1ULL << ALARM_CTRL_NO_MODULE)) == 0, "E027 must clear when module online");
+
+    ChargeController_GetView(&cc);
+    ASSERT(cc.state == CHARGE_CTRL_STATE_RUNNING || cc.state == CHARGE_CTRL_STATE_READY,
+           "Must seamlessly auto start charging without requiring cable replug or reset button");
+
+    printf("[PASS] test_auto_start_module_timeout_reports_e027_and_recovers_on_ac_power\n");
+    return true;
+}
+
 /* ========================================================================= */
 /* Test Runner                                                               */
 /* ========================================================================= */
@@ -608,9 +703,11 @@ int main(void)
     ok &= test_auto_start_blocked_by_bms_hard_alarm();
     ok &= test_auto_start_fault_lockout_on_e004_prevents_chattering();
     ok &= test_auto_start_manual_start_can_clear_fault_lockout();
+    ok &= test_auto_start_waits_for_module_power_before_starting();
+    ok &= test_auto_start_module_timeout_reports_e027_and_recovers_on_ac_power();
 
     if (ok) {
-        printf(">>> ALL 13 AUTO START LOGIC UNIT TESTS PASSED 100%%! <<<\n");
+        printf(">>> ALL 15 AUTO START LOGIC UNIT TESTS PASSED 100%%! <<<\n");
         return 0;
     } else {
         printf(">>> AUTO START LOGIC UNIT TESTS FAILED! <<<\n");

@@ -196,6 +196,7 @@ static struct {
     uint32_t delay_duration_s;
     uint32_t delay_remaining_s;
     bool is_delaying;
+    bool auto_start_mod_timeout;
 } g_ctrl = {0};
 
 /* ============== Stage Evaluation Types ============== */
@@ -2678,6 +2679,14 @@ bool ChargeController_IsRunning(void) {
             g_ctrl.state == CHARGE_CTRL_STATE_PRECHARGE);
 }
 
+uint8_t ChargeController_GetActiveModuleCount(void) {
+    return get_active_module_count();
+}
+
+void ChargeController_SetAutoStartModuleTimeout(bool timeout) {
+    g_ctrl.auto_start_mod_timeout = timeout;
+}
+
 void ChargeController_AcknowledgeCompletion(void) {
     /* Only meaningful once a normal finish has parked us at IDLE. Clearing
      * the stop_reason marker is purely informational -- relay/fault/state
@@ -2731,4 +2740,5 @@ void ChargeController_GetView(ChargeCtrlView_t *view) {
     view->delay_remaining_s = g_ctrl.delay_remaining_s;
     view->delay_duration_s = g_ctrl.delay_duration_s;
     view->is_delaying = g_ctrl.is_delaying ? 1U : 0U;
+    view->auto_start_mod_timeout = g_ctrl.auto_start_mod_timeout ? 1U : 0U;
 }

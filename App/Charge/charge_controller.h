@@ -140,6 +140,7 @@ typedef struct {
      * (App/System/app_main.c) just mirrors this onto the relay GPIO, it
      * does not decide the condition itself. */
     uint8_t relay_should_close;
+    uint8_t auto_start_mod_timeout; /**< Set by AutoStart when cable plugged in >30s with no AC module power */
 } ChargeCtrlView_t;
 
 /* ============== Public API ============== */
@@ -222,6 +223,17 @@ void ChargeController_EmergencyStop(uint32_t now_tick);
  * @return true if running, false otherwise
  */
 bool ChargeController_IsRunning(void);
+
+/**
+ * @brief Get count of active, healthy, communicating charger modules
+ * @return Number of active modules (0 if none or all offline/faulted)
+ */
+uint8_t ChargeController_GetActiveModuleCount(void);
+
+/**
+ * @brief Inform ChargeController that AutoStart timed out waiting for module power (>30s)
+ */
+void ChargeController_SetAutoStartModuleTimeout(bool timeout);
 
 /**
  * @brief Operator dismissed the "charge complete" indication (HMI RESET

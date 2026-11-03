@@ -337,6 +337,12 @@ static bool ev_ctrl_module_mismatch(const AlarmInputs_t *in, uint32_t bit) {
 static bool ev_ctrl_no_module(const AlarmInputs_t *in, uint32_t bit) {
     if (in == NULL) return false;
 
+    /* In AutoStart mode, if vehicle is plugged in but modules have no AC power >30s,
+     * report E027 so operator knows AC power/module comms is missing. */
+    if (in->cc.auto_start_mod_timeout) {
+        return true;
+    }
+
     /* Root cause suppression: If module communication is failing (W010 active/latched)
      * or AC under-voltage, report W010/W011 instead of misleading configuration fault E027 */
     if (is_alarm_active_or_latched(ALARM_MOD_COMM_FAIL) ||

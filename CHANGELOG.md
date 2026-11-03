@@ -2,6 +2,24 @@
 
 Tất cả các thay đổi quan trọng theo từng phiên bản phát hành của hệ thống Charger Firmware và Tool điều khiển.
 
+## [V2.0.30] - 2026-11-03
+
+### 🚀 Cơ Chế Bắt Tay 2 Phía (Two-Way Handshake) & Xử Lý Lỗi E027 Khi Cắm Súng Trước - Bật Át Sau
+- **Triệt tiêu lỗi ảo E027 khi khởi động trạm ở chế độ Auto Charge:**
+  - **Bản chất hiện tượng:** Khi người dùng cắm súng sạc vào pin trước rồi mới bật át nguồn cho trạm sạc: MCU STM32G0 khởi động cực nhanh (~20ms), BMS xe phát CAN tức thì. AutoStart sau 1.5s vội vã phát lệnh `Start` trong khi Module sạc AC-DC công suất lớn (TonHe/Maxwell) cần 2.5s - 4.0s để nạp tụ PFC và khởi động DSP. `ChargeController` kiểm tra điều kiện tiên quyết thấy $0$ module online $\rightarrow$ chuyển FSM sang `State = FAULT`, gài chốt khóa `fault_latched = true` và báo lỗi `E027`. Khi module sạc khởi động xong thì hệ thống đã bị khóa cứng từ trước.
+  - **Cơ chế Bắt tay 2 phía (Two-Way Handshake):** AutoStart bắt buộc phải kiểm tra cả 2 phía đã sẵn sàng:
+    $$\text{AutoStart Condition} = (\text{BMS Online} \ge 1.5\text{s}) \ \ \mathbf{AND} \ \ (\text{Module Online Count} \ge 1)$$
+    Khi có tín hiệu pin nhưng bộ sạc chưa có nguồn, trạm sạc đứng ở trạng thái **CHỜ NGUỒN (Standby / Pending Charger Power)** trong `IDLE`, tuyệt đối **không tự ý phát lệnh Start** để tránh lỗi `E027`.
+  - **Thời gian chờ an toàn & Cảnh báo Timeout 30 giây (`AUTO_START_MODULE_READY_TIMEOUT_MS = 30000`):**
+    - Cho người dùng khoảng thời gian 30 giây để cắm súng và thong thả đi gạt át nguồn.
+    - Sau 30 giây nếu vẫn không có nguồn module $\rightarrow$ hiển thị cảnh báo `E027` trên màn hình DWIN để nhắc người dùng kiểm tra nguồn điện hoặc cáp CAN.
+    - **Tự phục hồi (Auto-Recovery):** FSM vẫn duy trì ở trạng thái an toàn `IDLE` (không khóa chết). Ngay khi người dùng bật át nguồn $\rightarrow$ module sạc online $\rightarrow$ cảnh báo `E027` tự động biến mất và trạm tự động vào chu trình sạc mượt mà mà không cần người dùng phải rút súng hay bấm Reset.
+- **Bổ sung Unit Tests & Kiểm thử tự động:**
+  - Mở rộng bộ kiểm thử `Charger/test/host_auto_start_sim/test_auto_start_logic.c` lên 15/15 test cases (PASS 100%):
+    - `test_auto_start_waits_for_module_power_before_starting`: Xác nhận trạm giữ nguyên IDLE, không báo lỗi trong khoảng chờ cấp nguồn AC, tự động sạc ngay khi module có điện.
+    - `test_auto_start_module_timeout_reports_e027_and_recovers_on_ac_power`: Xác nhận cảnh báo E027 xuất hiện sau 30s timeout, và tự động xóa cảnh báo + bắt đầu sạc khi module có điện trở lại.
+  - Toàn bộ 10/10 stages Local CI (`run_all_local.bat`) PASS 100%, 0 vi phạm kiến trúc.
+
 ## [V2.0.29] - 2026-10-31
 
 ### 🚀 Khóa An Toàn AutoStart Khi Xảy Ra Alarm & Triệt Tiêu Vòng Lặp Sạc Lại E004 (Anti-Chattering)

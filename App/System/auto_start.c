@@ -17,7 +17,10 @@ void AutoStart_ResetSession(void)
     s_w4.fault_latched = false;
     s_w4.can_online_since = 0U;
     s_w4.can_offline_since = 0U;
+    s_w4.bms_online_no_mod_since = 0U;
     s_w4.plug_latched = false;
+    s_w4.mod_timeout_warning = false;
+    ChargeController_SetAutoStartModuleTimeout(false);
 }
 
 bool AutoStart_IsBatteryFull(const ChargeCycleConfig_t *cfg, const BMS_View_t *bms)
@@ -68,6 +71,11 @@ bool AutoStart_IsChargeCompleted(void)
     return s_w4.charge_completed;
 }
 
+bool AutoStart_IsModuleTimeout(void)
+{
+    return s_w4.mod_timeout_warning;
+}
+
 const AutoStartState_t* AutoStart_GetState(void)
 {
     return &s_w4;
@@ -91,6 +99,9 @@ void AutoStart_Process(uint32_t now)
     } else {
         s_w4.can_online_since = 0U;
         s_w4.plug_latched = false;
+        s_w4.bms_online_no_mod_since = 0U;
+        s_w4.mod_timeout_warning = false;
+        ChargeController_SetAutoStartModuleTimeout(false);
         if (s_w4.can_offline_since == 0U) {
             s_w4.can_offline_since = now;
         } else if ((uint32_t)(now - s_w4.can_offline_since) >= AUTO_START_CAN_OFFLINE_RESET_MS) {
@@ -103,6 +114,26 @@ void AutoStart_Process(uint32_t now)
         }
         /* When cable is unplugged/BMS offline, do not evaluate runtime controller faults */
         return;
+    }
+
+    /* Track charger module power readiness (Two-Way Handshake) */
+    uint8_t active_mods = ChargeController_GetActiveModuleCount();
+    if (active_mods == 0U) {
+        if (s_w4.bms_online_no_mod_since == 0U) {
+            s_w4.bms_online_no_mod_since = now;
+        } else if (!s_w4.mod_timeout_warning &&
+                   (uint32_t)(now - s_w4.bms_online_no_mod_since) >= AUTO_START_MODULE_READY_TIMEOUT_MS) {
+            s_w4.mod_timeout_warning = true;
+            ChargeController_SetAutoStartModuleTimeout(true);
+            LOG("AutoStart: Module ready timeout (30s) -> Warning E027 active\r\n");
+        }
+    } else {
+        s_w4.bms_online_no_mod_since = 0U;
+        if (s_w4.mod_timeout_warning) {
+            s_w4.mod_timeout_warning = false;
+            ChargeController_SetAutoStartModuleTimeout(false);
+            LOG("AutoStart: Module power recovered -> Warning E027 cleared\r\n");
+        }
     }
 
     /* 2. Track completion & fault lockout from ChargeController */
@@ -136,6 +167,12 @@ void AutoStart_Process(uint32_t now)
     ChargeCycleConfig_t cfg;
     ChargeCycleConfig_Get(&cfg);
     if (cfg.auto_start_enabled == 0U || !s_w4.plug_latched) {
+        return;
+    }
+
+    /* 3b. Two-Way Handshake: Do not attempt start if charger modules have no AC power.
+     * Keep controller in safe IDLE standby waiting for module power. */
+    if (active_mods == 0U) {
         return;
     }
 
