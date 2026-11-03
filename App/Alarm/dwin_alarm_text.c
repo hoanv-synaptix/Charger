@@ -173,6 +173,11 @@ static const DwinAlarmEntry_t s_alarm_entries[ALARM_CODE_COUNT] = {
         ALARM_BMS_VOLT_MISMATCH,
         "E032",
         (const uint16_t *)u"Lỗi nhầm sạc"
+    },
+    [ALARM_CTRL_REVERSE_POLARITY] = {
+        ALARM_CTRL_REVERSE_POLARITY,
+        "E033",
+        (const uint16_t *)u"Ngược cực pin sạc"
     }
 };
 

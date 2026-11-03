@@ -18,4 +18,10 @@ void BSP_LED_On(BSP_LED_t led);
 void BSP_LED_Off(BSP_LED_t led);
 bool BSP_BTN_IsPressed(BSP_BTN_t btn);
 
+/**
+ * @brief Check if battery reverse polarity is detected on J802 P1/P2 via PA8 optocoupler
+ * @return true if reverse polarity is detected (PA8 == LOW), false otherwise (PA8 == HIGH)
+ */
+bool BSP_IsReversePolarityDetected(void);
+
 #endif

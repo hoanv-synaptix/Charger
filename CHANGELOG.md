@@ -2,6 +2,29 @@
 
 Tất cả các thay đổi quan trọng theo từng phiên bản phát hành của hệ thống Charger Firmware và Tool điều khiển.
 
+## [V2.0.31] - 2026-11-04
+
+### 🚀 Nâng Cấp Tương Thích Phần Cứng Hardware Ver 2.0 & Hoàn Thiện Bộ HIL Master Test Suite (53/53 TCs PASS)
+- **Tương thích toàn diện Phần Cứng Hardware Ver 2.0 (`CHARGER_CTRL_Ver_2.0_Schematic_2026-10-08.PDF`):**
+  - **Giám sát phân cực ngược ngõ ra DC (`ALARM_REV_POLARITY` - E033):**
+    - Cấu hình chân `PA8` (`REV_POL_Pin`) làm ngõ vào Digital Input với Internal Pull-up.
+    - Cơ chế Active-Low an toàn: ngắt contactor tức thì, chuyển FSM sang State 4 FAULT và hiển thị mã lỗi `E033` trên màn hình DWIN khi pin bị đấu ngược cực.
+  - **Định tuyến độc lập 2 LED ngoài:**
+    - `PC7` điều khiển `BSP_LED_POWER` (Đèn báo Nguồn hệ thống sáng liên tục khi trạm có điện).
+    - `PC6` điều khiển `BSP_LED_RUN` (Đèn báo Trạng thái Sạc: Tắt khi IDLE, Sáng khi RUNNING/PRECHARGE, Nhấp nháy 1Hz khi FAULT/Cảnh báo).
+  - **Khử nhiễu đầu đo nhiệt độ súng sạc NTC:**
+    - Kẹp ngưỡng ADC thô tại 3900 counts trong `bsp_adc.c`, kiểm tra giới hạn Steinhart-Hart $[-30^\circ\text{C} \dots 125^\circ\text{C}]$. Khử hoàn toàn lỗi trôi vô hạn (`NAN`) và tràn số nguyên khi rút giắc NTC hoặc hở mạch.
+  - **Sửa lỗi Backup Domain LSE & Đồng bộ kép thời gian thực RTC:**
+    - Cấu hình mở khóa `PWR_CR1_DBP` và kiểm tra `BDCR_LSERDY` trong `bsp_rtc.c`.
+    - Triển khai đồng bộ thời gian thực kép: cập nhật phần cứng STM32 RTC và ghi trực tiếp vào thanh ghi RTC màn hình DWIN (`0x009C` / `0x0010`), hiển thị đồng hồ thời gian thực chính xác trên giao diện trạm.
+- **Master HIL Test Suite Tự Động Hóa Độc Lập (53/53 TCs PASS 100%):**
+  - Thực thi thành công toàn bộ 53 ca kiểm thử TDD độc lập kết nối phần cứng ZLG USBCAN2 + DWIN Sniffer:
+    - Phase 1: SPI Flash 8MB đọc/ghi/đối soát/phục hồi cấu hình 253B (`5/5 PASS`).
+    - Phase 2: Chế độ sạc Nhanh, Thường, Kích pin Pre-charge, Luồng Start/Stop, Delay (`5/5 PASS`).
+    - Phase 3: Điều khiển sạc vòng kín, dI/dt clamp, Staged derating, Inhibit nhiệt & tự phục hồi, CV taper, Zero-current break, Đồng bộ cờ CAN Allow Charge (`7/7 PASS`).
+    - Phase 4: Ma trận 32 cảnh báo toàn diện (11 BMS, 10 Module TonHe, 11 Controller) và E-Stop (`33/33 PASS`).
+    - Phase 5: Tính năng phần cứng Hardware Ver 2.0 (`3/3 PASS`).
+
 ## [V2.0.30] - 2026-11-03
 
 ### 🚀 Cơ Chế Bắt Tay 2 Phía (Two-Way Handshake) & Xử Lý Lỗi E027 Khi Cắm Súng Trước - Bật Át Sau

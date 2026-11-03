@@ -79,6 +79,7 @@ typedef enum {
     ALARM_MOD_FAN_FAULT,
     ALARM_MOD_AC_OVER_VOLT,
     ALARM_BMS_VOLT_MISMATCH,
+    ALARM_CTRL_REVERSE_POLARITY,    /* Battery reverse polarity detected via PA8 */
 
     ALARM_CODE_COUNT
 } AlarmCode_t;
@@ -127,6 +128,12 @@ void Alarm_Init(void);
 void Alarm_Process(uint32_t now_tick);
 
 void Alarm_GetView(AlarmView_t *view);
+
+/**
+ * @brief Set external hardware reverse polarity detection input.
+ * @param detected True if reverse polarity condition active (e.g. Ver 2.0 PA8 low).
+ */
+void Alarm_SetReversePolarity(bool detected);
 
 /**
  * @brief Operator acknowledged (HMI/physical RESET). Clears latched alarms

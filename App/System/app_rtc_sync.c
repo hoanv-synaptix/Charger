@@ -5,8 +5,10 @@
 
 #include "app_rtc_sync.h"
 #include "bsp_rtc.h"
+#include "bsp_sys.h"
 #include "debug_log.h"
 #include "pc_debug_protocol.h"
+#include "dwin_protocol.h"
 
 static void send_current_rtc_info(void)
 {
@@ -31,12 +33,24 @@ void App_RtcSync_Process(void)
 {
     uint32_t epoch = 0U;
 
+    /* Periodic DWIN RTC refresh: sync current MCU RTC to DWIN display registers every 60s */
+    static uint32_t s_last_dwin_sync_tick = 0U;
+    uint32_t now = BSP_GetTick();
+    if (BSP_RTC_IsTimeValid() && ((s_last_dwin_sync_tick == 0U) || ((now - s_last_dwin_sync_tick) >= 60000U))) {
+        s_last_dwin_sync_tick = now;
+        BSP_RTC_DateTime_t dt = {0};
+        if (BSP_RTC_GetDateTime(&dt)) {
+            DWIN_SetRTC(dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second);
+        }
+    }
+
     if (DebugProtocol_TakeRtcSetRequest(&epoch)) {
         LOG("RTC: SET request received (UTC epoch=%lu)\r\n",
             (unsigned long)epoch);
         if (BSP_RTC_SetEpoch(epoch)) {
             BSP_RTC_DateTime_t dt = {0};
             if (BSP_RTC_GetDateTime(&dt)) {
+                DWIN_SetRTC(dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second);
                 LOG("RTC: synchronized successfully (local UTC+7=%04u-%02u-%02u %02u:%02u:%02u)\r\n",
                     (unsigned)dt.year, (unsigned)dt.month, (unsigned)dt.day,
                     (unsigned)dt.hour, (unsigned)dt.minute, (unsigned)dt.second);

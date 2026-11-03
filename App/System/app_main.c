@@ -604,6 +604,12 @@ void App_Init(void)
     /* RS485 (USART3 + DE pin, che do nhan) + DWIN HMI protocol */
     BSP_RS485_Init();
     DWIN_Init();
+    if (BSP_RTC_IsTimeValid()) {
+        BSP_RTC_DateTime_t dt;
+        if (BSP_RTC_GetDateTime(&dt)) {
+            DWIN_SetRTC(dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second);
+        }
+    }
     LOG("App_Init: RS485/DWIN HMI ready (USART3 115200-8N1 SWAP, DE=PB1).\r\n");
 
     /* Initialize BMS driver (CAN2, 250Kbps) */
@@ -779,6 +785,7 @@ void App_Loop(void)
          * plus the BMS / module views, are fresh) and BEFORE the relay GPIO
          * mirror below -- an alarm that commands a stop this tick is reflected
          * in the relay write via the ChargeController_GetView() there. */
+        Alarm_SetReversePolarity(BSP_IsReversePolarityDetected());
         Alarm_Process(now);
 
         /* Auto Start Workflow W4 handler */
@@ -790,17 +797,14 @@ void App_Loop(void)
          * không yêu cầu BMS ở chế độ Standalone). App layer chỉ đọc kết quả
          * và ghi GPIO — không tự quyết định điều kiện an toàn ở đây.
          *
-         * Cả 3 relay (RELAY_1/PB14, RELAY_2/PB15, RELAY_3/PA8) đóng/mở CÙNG
-         * lúc, cùng vai trò -- xác nhận với người dùng 2026-08-29: phần cứng
-         * thực tế chỉ cần 1 relay để đóng/cắt mạch sạc, 3 relay không phải
-         * 3 chức năng khác nhau (không phải pre-charge/main/aux riêng biệt).
-         * RELAY_3 nằm khác port (GPIOA) nên ghi bằng lệnh riêng. */
+         * Cả 2 relay (RELAY_1/PB14, RELAY_2/PB15) đóng/mở CÙNG
+         * lúc, cùng vai trò (Phần cứng Ver 2.0 đã bỏ Relay 3 K402 để làm
+         * chân bảo vệ ngược cực PA8 MCU_PA8_REVS_DET). */
         {
             ChargeCtrlView_t relay_view;
             ChargeController_GetView(&relay_view);
             GPIO_PinState relay_pin_state = relay_view.relay_should_close ? GPIO_PIN_SET : GPIO_PIN_RESET;
             HAL_GPIO_WritePin(GPIOB, MCU_PB14_RELAY_1_Pin|MCU_PB15_RELAY_2_Pin, relay_pin_state);
-            HAL_GPIO_WritePin(GPIOA, MCU_PA8_RELAY_3_Pin, relay_pin_state);
         }
     }
 

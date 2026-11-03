@@ -231,6 +231,12 @@ class BmsSimulator(threading.Thread):
         self.fault_high_pack_volt = 0
         self.fault_low_pack_volt = 0
         self.fault_over_temp = 0
+        self.fault_temp_high_dchg = 0
+        self.fault_temp_low_chg = 0
+        self.fault_temp_low_dchg = 0
+        self.fault_temp_relay_high = 0
+        self.fault_over_chg_curr = 0
+        self.fault_over_dchg_curr = 0
         self.last_ctrl_allow_charge = False
         self.ctrl_info_count = 0
 
@@ -266,8 +272,14 @@ class BmsSimulator(threading.Thread):
               ((self.fault_low_cell_volt & 3) << 4) |
               ((self.fault_high_pack_volt & 3) << 2) |
               ((self.fault_high_cell_volt & 3) << 0))
-        b1 = ((self.fault_over_temp & 3) << 6)
-        self.dev.transmit(self.CAN_CHANNEL, 0x07F4, bytes([b0, b1, 0, 0, 0, 0, 0, 0]), extended=False)
+        b1 = (((self.fault_over_temp & 3) << 6) |
+              ((getattr(self, "fault_temp_high_dchg", 0) & 3) << 4) |
+              ((getattr(self, "fault_temp_low_chg", 0) & 3) << 2) |
+              ((getattr(self, "fault_temp_low_dchg", 0) & 3) << 0))
+        b2 = (((getattr(self, "fault_temp_relay_high", 0) & 3) << 6) |
+              ((getattr(self, "fault_over_chg_curr", 0) & 3) << 4) |
+              ((getattr(self, "fault_over_dchg_curr", 0) & 3) << 2))
+        self.dev.transmit(self.CAN_CHANNEL, 0x07F4, bytes([b0, b1, b2, 0, 0, 0, 0, 0]), extended=False)
 
     def send_batt_st2(self):
         d = (self._u16le(self.cap_remain_x0_1ah) + self._u16le(self.rate_cap_x0_1ah) +
@@ -429,7 +441,7 @@ class ModuleSimulator(threading.Thread):
             v_raw & 0xFF, (v_raw >> 8) & 0xFF,
             i_raw & 0xFF, (i_raw >> 8) & 0xFF,
             self.fault_bits & 0xFF, (self.fault_bits >> 8) & 0xFF,
-            0x00
+            getattr(self, "pfc_fault", 0x00) & 0xFF
         ])
         can_id = ((6 & 0x07) << 26) | (0x01 << 16) | (0xA0 << 8) | self.addr
         self.dev.transmit(self.CAN_CHANNEL, can_id, data, extended=True)
@@ -596,8 +608,12 @@ class ModuleSimulator(threading.Thread):
 # DWIN Screen RS485 Passive Sniffer / Verifier (COM25)          #
 # ============================================================= #
 
+DEFAULT_DWIN_PORT = os.environ.get("DWIN_COM_PORT", "COM43")
+DEFAULT_MCU_PORT = os.environ.get("MCU_COM_PORT", "COM44")
+
+
 class DwinScreenSniffer(threading.Thread):
-    def __init__(self, port: str = "COM25"):
+    def __init__(self, port: str = DEFAULT_DWIN_PORT):
         super().__init__(daemon=True)
         self.port = port
         self.running = True
@@ -839,7 +855,7 @@ class DwinScreenSniffer(threading.Thread):
 _mcu_serial_lock = threading.Lock()
 _mcu_serial = None
 
-def _get_or_open_mcu_serial(port: str = "COM26"):
+def _get_or_open_mcu_serial(port: str = DEFAULT_MCU_PORT):
     global _mcu_serial
     if _mcu_serial is None or not _mcu_serial.is_open:
         _mcu_serial = serial.Serial(port, 115200, timeout=0.1)
@@ -849,7 +865,7 @@ def _get_or_open_mcu_serial(port: str = "COM26"):
     return _mcu_serial
 
 
-def send_pc_cmd(cmd_code: int, payload: bytes = b"", port: str = "COM26", timeout: float = 0.5) -> bytes:
+def send_pc_cmd(cmd_code: int, payload: bytes = b"", port: str = DEFAULT_MCU_PORT, timeout: float = 0.5) -> bytes:
     global _mcu_serial
     with _mcu_serial_lock:
         try:
@@ -876,7 +892,7 @@ def send_pc_cmd(cmd_code: int, payload: bytes = b"", port: str = "COM26", timeou
             return b""
 
 
-def read_mcu_info(port: str = "COM26", timeout: float = 0.4) -> dict:
+def read_mcu_info(port: str = DEFAULT_MCU_PORT, timeout: float = 0.4) -> dict:
     global _mcu_serial
     with _mcu_serial_lock:
         try:

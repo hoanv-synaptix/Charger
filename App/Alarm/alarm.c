@@ -103,6 +103,7 @@ typedef struct {
     float    cfg_vmin_v;
     float    cfg_temp_limit_c;
     uint8_t  cfg_source_mode;
+    bool     revs_det;
 } AlarmInputs_t;
 
 /* ============== Per-code runtime state ============== */
@@ -191,6 +192,7 @@ static bool ev_bms_volt_mismatch(const AlarmInputs_t *in, uint32_t param);
 static bool ev_ctrl_module_mismatch(const AlarmInputs_t *in, uint32_t param);
 static bool ev_ctrl_no_module(const AlarmInputs_t *in, uint32_t param);
 static bool ev_bms_discharge(const AlarmInputs_t *in, uint32_t param);
+static bool ev_revs_det(const AlarmInputs_t *in, uint32_t param);
 
 /* BMS severity: bits that gate the charge relay in bms_core.c
  * (bms_critical_alarm_mask). Keep this list in sync with that function --
@@ -242,6 +244,7 @@ static const AlarmSpec_t k_specs[] = {
     { ALARM_MOD_FAN_FAULT,          ALARM_ACT_STOP, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_FAN_FAULT,     ALARM_SPEC_DESC("Module fan fault") },
     { ALARM_MOD_AC_OVER_VOLT,       ALARM_ACT_STOP, false, 0, ALARM_DB_MIRROR_CLEAR_MS, ev_mod, CHG_LIB_ALARM_AC_OVER_VOLT,  ALARM_SPEC_DESC("Module AC input over-voltage") },
     { ALARM_BMS_VOLT_MISMATCH,      ALARM_ACT_STOP, false, ALARM_DB_VOLT_MISMATCH_SET_MS, ALARM_DB_COMM_CLEAR_MS, ev_bms_volt_mismatch, 0 ALARM_SPEC_DESC("Charger voltage mismatch") },
+    { ALARM_CTRL_REVERSE_POLARITY, ALARM_ACT_ESTOP, false, 50, ALARM_DB_COMM_CLEAR_MS, ev_revs_det, 0 ALARM_SPEC_DESC("Battery reverse polarity") },
 };
 
 #define ALARM_SPEC_COUNT ((uint8_t)(sizeof(k_specs) / sizeof(k_specs[0])))
@@ -656,6 +659,11 @@ static bool ev_bms_volt_mismatch(const AlarmInputs_t *in, uint32_t param) {
     return false;
 }
 
+static bool ev_revs_det(const AlarmInputs_t *in, uint32_t param) {
+    (void)param;
+    return (in != NULL) && in->revs_det;
+}
+
 static bool ev_bms_discharge(const AlarmInputs_t *in, uint32_t bit) {
     if (in == NULL) return false;
 
@@ -690,6 +698,12 @@ static bool ev_bms_discharge(const AlarmInputs_t *in, uint32_t bit) {
 
 /* ============== Inputs gather ============== */
 
+static bool s_reverse_polarity_detected = false;
+
+void Alarm_SetReversePolarity(bool detected) {
+    s_reverse_polarity_detected = detected;
+}
+
 static void gather_inputs(uint32_t now, AlarmInputs_t *in) {
     memset(in, 0, sizeof(*in));
     in->now = now;
@@ -702,6 +716,7 @@ static void gather_inputs(uint32_t now, AlarmInputs_t *in) {
     in->cfg_vmin_v = cfg.vmin_v;
     in->cfg_temp_limit_c = cfg.temp_limit_c;
     in->cfg_source_mode = cfg.charge_source_mode;
+    in->revs_det = s_reverse_polarity_detected;
 
     in->mod_current_max = -1.0f;
     in->mod_voltage_min = -1.0f;

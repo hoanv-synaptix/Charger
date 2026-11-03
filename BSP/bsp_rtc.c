@@ -104,14 +104,17 @@ void BSP_RTC_EpochToDateTime(uint32_t epoch, BSP_RTC_DateTime_t *dt)
  *          Calibration effect: -196.457 ppm.
  *          Residual error: +0.348 ppm (~ +0.03 s/day at room temperature).
  */
+#define BSP_RTC_LSE_ASYNCH_PREDIV    127U
+#define BSP_RTC_LSE_SYNCH_PREDIV     255U
+
 #define BSP_RTC_CALIB_ASYNCH_PREDIV  127U
 #define BSP_RTC_CALIB_SYNCH_PREDIV   246U
 #define BSP_RTC_CALIB_CALM_PULSES    206U
 
-static bool rtc_update_prescaler_if_needed(void)
+static bool rtc_update_prescaler_if_needed(uint32_t asynch, uint32_t synch)
 {
-    const uint32_t desired_prer = ((uint32_t)BSP_RTC_CALIB_ASYNCH_PREDIV << RTC_PRER_PREDIV_A_Pos) |
-                                  ((uint32_t)BSP_RTC_CALIB_SYNCH_PREDIV << RTC_PRER_PREDIV_S_Pos);
+    const uint32_t desired_prer = (asynch << RTC_PRER_PREDIV_A_Pos) |
+                                  (synch << RTC_PRER_PREDIV_S_Pos);
     const uint32_t prer_mask = RTC_PRER_PREDIV_A | RTC_PRER_PREDIV_S;
 
     if ((RTC->PRER & prer_mask) == desired_prer) {
@@ -195,61 +198,94 @@ bool BSP_RTC_Init(void)
     __HAL_RCC_PWR_CLK_ENABLE();
     HAL_PWR_EnableBkUpAccess();
 
-    /* 2. Configure LSI oscillator if not already ON */
-    RCC_OscInitTypeDef osc_init = {0};
-    osc_init.OscillatorType = RCC_OSCILLATORTYPE_LSI;
-    osc_init.LSIState = RCC_LSI_ON;
-    if (HAL_RCC_OscConfig(&osc_init) != HAL_OK) {
-        return false;
+    /* 2. Configure RTC oscillator: Prioritize external 32.768kHz quartz crystal (LSE Y202) */
+    bool use_lse = false;
+    uint32_t current_rtc_src = __HAL_RCC_GET_RTC_SOURCE();
+
+    if (current_rtc_src == RCC_RTCCLKSOURCE_LSE && __HAL_RCC_GET_FLAG(RCC_FLAG_LSERDY)) {
+        use_lse = true;
+    } else {
+        /* Reset backup domain cleanly FIRST before starting LSE to avoid register lockout */
+        __HAL_RCC_BACKUPRESET_FORCE();
+        __HAL_RCC_BACKUPRESET_RELEASE();
+        HAL_PWR_EnableBkUpAccess();
+
+        /* Set LSE Drive to MEDIUMHIGH for 12.5pF crystal (Y202 + C211/C212 12pF) */
+        __HAL_RCC_LSEDRIVE_CONFIG(RCC_LSEDRIVE_MEDIUMHIGH);
+
+        RCC_OscInitTypeDef osc_init = {0};
+        osc_init.OscillatorType = RCC_OSCILLATORTYPE_LSE;
+        osc_init.LSEState = RCC_LSE_ON;
+        if (HAL_RCC_OscConfig(&osc_init) == HAL_OK && __HAL_RCC_GET_FLAG(RCC_FLAG_LSERDY)) {
+            RCC_PeriphCLKInitTypeDef periph_clk = {0};
+            periph_clk.PeriphClockSelection = RCC_PERIPHCLK_RTC;
+            periph_clk.RTCClockSelection = RCC_RTCCLKSOURCE_LSE;
+            if (HAL_RCCEx_PeriphCLKConfig(&periph_clk) == HAL_OK) {
+                use_lse = true;
+            }
+        }
     }
 
-    /* 3. Configure RTC clock source: LSI */
-    RCC_PeriphCLKInitTypeDef periph_clk = {0};
-    periph_clk.PeriphClockSelection = RCC_PERIPHCLK_RTC;
-    periph_clk.RTCClockSelection = RCC_RTCCLKSOURCE_LSI;
-    if (HAL_RCCEx_PeriphCLKConfig(&periph_clk) != HAL_OK) {
-        return false;
+    if (!use_lse) {
+        /* Fallback: In case Y202 crystal is not ready or unpopulated, use internal LSI */
+        LOG("BSP_RTC: LSE crystal not ready -> Falling back to internal LSI\r\n");
+
+        __HAL_RCC_BACKUPRESET_FORCE();
+        __HAL_RCC_BACKUPRESET_RELEASE();
+        HAL_PWR_EnableBkUpAccess();
+
+        RCC_OscInitTypeDef osc_init = {0};
+        osc_init.OscillatorType = RCC_OSCILLATORTYPE_LSI;
+        osc_init.LSIState = RCC_LSI_ON;
+        (void)HAL_RCC_OscConfig(&osc_init);
+
+        RCC_PeriphCLKInitTypeDef periph_clk = {0};
+        periph_clk.PeriphClockSelection = RCC_PERIPHCLK_RTC;
+        periph_clk.RTCClockSelection = RCC_RTCCLKSOURCE_LSI;
+        (void)HAL_RCCEx_PeriphCLKConfig(&periph_clk);
     }
 
-    /* 4. Enable both the RTC calendar clock and its APB register interface.
-     * RTCEN clocks the backup-domain calendar; RTCAPB is required for CPU
-     * register access. Without RTCAPB, HAL_RTC_Init() may appear successful
-     * when the calendar is already initialized, but SET_RTC cannot enter
-     * initialization mode and times out waiting for INITF. */
+    /* 4. Enable both the RTC calendar clock and its APB register interface. */
     __HAL_RCC_RTCAPB_CLK_ENABLE();
     __HAL_RCC_RTC_ENABLE();
 
     /* 5. Initialize RTC handle */
     s_hrtc.Instance = RTC;
     s_hrtc.Init.HourFormat = RTC_HOURFORMAT_24;
-    /* LSI nominal 32 kHz calibrated:
-     * AsynchPrediv=127, SynchPrediv=246 -> total division 128 * 247 = 31616. */
-    s_hrtc.Init.AsynchPrediv = BSP_RTC_CALIB_ASYNCH_PREDIV;
-    s_hrtc.Init.SynchPrediv = BSP_RTC_CALIB_SYNCH_PREDIV;
+    if (use_lse) {
+        /* LSE nominal 32.768 kHz:
+         * AsynchPrediv=127, SynchPrediv=255 -> total division 128 * 256 = 32768 (exact 1 Hz). */
+        s_hrtc.Init.AsynchPrediv = BSP_RTC_LSE_ASYNCH_PREDIV;
+        s_hrtc.Init.SynchPrediv = BSP_RTC_LSE_SYNCH_PREDIV;
+    } else {
+        /* LSI nominal 32 kHz calibrated:
+         * AsynchPrediv=127, SynchPrediv=246 -> total division 128 * 247 = 31616. */
+        s_hrtc.Init.AsynchPrediv = BSP_RTC_CALIB_ASYNCH_PREDIV;
+        s_hrtc.Init.SynchPrediv = BSP_RTC_CALIB_SYNCH_PREDIV;
+    }
     s_hrtc.Init.OutPut = RTC_OUTPUT_DISABLE;
     s_hrtc.Init.OutPutRemap = RTC_OUTPUT_REMAP_NONE;
     s_hrtc.Init.OutPutPolarity = RTC_OUTPUT_POLARITY_HIGH;
     s_hrtc.Init.OutPutType = RTC_OUTPUT_TYPE_OPENDRAIN;
     s_hrtc.Init.OutPutPullUp = RTC_OUTPUT_PULLUP_NONE;
 
-    /* Re-initialize the HAL handle on every MCU boot. The RTC calendar and
-     * backup domain may survive a reset, but s_hrtc (including its HAL state,
-     * lock and MSP bookkeeping) lives in cleared RAM. Skipping HAL_RTC_Init()
-     * when the backup marker is valid leaves a fresh handle uninitialized and
-     * can make a later SET_RTC fail. HAL_RTC_Init() preserves an already
-     * initialized calendar. */
     if (HAL_RTC_Init(&s_hrtc) != HAL_OK) {
         return false;
     }
 
     /* 6. Ensure prescaler in hardware matches desired values even if calendar was already initialized */
-    if (!rtc_update_prescaler_if_needed()) {
-        return false;
-    }
-
-    /* 7. Ensure smooth digital calibration is configured */
-    if (!rtc_update_smooth_calib_if_needed()) {
-        return false;
+    if (use_lse) {
+        if (!rtc_update_prescaler_if_needed(BSP_RTC_LSE_ASYNCH_PREDIV, BSP_RTC_LSE_SYNCH_PREDIV)) {
+            return false;
+        }
+    } else {
+        if (!rtc_update_prescaler_if_needed(BSP_RTC_CALIB_ASYNCH_PREDIV, BSP_RTC_CALIB_SYNCH_PREDIV)) {
+            return false;
+        }
+        /* 7. Ensure smooth digital calibration is configured for LSI */
+        if (!rtc_update_smooth_calib_if_needed()) {
+            return false;
+        }
     }
 
     LOG("BSP_RTC: Configured PRER=0x%08lX CALR=0x%08lX ICSR=0x%08lX\r\n",

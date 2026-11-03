@@ -32,7 +32,7 @@ static bool     adc_started;
 /* Filtered ADC values (EMA: Exponential Moving Average) */
 #define ADC_FILTER_ALPHA              0.20f  /* ~1s response time at 5Hz (200ms sample interval) */
 #define ADC_RAW_MIN_VALID             20U    /* Below 20 counts (~0.016V) considered shorted to GND */
-#define ADC_RAW_MAX_VALID             4075U  /* Above 4075 counts (~3.28V) considered open-circuit */
+#define ADC_RAW_MAX_VALID             3900U  /* Above 3900 counts (~3.14V / ~-30°C) considered open-circuit / disconnected */
 
 static float s_adc_filtered[NTC_CHANNELS];
 static bool  s_adc_filtered_valid[NTC_CHANNELS];
@@ -129,6 +129,10 @@ float BSP_ADC_GetTempC(uint8_t channel_index)
     steinhart += 1.0f / KELVIN_25C;
     steinhart = 1.0f / steinhart;
     steinhart -= 273.15f; // Convert to Celsius
+
+    if (isnan(steinhart) || steinhart < -30.0f || steinhart > 125.0f) {
+        return NAN; /* Unrealistic temperature / disconnected NTC noise */
+    }
 
     return steinhart;
 }

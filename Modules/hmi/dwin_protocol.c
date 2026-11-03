@@ -179,13 +179,24 @@ void DWIN_SendSettingStrings(const char *hw_ver, const char *fw_ver,
 void DWIN_SetRTC(uint16_t year, uint8_t month, uint8_t day,
                  uint8_t hour, uint8_t minute, uint8_t second)
 {
-    uint16_t w[4];
+    uint8_t y = (uint8_t)(year % 100U);
 
-    w[0] = 0x5AA5U;
-    w[1] = (uint16_t)(((uint16_t)(year % 100U) << 8) | month);
-    w[2] = (uint16_t)(((uint16_t)day << 8) | hour);
-    w[3] = (uint16_t)(((uint16_t)minute << 8) | second);
-    DWIN_SendWords(VP_SYS_RTC_SET, w, 4);
+    /* 1. Hardware RTC register (0x009C) for DWIN panels with onboard RTC IC */
+    uint16_t w_hw[4];
+    w_hw[0] = 0x5AA5U;
+    w_hw[1] = (uint16_t)(((uint16_t)y << 8) | month);
+    w_hw[2] = (uint16_t)(((uint16_t)day << 8) | hour);
+    w_hw[3] = (uint16_t)(((uint16_t)minute << 8) | second);
+    DWIN_SendWords(VP_SYS_RTC_SET, w_hw, 4);
+
+    /* 2. System Variable RTC (0x0010) for panels without RTC IC (DGUS guide p.51):
+     * Format: Year, Month, Day, Week(0), Hour, Minute, Second, 0x00 */
+    uint16_t w_sw[4];
+    w_sw[0] = (uint16_t)(((uint16_t)y << 8) | month);
+    w_sw[1] = (uint16_t)(((uint16_t)day << 8) | 0x00U);
+    w_sw[2] = (uint16_t)(((uint16_t)hour << 8) | minute);
+    w_sw[3] = (uint16_t)(((uint16_t)second << 8) | 0x00U);
+    DWIN_SendWords(0x0010U, w_sw, 4);
 }
 
 /* ===================== Alarm FIFO Ring Buffer ===================== */

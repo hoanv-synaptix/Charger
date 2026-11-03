@@ -235,7 +235,7 @@ void QuectelEngine_Process(uint32_t now_tick)
                                 s_net_status.rtc_synced = true;
 
                                 BSP_RTC_DateTime_t local_dt = {0};
-                                BSP_RTC_GetDateTime(&local_dt);
+                                (void)BSP_RTC_GetDateTime(&local_dt);
                                 LOG("Quectel_Engine: RTC synchronized from LTE network (local UTC+7: %04u-%02u-%02u %02u:%02u:%02u)\r\n",
                                     (unsigned)local_dt.year, (unsigned)local_dt.month, (unsigned)local_dt.day,
                                     (unsigned)local_dt.hour, (unsigned)local_dt.minute, (unsigned)local_dt.second);
