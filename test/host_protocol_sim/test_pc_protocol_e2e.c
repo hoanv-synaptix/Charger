@@ -45,6 +45,12 @@ void BSP_EnterCritical(void) {}
 void BSP_ExitCritical(void) {}
 void BSP_SystemReset(void) {}
 
+void UART_Transmit_To_DWIN(uint8_t *data, uint16_t len)
+{
+    (void)data;
+    (void)len;
+}
+
 /* mock_stubs.c provides these; declared here to assert on them directly. */
 extern bool g_storage_save_called;
 extern bool g_ota_policy_enabled;

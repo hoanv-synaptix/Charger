@@ -2,6 +2,25 @@
 
 Tất cả các thay đổi quan trọng theo từng phiên bản phát hành của hệ thống Charger Firmware và Tool điều khiển.
 
+## [V2.0.32] - 2026-11-04
+
+### 🚀 Nâng Cấp Thuật Toán Sạc Đa Tầng Kết Hợp (Cell Voltage + SOC + Temperature) & Tối Ưu Quyền Kết Thúc Sạc
+- **Chuyển giao quyền ngắt chu kỳ sạc (Handover Rule - Phương án A):**
+  - **Khắc phục lỗi ngắt oan khi BMS báo SOC 100% sớm:** Khi kích hoạt đồng thời cả tiêu chuẩn Điện áp Cell (`cell_volt_enabled = 1`) và SOC (`soc_enabled = 1`), Cell Voltage đóng vai trò **Master Completion**.
+  - Khi $\text{SOC} \ge \text{SOC}_5$ (Mức 5): Nhánh SOC nhường quyền ngắt, không kích hoạt cờ `soc_full_latched`, không báo inhibit (0A). Nhánh SOC chốt giữ dòng sạc ở mức chặng cuối $I_{\text{soc\_4\_5}}$ (`soc_curr_4_c`) cho bộ phân xử $\min$.
+  - Chu kỳ sạc tiếp tục diễn ra an toàn cho đến khi $V_{\text{cell}} \ge V_5$ mới chính thức kết thúc chu kỳ với lý do `CHARGE_STOP_CELL_VOLTAGE_REACHED`.
+  - Giữ nguyên 100% logic ngắt theo SOC chuẩn khi chỉ bật chế độ đơn tiêu chuẩn SOC (`cell_volt_enabled = 0`, `soc_enabled = 1`).
+- **Bảo toàn cơ chế tiến 1 chiều (Monotonic Forward-Only):**
+  - Cả Cell Voltage và SOC vận hành 1 chiều độc lập theo `max_cell_band` và `max_soc_band`. Ngay cả khi giá trị SOC từ BMS dao động tụt xuống, dòng sạc tổng $I = \min(I_{\text{cell}}, I_{\text{soc\_4\_5}}, I_{\text{temp}})$ tuyệt đối không bị vọt tăng trở lại.
+  - Nhánh Nhiệt độ (Temperature) giữ nguyên cơ chế 2 chiều có trễ ($T_{\text{hysteresis}} = 3^\circ\text{C}$), cho phép hạ dòng khi cell nóng và tự động hồi phục dòng khi làm mát trơn tru.
+- **Tối ưu hóa quyết định sạc tự động AutoStart (`AutoStart_IsBatteryFull`):**
+  - Ưu tiên kiểm tra điện áp cell khi `cell_volt_enabled = 1`. Cắm pin có $\text{SOC}=100\%$ nhưng điện áp cell còn thấp ($< V_5$) sẽ không bị khóa nhầm trạng thái `COMPLETE`, trạm tự động khởi động sạc bình thường.
+- **Mở rộng bộ kiểm thử tự động E2E & CI Pipeline:**
+  - Bổ sung ca kiểm thử E2E kép `test_dual_mode_cell_and_soc_handover` và ca 3 tầng `test_triple_mode_thermal_derating_and_handover` trong `test_charge_e2e.c`.
+  - Mở rộng bộ AutoStart logic unit tests (`test_auto_start_logic.c`) lên 16/16 test cases (PASS 100%).
+  - Cập nhật kiểm tra 32 mã lỗi hệ thống trong `test_alarm_e2e.c` (bổ sung mã `E033` - `ALARM_CTRL_REVERSE_POLARITY`).
+  - Toàn bộ 10/10 bước trong Local CI Pipeline (`run_all_local.bat`) và Firmware Release build PASS 100%.
+
 ## [V2.0.31] - 2026-11-04
 
 ### 🚀 Nâng Cấp Tương Thích Phần Cứng Hardware Ver 2.0 & Hoàn Thiện Bộ HIL Master Test Suite (53/53 TCs PASS)

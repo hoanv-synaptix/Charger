@@ -1980,7 +1980,8 @@ static bool test_all_31_codes_metadata_and_contracts(void)
         [ALARM_DC_OUT_NOT_ESTABLISHED]  = "E024",
         [ALARM_MOD_FAN_FAULT]           = "E016",
         [ALARM_MOD_AC_OVER_VOLT]        = "E017",
-        [ALARM_BMS_VOLT_MISMATCH]       = "E032"
+        [ALARM_BMS_VOLT_MISMATCH]       = "E032",
+        [ALARM_CTRL_REVERSE_POLARITY]   = "E033"
     };
 
     for (uint32_t i = 1; i < ALARM_CODE_COUNT; i++) {
@@ -2777,6 +2778,8 @@ static bool test_volt_mismatch_raw_prevents_e023_race(void)
 
 int main(void)
 {
+    setvbuf(stdout, NULL, _IONBF, 0);
+    printf("=== Alarm E2E Simulation Test ===\n");
     bool ok = true;
     ok &= test_w010_suppresses_e027_no_module();
     ok &= test_hot_unplug_with_comm_glitch_still_reports_e023();

@@ -292,6 +292,7 @@ static bool test_auto_start_battery_full_soc_triggers_complete(void)
 
     ChargeCycleConfig_t cfg;
     ChargeCycleConfig_Get(&cfg);
+    cfg.cell_volt_enabled = 0U; /* Pure SOC mode */
     cfg.soc_enabled = 1U;
     cfg.soc_5_pct = 99.0f; /* 99% threshold */
     ChargeCycleConfig_Set(&cfg);
@@ -307,6 +308,40 @@ static bool test_auto_start_battery_full_soc_triggers_complete(void)
     ASSERT(cc.state == CHARGE_CTRL_STATE_IDLE, "Must stay IDLE");
 
     printf("[PASS] test_auto_start_battery_full_soc_triggers_complete\n");
+    return true;
+}
+
+/**
+ * Case 6b: Dual mode (Cell Voltage & SOC enabled).
+ * BMS reports SOC 100% early, but cell max voltage is only 3.20V (< 3.65V).
+ * AutoStart must NOT consider the battery full, and must start charging normally!
+ */
+static bool test_auto_start_dual_mode_soc100_does_not_block_undercharged_cell(void)
+{
+    printf("Running test_auto_start_dual_mode_soc100_does_not_block_undercharged_cell...\n");
+    setup_system();
+
+    ChargeCycleConfig_t cfg;
+    ChargeCycleConfig_Get(&cfg);
+    cfg.auto_start_enabled = 1U;
+    cfg.cell_volt_enabled = 1U;
+    cfg.cell_volt_5_v = 3.65f;
+    cfg.soc_enabled = 1U;
+    cfg.soc_5_pct = 99.0f;
+    ChargeCycleConfig_Set(&cfg);
+
+    /* BMS says SOC 100%, but cells are only at 3.20V */
+    g_sim_bms.soc_pct = 100;
+    g_sim_bms.max_cell_mv = 3200;
+
+    drive_ms(2000U);
+
+    ASSERT(AutoStart_IsChargeCompleted() == false, "Must NOT latch COMPLETE when cell voltage < 3.65V");
+    ChargeCtrlView_t cc;
+    ChargeController_GetView(&cc);
+    ASSERT(cc.state == CHARGE_CTRL_STATE_RUNNING, "Must proceed to RUNNING state");
+
+    printf("[PASS] test_auto_start_dual_mode_soc100_does_not_block_undercharged_cell\n");
     return true;
 }
 
@@ -349,6 +384,7 @@ static bool test_auto_start_user_reset_complete_does_not_restart_full_battery(vo
 
     ChargeCycleConfig_t cfg;
     ChargeCycleConfig_Get(&cfg);
+    cfg.cell_volt_enabled = 0U; /* Pure SOC mode */
     cfg.soc_enabled = 1U;
     cfg.soc_5_pct = 99.0f;
     ChargeCycleConfig_Set(&cfg);
@@ -696,6 +732,7 @@ int main(void)
     ok &= test_auto_start_manual_start_resumes_after_stop();
     ok &= test_auto_start_battery_full_cell_voltage_triggers_complete();
     ok &= test_auto_start_battery_full_soc_triggers_complete();
+    ok &= test_auto_start_dual_mode_soc100_does_not_block_undercharged_cell();
     ok &= test_auto_start_battery_full_pack_volt_triggers_complete();
     ok &= test_auto_start_user_reset_complete_does_not_restart_full_battery();
     ok &= test_auto_start_cable_unplug_5s_resets_session();
@@ -707,7 +744,7 @@ int main(void)
     ok &= test_auto_start_module_timeout_reports_e027_and_recovers_on_ac_power();
 
     if (ok) {
-        printf(">>> ALL 15 AUTO START LOGIC UNIT TESTS PASSED 100%%! <<<\n");
+        printf(">>> ALL 16 AUTO START LOGIC UNIT TESTS PASSED 100%%! <<<\n");
         return 0;
     } else {
         printf(">>> AUTO START LOGIC UNIT TESTS FAILED! <<<\n");

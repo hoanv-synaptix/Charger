@@ -2452,6 +2452,175 @@ static bool test_soc_stage_delta_t_debounce(void)
     return true;
 }
 
+static bool test_dual_mode_cell_and_soc_handover(void)
+{
+    printf("Running test_dual_mode_cell_and_soc_handover...\n");
+    ChargeCycleConfig_t cfg;
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_MAXWELL, &cfg), "setup failed");
+
+    /* Enable both Cell Voltage and SOC stages */
+    cfg.cell_volt_enabled = 1;
+    cfg.cell_volt_delta_t_s = 1.0f;
+    cfg.cell_volt_1_v = 3.00f;
+    cfg.cell_volt_2_v = 3.20f;
+    cfg.cell_volt_3_v = 3.40f;
+    cfg.cell_volt_4_v = 3.55f;
+    cfg.cell_volt_5_v = 3.65f;
+    cfg.cell_curr_1_c = 1.00f; /* 100A */
+    cfg.cell_curr_2_c = 0.80f; /* 80A */
+    cfg.cell_curr_3_c = 0.50f; /* 50A */
+    cfg.cell_curr_4_c = 0.30f; /* 30A */
+
+    cfg.soc_enabled = 1;
+    cfg.soc_delta_t_s = 1.0f;
+    cfg.soc_1_pct = 20.0f;
+    cfg.soc_2_pct = 50.0f;
+    cfg.soc_3_pct = 80.0f;
+    cfg.soc_4_pct = 90.0f;
+    cfg.soc_5_pct = 99.0f;
+    cfg.soc_curr_1_c = 1.00f; /* 100A */
+    cfg.soc_curr_2_c = 0.70f; /* 70A */
+    cfg.soc_curr_3_c = 0.40f; /* 40A */
+    cfg.soc_curr_4_c = 0.20f; /* 20A */
+
+    cfg.temp_enabled = 0;
+    ASSERT(ChargeCycleConfig_Set(&cfg), "config set failed");
+
+    /* Start in Cell Band 2_3 (3.30V -> 80A), SOC Band 1_2 (30% -> 100A) */
+    set_healthy_bms(400.0f, 30);
+    g_sim_bms.max_cell_mv = 3300;
+    ASSERT(warmup_and_start(1500U, 4000U), "module never reached RUNNING");
+
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "must be running");
+    /* Target current = min(80A, 100A) = 80A */
+    ASSERT(fabsf(cv.target_current_total_a - 80.0f) < 1.0f, "initial current should be min(80A, 100A) = 80A");
+
+    /* Now SOC advances to 100% (>= soc_5_pct) for 2s (exceeding 1.0s debounce) */
+    g_sim_bms.soc_pct = 100;
+    drive_ms(2000U);
+    ChargeController_GetView(&cv);
+
+    /* Must NOT stop! Controller stays in RUNNING because Cell Voltage has not reached 3.65V */
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "SOC 100% must NOT stop charge when cell voltage is not full");
+    /* SOC holds Band 4_5 current (20A). Cell is in Band 2_3 (80A).
+     * Target current = min(80A, 20A) = 20A */
+    ASSERT(fabsf(cv.target_current_total_a - 20.0f) < 1.0f, "target current should hold at soc_curr_4_c (20A)");
+
+    /* Monotonic test: If SOC drops back down to 50%, current must NOT surge back up! */
+    g_sim_bms.soc_pct = 50;
+    drive_ms(2000U);
+    ChargeController_GetView(&cv);
+    ASSERT(fabsf(cv.target_current_total_a - 20.0f) < 1.0f, "monotonic: current must not increase when SOC dips");
+
+    /* Now Cell Voltage advances to 3.66V (>= cell_volt_5_v 3.65V) for 2s */
+    g_sim_bms.max_cell_mv = 3660;
+    drive_ms(2000U);
+    ChargeController_GetView(&cv);
+
+    /* Cell Voltage completion triggers stop */
+    ASSERT(cv.state == CHARGE_CTRL_STATE_STOPPING || cv.state == CHARGE_CTRL_STATE_IDLE,
+           "reaching cell_volt_5_v must stop the cycle");
+    ASSERT(cv.stop_reason == CHARGE_STOP_CELL_VOLTAGE_REACHED,
+           "stop reason must be CELL_VOLTAGE_REACHED");
+
+    printf("[PASS] test_dual_mode_cell_and_soc_handover\n");
+    return true;
+}
+
+static bool test_triple_mode_thermal_derating_and_handover(void)
+{
+    printf("Running test_triple_mode_thermal_derating_and_handover...\n");
+    ChargeCycleConfig_t cfg;
+    ASSERT(setup_scenario(CHARGE_MODULE_TYPE_MAXWELL, &cfg), "setup failed");
+
+    /* Enable all 3 stages: Cell Voltage, SOC, and Temperature */
+    cfg.cell_volt_enabled = 1;
+    cfg.cell_volt_delta_t_s = 1.0f;
+    cfg.cell_volt_1_v = 3.00f;
+    cfg.cell_volt_2_v = 3.20f;
+    cfg.cell_volt_3_v = 3.40f;
+    cfg.cell_volt_4_v = 3.55f;
+    cfg.cell_volt_5_v = 3.65f;
+    cfg.cell_curr_1_c = 1.00f; /* 100A */
+    cfg.cell_curr_2_c = 0.80f; /* 80A */
+    cfg.cell_curr_3_c = 0.50f; /* 50A */
+    cfg.cell_curr_4_c = 0.30f; /* 30A */
+
+    cfg.soc_enabled = 1;
+    cfg.soc_delta_t_s = 1.0f;
+    cfg.soc_1_pct = 20.0f;
+    cfg.soc_2_pct = 50.0f;
+    cfg.soc_3_pct = 80.0f;
+    cfg.soc_4_pct = 90.0f;
+    cfg.soc_5_pct = 99.0f;
+    cfg.soc_curr_1_c = 1.00f; /* 100A */
+    cfg.soc_curr_2_c = 0.70f; /* 70A */
+    cfg.soc_curr_3_c = 0.40f; /* 40A */
+    cfg.soc_curr_4_c = 0.20f; /* 20A */
+
+    cfg.temp_enabled = 1;
+    cfg.temp_1_c = 10.0f;
+    cfg.temp_2_c = 35.0f;
+    cfg.temp_3_c = 45.0f;
+    cfg.temp_4_c = 50.0f;
+    cfg.temp_5_c = 55.0f;
+    cfg.temp_curr_1_c = 0.90f; /* 90A */
+    cfg.temp_curr_2_c = 0.75f; /* 75A */
+    cfg.temp_curr_3_c = 0.45f; /* 45A */
+    cfg.temp_curr_4_c = 0.15f; /* 15A */
+    cfg.temp_delta_c = 3.0f;
+
+    ASSERT(ChargeCycleConfig_Set(&cfg), "config set failed");
+
+    /* Initial state: Cell 3.30V (80A), SOC 30% (100A), Temp 25C (90A) -> target min = 80A */
+    set_healthy_bms(400.0f, 30);
+    g_sim_bms.max_cell_mv = 3300;
+    g_sim_bms.max_cell_temp_c = 25.0f;
+    ASSERT(warmup_and_start(1500U, 4000U), "module never reached RUNNING");
+
+    ChargeCtrlView_t cv;
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "must be running");
+    ASSERT(fabsf(cv.target_current_total_a - 80.0f) < 1.0f, "initial current min(80, 100, 90) = 80A");
+
+    /* 1. Thermal derating: Temp rises to 46C (Band 3_4: 45A) */
+    g_sim_bms.max_cell_temp_c = 46.0f;
+    drive_ms(500U);
+    ChargeController_GetView(&cv);
+    ASSERT(fabsf(cv.target_current_total_a - 45.0f) < 1.0f, "thermal derating to 45A");
+
+    /* 2. Thermal recovery: Temp cools down to 41C (< 45 - 3 = 42C hysteresis) -> Band 2_3 (75A) */
+    g_sim_bms.max_cell_temp_c = 41.0f;
+    drive_ms(1500U);
+    ChargeController_GetView(&cv);
+    ASSERT(fabsf(cv.target_current_total_a - 75.0f) < 1.0f, "thermal recovery to 75A");
+
+    /* Temp cools down to 25C -> Band 1_2 (90A) -> min(80, 100, 90) = 80A */
+    g_sim_bms.max_cell_temp_c = 25.0f;
+    drive_ms(1500U);
+    ChargeController_GetView(&cv);
+    ASSERT(fabsf(cv.target_current_total_a - 80.0f) < 1.0f, "full thermal recovery back to 80A");
+
+    /* 3. SOC reaches 100% while Cell is 3.3V */
+    g_sim_bms.soc_pct = 100;
+    drive_ms(2000U);
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_RUNNING, "must NOT stop on SOC=100% when Cell < 3.65V");
+    ASSERT(fabsf(cv.target_current_total_a - 20.0f) < 1.0f, "current clamped to soc_curr_4_c (20A)");
+
+    /* 4. Cell reaches 3.66V -> stops with CELL_VOLTAGE_REACHED */
+    g_sim_bms.max_cell_mv = 3660;
+    drive_ms(2000U);
+    ChargeController_GetView(&cv);
+    ASSERT(cv.state == CHARGE_CTRL_STATE_STOPPING || cv.state == CHARGE_CTRL_STATE_IDLE, "must stop on cell voltage");
+    ASSERT(cv.stop_reason == CHARGE_STOP_CELL_VOLTAGE_REACHED, "stop reason CELL_VOLTAGE_REACHED");
+
+    printf("[PASS] test_triple_mode_thermal_derating_and_handover\n");
+    return true;
+}
+
 /* ================================================================== */
 
 static bool test_delay_charge_countdown_and_start(void)
@@ -3203,6 +3372,8 @@ int main(void)
     pass &= test_temp_stage_asymmetric_hysteresis();
     pass &= test_cell_volt_stage_delta_t_debounce();
     pass &= test_soc_stage_delta_t_debounce();
+    pass &= test_dual_mode_cell_and_soc_handover();
+    pass &= test_triple_mode_thermal_derating_and_handover();
     pass &= test_driver_module_fault(CHARGE_MODULE_TYPE_TONHE, "tonhe");
     pass &= test_driver_fault_recovery_debounce(CHARGE_MODULE_TYPE_TONHE, "tonhe");
     pass &= test_tonhe_fault_matrix();

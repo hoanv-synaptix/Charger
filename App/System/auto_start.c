@@ -28,13 +28,14 @@ bool AutoStart_IsBatteryFull(const ChargeCycleConfig_t *cfg, const BMS_View_t *b
     if (cfg == NULL || bms == NULL) {
         return false;
     }
+    /* When cell_volt_enabled is active, Cell Voltage is the master completion trigger:
+     * do not mark full on SOC if cell voltage has not reached level 5. */
     if (cfg->cell_volt_enabled) {
         float cell_v = (float)bms->max_cell_volt / 1000.0f;
         if (cell_v >= cfg->cell_volt_5_v && cfg->cell_volt_5_v > 0.0f) {
             return true;
         }
-    }
-    if (cfg->soc_enabled) {
+    } else if (cfg->soc_enabled) {
         if ((float)bms->soc >= cfg->soc_5_pct && cfg->soc_5_pct > 0.0f) {
             return true;
         }

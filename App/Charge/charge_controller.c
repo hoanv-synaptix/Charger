@@ -1501,7 +1501,11 @@ static ChargeStageEval_t eval_soc_stage(const ChargeCycleConfig_t *cfg, const BM
     if (g_ctrl.max_soc_band == CHARGE_STAGE_BAND_NONE) {
         g_ctrl.max_soc_band = measured_band;
         if (g_ctrl.max_soc_band == CHARGE_STAGE_BAND_ABOVE_MAX) {
-            g_ctrl.soc_full_latched = true;
+            /* When cell_volt_enabled is active, Cell Voltage is the master completion trigger:
+             * reaching SOC level 5 does not latch stop, but hands over to cell stage. */
+            if (!cfg->cell_volt_enabled) {
+                g_ctrl.soc_full_latched = true;
+            }
         }
     } else if (measured_band > g_ctrl.max_soc_band) {
         /* Stepping up (chuyển tiến): apply delta t debounce */
@@ -1511,7 +1515,9 @@ static ChargeStageEval_t eval_soc_stage(const ChargeCycleConfig_t *cfg, const BM
             g_ctrl.soc_candidate_start_tick = 0U;
             g_ctrl.soc_candidate_band = CHARGE_STAGE_BAND_NONE;
             if (g_ctrl.max_soc_band == CHARGE_STAGE_BAND_ABOVE_MAX) {
-                g_ctrl.soc_full_latched = true;
+                if (!cfg->cell_volt_enabled) {
+                    g_ctrl.soc_full_latched = true;
+                }
             }
         } else {
             if (g_ctrl.soc_candidate_band != measured_band || g_ctrl.soc_candidate_start_tick == 0U) {
@@ -1523,7 +1529,9 @@ static ChargeStageEval_t eval_soc_stage(const ChargeCycleConfig_t *cfg, const BM
                 g_ctrl.soc_candidate_start_tick = 0U;
                 g_ctrl.soc_candidate_band = CHARGE_STAGE_BAND_NONE;
                 if (g_ctrl.max_soc_band == CHARGE_STAGE_BAND_ABOVE_MAX) {
-                    g_ctrl.soc_full_latched = true;
+                    if (!cfg->cell_volt_enabled) {
+                        g_ctrl.soc_full_latched = true;
+                    }
                 }
             }
         }
@@ -1534,6 +1542,11 @@ static ChargeStageEval_t eval_soc_stage(const ChargeCycleConfig_t *cfg, const BM
     }
 
     ChargeStageBand_t effective_band = g_ctrl.soc_full_latched ? CHARGE_STAGE_BAND_ABOVE_MAX : g_ctrl.max_soc_band;
+    /* In dual mode (cell_volt_enabled && soc_enabled), reaching ABOVE_MAX in SOC holds
+     * the final stage current (Band 4_5: soc_curr_4_c) without tripping inhibit (0A). */
+    if (cfg->cell_volt_enabled && effective_band == CHARGE_STAGE_BAND_ABOVE_MAX) {
+        effective_band = CHARGE_STAGE_BAND_4_5;
+    }
     apply_band_current_limit(effective_band, cfg->soc_curr_1_c, cfg->soc_curr_2_c,
                              cfg->soc_curr_3_c, cfg->soc_curr_4_c, &eval);
     return eval;
