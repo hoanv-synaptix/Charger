@@ -33,6 +33,7 @@ bool BSP_BTN_IsPressed(BSP_BTN_t btn) {
 bool BSP_IsReversePolarityDetected(void) {
     /* Optocoupler U1 (PC817XI) conducts when reverse polarity occurs,
      * pulling MCU_PA8_REVS_DET down to GND (LOW).
-     * Normal connection or no battery: pulled HIGH via R7 (10k). */
+     * Normal connection or no battery: pulled HIGH via external R3 (10k) and R4 (100k).
+     * Configured as GPIO_NOPULL to prevent voltage divider with external R4 (100k). */
     return (HAL_GPIO_ReadPin(MCU_PA8_REVS_DET_GPIO_Port, MCU_PA8_REVS_DET_Pin) == GPIO_PIN_RESET);
 }

@@ -87,7 +87,7 @@ void MX_GPIO_Init(void)
   /*Configure GPIO pin : MCU_PA8_REVS_DET_Pin */
   GPIO_InitStruct.Pin = MCU_PA8_REVS_DET_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
   /*Configure GPIO pins : MCU_PB0_SPI1_CS_Pin MCU_PB1_UART_RTS_Pin MCU_PB14_RELAY_1_Pin MCU_PB15_RELAY_2_Pin
