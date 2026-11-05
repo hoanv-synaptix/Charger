@@ -55,6 +55,96 @@ static void SystemClock_Config(void)
     (void)HAL_RCC_ClockConfig(&clk, FLASH_LATENCY_0);
 }
 
+static uint16_t s_mosi_pin = GPIO_PIN_7;
+static uint16_t s_miso_pin = GPIO_PIN_6;
+
+static inline void cs_low(void) { HAL_GPIO_WritePin(SPI2_CS_PORT, SPI2_CS_PIN, GPIO_PIN_RESET); }
+static inline void cs_high(void) { HAL_GPIO_WritePin(SPI2_CS_PORT, SPI2_CS_PIN, GPIO_PIN_SET); }
+
+static uint8_t spi_transfer(uint8_t byte)
+{
+    uint8_t rx = 0U;
+    for (int bit = 7; bit >= 0; --bit) {
+        if (byte & (1 << bit)) {
+            GPIOB->BSRR = s_mosi_pin;
+        } else {
+            GPIOB->BRR = s_mosi_pin;
+        }
+        for (volatile int d = 0; d < 6; d++) {}
+        GPIOB->BSRR = GPIO_PIN_8;
+        for (volatile int d = 0; d < 6; d++) {}
+        if (GPIOB->IDR & s_miso_pin) {
+            rx |= (1U << bit);
+        }
+        GPIOB->BRR = GPIO_PIN_8;
+        for (volatile int d = 0; d < 6; d++) {}
+    }
+    return rx;
+}
+
+static void set_spi_pins(uint16_t mosi, uint16_t miso)
+{
+    s_mosi_pin = mosi;
+    s_miso_pin = miso;
+
+    GPIO_InitTypeDef gpio = {0};
+
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_8, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(GPIOB, s_mosi_pin, GPIO_PIN_SET);
+
+    /* PB8: SCK, and MOSI pin as Output Push-Pull */
+    gpio.Pin = GPIO_PIN_8 | s_mosi_pin;
+    gpio.Mode = GPIO_MODE_OUTPUT_PP;
+    gpio.Speed = GPIO_SPEED_FREQ_HIGH;
+    gpio.Pull = GPIO_NOPULL;
+    HAL_GPIO_Init(GPIOB, &gpio);
+
+    /* MISO pin as Input with Pull-up */
+    gpio.Pin = s_miso_pin;
+    gpio.Mode = GPIO_MODE_INPUT;
+    gpio.Pull = GPIO_PULLUP;
+    HAL_GPIO_Init(GPIOB, &gpio);
+}
+
+static bool test_jedec_id(void)
+{
+    /* Release from Deep Power-Down (0xAB) */
+    cs_low();
+    (void)spi_transfer(0xABU);
+    cs_high();
+    for (volatile int d = 0; d < 300; d++) {}
+
+    /* Read JEDEC ID (0x9F) */
+    cs_low();
+    (void)spi_transfer(0x9FU);
+    uint8_t mfr = spi_transfer(0xFFU);
+    uint8_t mem_type = spi_transfer(0xFFU);
+    uint8_t cap = spi_transfer(0xFFU);
+    cs_high();
+
+    return (mfr != 0x00U && mfr != 0xFFU &&
+            mem_type != 0x00U && mem_type != 0xFFU &&
+            cap != 0x00U && cap != 0xFFU);
+}
+
+static void detect_and_init_spi_pins(void)
+{
+    /* 1. Try Hardware Ver 2.0 pinout: PB7 = MOSI (SI Pin 5), PB6 = MISO (SO Pin 2) */
+    set_spi_pins(GPIO_PIN_7, GPIO_PIN_6);
+    if (test_jedec_id()) {
+        return;
+    }
+
+    /* 2. Fallback for older prototype PCBs with swapped pins: PB6 = MOSI, PB7 = MISO */
+    set_spi_pins(GPIO_PIN_6, GPIO_PIN_7);
+    if (test_jedec_id()) {
+        return;
+    }
+
+    /* Default back to standard Ver 2.0 pinout if no response */
+    set_spi_pins(GPIO_PIN_7, GPIO_PIN_6);
+}
+
 static void GPIO_Init(void)
 {
     __HAL_RCC_GPIOA_CLK_ENABLE();
@@ -74,50 +164,12 @@ static void GPIO_Init(void)
     gpio.Speed = GPIO_SPEED_FREQ_LOW;
     HAL_GPIO_Init(LED_PORT, &gpio);
 
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_8, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_SET);
-
-    /* PB8: SCK, PB6: MOSI (to U201 Pin 5 SI) */
-    gpio.Pin = GPIO_PIN_8 | GPIO_PIN_6;
-    gpio.Mode = GPIO_MODE_OUTPUT_PP;
-    gpio.Speed = GPIO_SPEED_FREQ_HIGH;
-    gpio.Pull = GPIO_NOPULL;
-    HAL_GPIO_Init(GPIOB, &gpio);
-
-    /* PB7: MISO (from U201 Pin 2 SO) */
-    gpio.Pin = GPIO_PIN_7;
-    gpio.Mode = GPIO_MODE_INPUT;
-    gpio.Pull = GPIO_PULLUP;
-    HAL_GPIO_Init(GPIOB, &gpio);
+    detect_and_init_spi_pins();
 }
 
 static void SPI2_Init(void)
 {
-    /* Pins configured in GPIO_Init as bitbang */
-}
-
-static inline void cs_low(void) { HAL_GPIO_WritePin(SPI2_CS_PORT, SPI2_CS_PIN, GPIO_PIN_RESET); }
-static inline void cs_high(void) { HAL_GPIO_WritePin(SPI2_CS_PORT, SPI2_CS_PIN, GPIO_PIN_SET); }
-
-static uint8_t spi_transfer(uint8_t byte)
-{
-    uint8_t rx = 0U;
-    for (int bit = 7; bit >= 0; --bit) {
-        if (byte & (1 << bit)) {
-            GPIOB->BSRR = GPIO_PIN_6;
-        } else {
-            GPIOB->BRR = GPIO_PIN_6;
-        }
-        for (volatile int d = 0; d < 6; d++) {}
-        GPIOB->BSRR = GPIO_PIN_8;
-        for (volatile int d = 0; d < 6; d++) {}
-        if (GPIOB->IDR & GPIO_PIN_7) {
-            rx |= (1U << bit);
-        }
-        GPIOB->BRR = GPIO_PIN_8;
-        for (volatile int d = 0; d < 6; d++) {}
-    }
-    return rx;
+    /* Pins configured via bitbang in detect_and_init_spi_pins() */
 }
 
 static bool spi_flash_wait_busy(uint32_t timeout_ms)
@@ -382,6 +434,7 @@ static void jump_to_application(void)
     uint32_t app_sp = *(__IO uint32_t *)APP_START_ADDR;
     uint32_t app_entry = *(__IO uint32_t *)(APP_START_ADDR + 4U);
     if (app_vector_valid()) {
+        HAL_GPIO_DeInit(GPIOB, GPIO_PIN_6 | GPIO_PIN_7 | GPIO_PIN_8 | GPIO_PIN_9);
         HAL_SPI_DeInit(&hspi2);
         __disable_irq();
         SysTick->CTRL = 0U;

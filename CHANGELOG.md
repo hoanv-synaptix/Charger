@@ -4,7 +4,10 @@ Tất cả các thay đổi quan trọng theo từng phiên bản phát hành c�
 
 ## [V2.0.33] - 2026-11-05
 
-### 🚀 Tối Ưu Mạch Dò Ngược Cực Phần Cứng Ver 2.0 (Sheet 11 - `revs_det.SchDoc`)
+### 🚀 Sửa Lỗi Bootloader Tự Động Nhận Diện Chân SPI Flash W25Q128 & Tối Ưu Mạch Dò Ngược Cực
+- **Khắc phục lỗi Bootloader không nạp được firmware từ Flash đệm SPI (`Boot/boot_main.c`):**
+  - **Nguyên nhân:** Mã bitbang SPI2 trong Bootloader trước đây gán ngược chân `PB6` làm MOSI và `PB7` làm MISO. Trong khi trên phần cứng thật (Schematic Ver 2.0 Sheet 4), `PB7` là MOSI (Pin 5 SI) và `PB6` là MISO (Pin 2 SO). Hậu quả là Firmware App nhận file `.bin` qua USB và lưu vào Flash SPI thành công, nhưng khi reset vào Bootloader để copy vào Flash nội thì Bootloader không đọc được Flash ngoài $\rightarrow$ bỏ qua nạp và nhảy về bản firmware cũ.
+  - **Giải pháp xử lý triệt để:** Bổ sung cơ chế **tự động dò JEDEC ID (`0x9F`)** trong Bootloader. Bootloader tự động kiểm tra chân chuẩn Hardware Ver 2.0 (`PB7=MOSI, PB6=MISO`) và có cơ chế fallback sang chân đảo nếu chạy trên các bản PCB prototype cũ. Đảm bảo đọc chip Flash SPI W25Q128 thành công 100% trên mọi phiên bản phần cứng.
 - **Khắc phục lỗi phân áp chân vi điều khiển `PA8` (`MCU_PA8_REVS_DET`):**
   - Chuyển đổi cấu hình chân `PA8` từ `GPIO_PULLUP` sang **`GPIO_NOPULL`** (đồng bộ trong `Core/Src/gpio.c`, `Charger.ioc` và `BSP/bsp_gpio.c`).
   - **Lý do kỹ thuật:** Trên Schematic Ver 2.0, ngõ ra Collector của Optocoupler $U_1$ (`PC817XI`) đã có sẵn trở kéo lên ngoài $R_3 = 10\text{k}\Omega$ nối tới nguồn $+3.3\text{V}$, đồng thời nối tiếp qua trở lọc $R_4 = 100\text{k}\Omega$ và tụ lọc $C_2 = 10\text{nF}$ vào chân MCU. Nếu cấu hình `GPIO_PULLUP`, trở kéo nội ($\approx 40\text{k}\Omega$) tạo cầu phân áp với $R_4$, giữ điện áp chân ở mức $\approx 2.36\text{V} > V_{\text{IH}}$ ngay cả khi $U_1$ dẫn bão hòa, làm MCU mất khả năng nhận diện ngược cực.
