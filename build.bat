@@ -18,5 +18,8 @@ if %ERRORLEVEL% neq 0 (
     exit /b %ERRORLEVEL%
 )
 
+if exist build\Release\Boot\Charger_Bootloader.bin copy /Y build\Release\Boot\Charger_Bootloader.bin build\Release\ >nul
+if exist build\Release\Boot\Charger_Bootloader.hex copy /Y build\Release\Boot\Charger_Bootloader.hex build\Release\ >nul
+
 echo.
 echo [SUCCESS] Build completed successfully!
