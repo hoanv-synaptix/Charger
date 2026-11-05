@@ -2,6 +2,14 @@
 
 Tất cả các thay đổi quan trọng theo từng phiên bản phát hành của hệ thống Charger Firmware và Tool điều khiển.
 
+## [V2.0.33] - 2026-11-05
+
+### 🚀 Tối Ưu Mạch Dò Ngược Cực Phần Cứng Ver 2.0 (Sheet 11 - `revs_det.SchDoc`)
+- **Khắc phục lỗi phân áp chân vi điều khiển `PA8` (`MCU_PA8_REVS_DET`):**
+  - Chuyển đổi cấu hình chân `PA8` từ `GPIO_PULLUP` sang **`GPIO_NOPULL`** (đồng bộ trong `Core/Src/gpio.c`, `Charger.ioc` và `BSP/bsp_gpio.c`).
+  - **Lý do kỹ thuật:** Trên Schematic Ver 2.0, ngõ ra Collector của Optocoupler $U_1$ (`PC817XI`) đã có sẵn trở kéo lên ngoài $R_3 = 10\text{k}\Omega$ nối tới nguồn $+3.3\text{V}$, đồng thời nối tiếp qua trở lọc $R_4 = 100\text{k}\Omega$ và tụ lọc $C_2 = 10\text{nF}$ vào chân MCU. Nếu cấu hình `GPIO_PULLUP`, trở kéo nội ($\approx 40\text{k}\Omega$) tạo cầu phân áp với $R_4$, giữ điện áp chân ở mức $\approx 2.36\text{V} > V_{\text{IH}}$ ngay cả khi $U_1$ dẫn bão hòa, làm MCU mất khả năng nhận diện ngược cực.
+  - Với `GPIO_NOPULL`, khi xảy ra ngược cực, $U_1$ dẫn kéo chân `PA8` xuống thẳng mức bão hòa $V_{\text{CE(sat)}} \approx 0.1\text{V} \ll V_{\text{IL}} (0.99\text{V})$, giúp hệ thống kích hoạt dứt khoát mã lỗi **`E033` (`ALARM_CTRL_REVERSE_POLARITY`)** cấp **`ALARM_ACT_ESTOP`** trong vòng $50\text{ms}$.
+
 ## [V2.0.32] - 2026-11-04
 
 ### 🚀 Nâng Cấp Thuật Toán Sạc Đa Tầng Kết Hợp (Cell Voltage + SOC + Temperature) & Tối Ưu Quyền Kết Thúc Sạc
