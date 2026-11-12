@@ -95,7 +95,7 @@ void AutoStart_Process(uint32_t now)
         } else if (!s_w4.plug_latched &&
                    (uint32_t)(now - s_w4.can_online_since) >= AUTO_START_CAN_ONLINE_DEBOUNCE_MS) {
             s_w4.plug_latched = true;
-            LOG("AutoStart: Plug latched (CAN stable 1.5s)\r\n");
+            LOG("AutoStart: Plug latched (CAN stable 15s)\r\n");
         }
     } else {
         s_w4.can_online_since = 0U;

@@ -7,7 +7,7 @@
 #include "bms_core.h"
 #include "charge_controller.h"
 
-#define AUTO_START_CAN_ONLINE_DEBOUNCE_MS   1500U
+#define AUTO_START_CAN_ONLINE_DEBOUNCE_MS   15000U
 #define AUTO_START_CAN_OFFLINE_RESET_MS    1000U
 #define AUTO_START_MODULE_READY_TIMEOUT_MS 30000U  /* 30 seconds grace period for charger module AC power */
 

@@ -133,10 +133,10 @@ static bool test_auto_start_disabled_by_default_never_triggers(void)
     cfg.auto_start_enabled = 0U; /* Manual mode */
     ChargeCycleConfig_Set(&cfg);
 
-    drive_ms(5000U);
+    drive_ms(15500U);
 
     const AutoStartState_t *st = AutoStart_GetState();
-    ASSERT(st->plug_latched == true, "Plug should be latched after 5s");
+    ASSERT(st->plug_latched == true, "Plug should be latched after 15.5s");
     ChargeCtrlView_t cc;
     ChargeController_GetView(&cc);
     ASSERT(cc.state == CHARGE_CTRL_STATE_IDLE, "Must remain in IDLE in Manual mode");
@@ -146,13 +146,13 @@ static bool test_auto_start_disabled_by_default_never_triggers(void)
 }
 
 /**
- * Case 2: Debounce 1500ms requirement.
- * Before 1500ms has elapsed, plug_latched must be false and charging must not start.
- * After 1500ms, plug_latched becomes true and charging automatically starts.
+ * Case 2: Debounce 15000ms (15s) requirement.
+ * Before 15000ms has elapsed, plug_latched must be false and charging must not start.
+ * After 15000ms, plug_latched becomes true and charging automatically starts.
  */
-static bool test_auto_start_debounce_1500ms_requirement(void)
+static bool test_auto_start_debounce_15000ms_requirement(void)
 {
-    printf("Running test_auto_start_debounce_1500ms_requirement...\n");
+    printf("Running test_auto_start_debounce_15000ms_requirement...\n");
     setup_system();
 
     /* Initially offline */
@@ -162,22 +162,22 @@ static bool test_auto_start_debounce_1500ms_requirement(void)
 
     /* Vehicle connects */
     g_sim_bms.transmitting = true;
-    drive_ms(1000U); /* 1000ms elapsed since connection */
+    drive_ms(14000U); /* 14000ms elapsed since connection */
 
     const AutoStartState_t *st = AutoStart_GetState();
-    ASSERT(st->plug_latched == false, "Must not latch before 1500ms debounce");
+    ASSERT(st->plug_latched == false, "Must not latch before 15000ms debounce");
     ChargeCtrlView_t cc;
     ChargeController_GetView(&cc);
-    ASSERT(cc.state == CHARGE_CTRL_STATE_IDLE, "Must stay IDLE before 1500ms debounce");
+    ASSERT(cc.state == CHARGE_CTRL_STATE_IDLE, "Must stay IDLE before 15000ms debounce");
 
-    /* Advance another 800ms (total 1800ms >= 1500ms) */
-    drive_ms(800U);
+    /* Advance another 1500ms (total 15500ms >= 15000ms) */
+    drive_ms(1500U);
 
-    ASSERT(st->plug_latched == true, "Must be latched after 1500ms");
+    ASSERT(st->plug_latched == true, "Must be latched after 15000ms");
     ChargeController_GetView(&cc);
     ASSERT(cc.state != CHARGE_CTRL_STATE_IDLE, "Auto Start must have triggered charging");
 
-    printf("[PASS] test_auto_start_debounce_1500ms_requirement\n");
+    printf("[PASS] test_auto_start_debounce_15000ms_requirement\n");
     return true;
 }
 
@@ -192,7 +192,7 @@ static bool test_auto_start_user_stop_locks_out_auto_start(void)
     setup_system();
 
     /* Wait for auto start */
-    drive_ms(2000U);
+    drive_ms(15500U);
     ChargeCtrlView_t cc;
     ChargeController_GetView(&cc);
     ASSERT(cc.state != CHARGE_CTRL_STATE_IDLE, "Charger should be running");
@@ -228,7 +228,7 @@ static bool test_auto_start_manual_start_resumes_after_stop(void)
     setup_system();
 
     /* Start and then user stops */
-    drive_ms(2000U);
+    drive_ms(15500U);
     AutoStart_OnUserStop();
     ChargeController_Stop(mock_tick);
     drive_ms(1000U);
@@ -271,7 +271,7 @@ static bool test_auto_start_battery_full_cell_voltage_triggers_complete(void)
     /* Battery cell is at 3.66V */
     g_sim_bms.max_cell_mv = 3660;
 
-    drive_ms(2000U);
+    drive_ms(15500U);
 
     ASSERT(AutoStart_IsChargeCompleted() == true, "Must latch charge_completed");
     ChargeCtrlView_t cc;
@@ -300,7 +300,7 @@ static bool test_auto_start_battery_full_soc_triggers_complete(void)
     /* Battery SOC is 100% */
     g_sim_bms.soc_pct = 100;
 
-    drive_ms(2000U);
+    drive_ms(15500U);
 
     ASSERT(AutoStart_IsChargeCompleted() == true, "Must latch charge_completed on SOC");
     ChargeCtrlView_t cc;
@@ -334,7 +334,7 @@ static bool test_auto_start_dual_mode_soc100_does_not_block_undercharged_cell(vo
     g_sim_bms.soc_pct = 100;
     g_sim_bms.max_cell_mv = 3200;
 
-    drive_ms(2000U);
+    drive_ms(15500U);
 
     ASSERT(AutoStart_IsChargeCompleted() == false, "Must NOT latch COMPLETE when cell voltage < 3.65V");
     ChargeCtrlView_t cc;
@@ -361,7 +361,7 @@ static bool test_auto_start_battery_full_pack_volt_triggers_complete(void)
     /* Battery pack voltage is 402V */
     g_sim_bms.pack_voltage_v = 402.0f;
 
-    drive_ms(2000U);
+    drive_ms(15500U);
 
     ASSERT(AutoStart_IsChargeCompleted() == true, "Must latch charge_completed on pack volt");
     ChargeCtrlView_t cc;
@@ -390,7 +390,7 @@ static bool test_auto_start_user_reset_complete_does_not_restart_full_battery(vo
     ChargeCycleConfig_Set(&cfg);
 
     g_sim_bms.soc_pct = 100;
-    drive_ms(2000U);
+    drive_ms(15500U);
     ASSERT(AutoStart_IsChargeCompleted() == true, "Completed");
 
     /* User presses RESET */
@@ -420,7 +420,7 @@ static bool test_auto_start_cable_unplug_5s_resets_session(void)
     setup_system();
 
     /* User stopped previous session */
-    drive_ms(2000U);
+    drive_ms(15500U);
     AutoStart_OnUserStop();
     ChargeController_Stop(mock_tick);
     drive_ms(1000U);
@@ -455,7 +455,7 @@ static bool test_auto_start_cable_unplug_5s_resets_session(void)
     g_sim_bms.soc_pct = 40;
     g_sim_bms.max_cell_mv = 3150;
 
-    drive_ms(2000U);
+    drive_ms(15500U);
 
     ChargeCtrlView_t cc;
     ChargeController_GetView(&cc);
@@ -483,7 +483,7 @@ static bool test_auto_start_blocked_by_system_alarm(void)
     Alarm_GetView(&av);
     ASSERT(av.highest_action >= ALARM_ACT_STOP, "Alarm active");
 
-    drive_ms(2000U);
+    drive_ms(15500U);
 
     ChargeCtrlView_t cc;
     ChargeController_GetView(&cc);
@@ -506,7 +506,7 @@ static bool test_auto_start_blocked_by_bms_hard_alarm(void)
     /* BMS has over-charge current alarm (severity 2) */
     g_sim_bms.over_chg_curr = 2U;
 
-    drive_ms(2000U);
+    drive_ms(15500U);
 
     ChargeCtrlView_t cc;
     ChargeController_GetView(&cc);
@@ -537,11 +537,11 @@ static bool test_auto_start_fault_lockout_on_e004_prevents_chattering(void)
     ChargeCycleConfig_Set(&cfg);
 
     /* 1. Let auto start engage */
-    drive_ms(2000U);
+    drive_ms(15500U);
 
     ChargeCtrlView_t cc;
     ChargeController_GetView(&cc);
-    ASSERT(cc.state == CHARGE_CTRL_STATE_RUNNING, "Must be charging after 2s");
+    ASSERT(cc.state == CHARGE_CTRL_STATE_RUNNING, "Must be charging after 15.5s");
 
     /* 2. Battery reaches 100% and cell spikes -> BMS fires E004 (high_cell_volt = 1) */
     g_sim_bms.high_cell_volt = 1U;
@@ -589,7 +589,7 @@ static bool test_auto_start_manual_start_can_clear_fault_lockout(void)
     ChargeCycleConfig_Set(&cfg);
 
     /* Start and trip fault */
-    drive_ms(2000U);
+    drive_ms(15500U);
     g_sim_bms.high_cell_volt = 1U;
     drive_ms(500U);
 
@@ -640,8 +640,8 @@ static bool test_auto_start_waits_for_module_power_before_starting(void)
     /* Module is unpowered / silent (AC breaker is off) */
     g_sim_modules[0].silent = true;
 
-    /* BMS is plugged in and transmitting for 5 seconds */
-    drive_ms(5000U);
+    /* BMS is plugged in and transmitting for 15.5 seconds */
+    drive_ms(15500U);
 
     ChargeCtrlView_t cc;
     ChargeController_GetView(&cc);
@@ -650,7 +650,7 @@ static bool test_auto_start_waits_for_module_power_before_starting(void)
     /* Two-Way Handshake requirement: Must stay in IDLE, no fault latched, within 30s grace period */
     ASSERT(cc.state == CHARGE_CTRL_STATE_IDLE, "Must stay in IDLE waiting for module power");
     ASSERT(state->fault_latched == false, "Must not latch fault while waiting for AC power");
-    ASSERT(AutoStart_IsModuleTimeout() == false, "Must not be timed out at 5s");
+    ASSERT(AutoStart_IsModuleTimeout() == false, "Must not be timed out at 15.5s");
 
     AlarmView_t av;
     Alarm_GetView(&av);
@@ -727,7 +727,7 @@ int main(void)
     bool ok = true;
 
     ok &= test_auto_start_disabled_by_default_never_triggers();
-    ok &= test_auto_start_debounce_1500ms_requirement();
+    ok &= test_auto_start_debounce_15000ms_requirement();
     ok &= test_auto_start_user_stop_locks_out_auto_start();
     ok &= test_auto_start_manual_start_resumes_after_stop();
     ok &= test_auto_start_battery_full_cell_voltage_triggers_complete();

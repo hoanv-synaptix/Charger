@@ -2,6 +2,14 @@
 
 Tất cả các thay đổi quan trọng theo từng phiên bản phát hành của hệ thống Charger Firmware và Tool điều khiển.
 
+## [V2.0.34] - 2026-11-12
+
+### 🚀 Nâng Thời Gian Chờ Auto Start Lên 15 Giây Khi Cắm Pin
+- **Tăng thời gian ổn định CAN trước khi tự động sạc (`App/System/auto_start.h`, `auto_start.c`):**
+  - Nâng hằng số `AUTO_START_CAN_ONLINE_DEBOUNCE_MS` từ `1500U` (1.5 giây) lên **`15000U` (15 giây)**.
+  - Giúp người vận hành có đủ thời gian cắm jack pin chắc chắn, an toàn trước khi trạm sạc tự động đóng rơ-le và phát dòng.
+  - Cập nhật đồng bộ bộ kiểm thử tự động `test_auto_start_logic.c` theo ngưỡng 15 giây mới (16/16 test cases PASS).
+
 ## [V2.0.33] - 2026-11-05
 
 ### 🚀 Sửa Lỗi Bootloader Tự Động Nhận Diện Chân SPI Flash W25Q128 & Tối Ưu Mạch Dò Ngược Cực
